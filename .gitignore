@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Environments / tool caches
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+.coverage
+coverage.xml
+htmlcov/
+
+# Datasets are hash-stamped, not committed (repo-root only, not the src/preceptx/data package)
+/data/
+
+# Per-run artefacts: only frozen config/manifest/metrics/figures are committed (added per run).
+# Raw logs, trained probes, embedding caches and our own numeric caches never are.
+runs/*/handoffs.jsonl
+runs/*/probes/
+runs/*/embeddings/
+*.npy
+*.joblib
+
+# Model / HF caches and weights
+.cache/
+*.bin
+*.safetensors
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Secrets
+.env

@@ -93,7 +93,7 @@ precept-experiments/
 │   ├── serving/                  # vllm client wrapper, model registry
 │   ├── data/                     # handoff schema, dataset writer, otel capture
 │   ├── measure/                  # featuriser, pvi_cpvi, twin, divergence
-│   ├── gate/                     # statistics, calibration, precept_integration, controls
+│   ├── gate/                     # statistics, calibration, integration (in-repo gate), controls
 │   ├── experiments/              # rq1, rq2, rq3a, rq3b, optional drivers
 │   └── analysis/                 # stats, figures, reproducibility
 ├── scripts/
@@ -124,7 +124,7 @@ Everything builds on a clean, reproducible package. This ticket establishes the 
 - [ ] README stub with setup, and a one-paragraph map to `RESEARCH_ROADMAP.md`
 
 ### Technical Notes
-- Package name `preceptx` to avoid clashing with the Precept OSS core; the experiments depend on Precept as an external dep (for the OTel exporter and the contract layer) but live in their own repo.
+- Package name `preceptx` is a distinct identifier; this repo is **standalone** and does **not** depend on or import precept. The runtime gate and the OpenTelemetry capture are implemented in-repo. Findings may be upstreamed to precept later, but that work lives in the precept repo, not here.
 - Keep `mypy --strict` from the start; retrofitting is expensive.
 - Do not add Codecov; coverage as a CI artefact is sufficient at this stage.
 
@@ -206,12 +206,12 @@ Every run must be reconstructable from a config plus a manifest. This ticket add
 **Epic:** E1 **Type:** feat **Priority:** P0 **Effort:** L (8-10h) **Phase:** 0 **Dependencies:** DSE-001
 
 ### Context
-The per-handoff record is the backbone the measurement, gate, and experiment tickets all consume, so its schema must be fixed early and treated as a stable contract (the way Precept fixed its IR). This ticket defines the schema, a writer that persists episodes to versioned Parquet/JSONL, and the OpenTelemetry capture that emits each handoff through Precept's exporter.
+The per-handoff record is the backbone the measurement, gate, and experiment tickets all consume, so its schema must be fixed early and treated as a stable contract. This ticket defines the schema, a writer that persists episodes to versioned Parquet/JSONL, and the OpenTelemetry capture that emits each handoff through a vanilla OpenTelemetry SDK exporter (no precept dependency).
 
 ### Acceptance Criteria
 - [ ] `src/preceptx/data/schema.py`: a Pydantic `HandoffRecord` with at least: `episode_id`, `step`, `condition`, `serialisation`, `difficulty`, `model`, `seed`, `state` (structured physics dict), `state_str` (serialised), `message_raw`, `message_delivered` (post-channel), `action`, `pre_state`/`post_state`, `progress`, `success`, `collision`, `stuck`, and placeholders for the four `Y` labels (filled by DSE-009)
 - [ ] `src/preceptx/data/writer.py`: append-safe writer to hash-stamped Parquet under `data/<dataset_hash>/`; an index file maps dataset hash -> config + manifest
-- [ ] `src/preceptx/data/otel_capture.py`: emits each `HandoffRecord` as an OTel span/event via the Precept exporter; fail-open if the exporter is absent
+- [ ] `src/preceptx/data/otel_capture.py`: emits each `HandoffRecord` as an OTel span/event via the OpenTelemetry SDK; fail-open if no exporter/collector is configured
 - [ ] A `load_dataset(hash)` helper returning a pandas/pyarrow frame with typed columns
 - [ ] Schema documented in `docs/handoff_schema.md`; downstream tickets import this schema, never redefine fields
 
@@ -399,7 +399,7 @@ The negotiation loop: a LangGraph `StateGraph` with propose (A), respond (B), an
 ### Technical Notes
 - Keep the graph framework-thin so a LangGraph API change touches only this module (the roadmap's durability point).
 - Guided decoding removes action-parser brittleness; if the model emits an invalid action despite the schema, default to WAIT and log it.
-- The handoff capture here is where Precept's gate (DSE-018) later intercepts.
+- The handoff capture here is where the in-repo runtime gate (DSE-018) later intercepts.
 
 ### Testing Requirements
 - Unit (mock LLM): graph runs to completion, produces valid actions, loops to budget, terminates on success; invalid-action fallback works
@@ -623,22 +623,22 @@ Choose the gate operating point by validating each runtime statistic against rea
 
 ---
 
-## DSE-018: Precept gate integration and causal-arm controls
+## DSE-018: Runtime gate integration and causal-arm controls
 
 **Epic:** E5 **Type:** feat **Priority:** P0 **Effort:** L (8-10h) **Phase:** 5 **Dependencies:** DSE-017, DSE-010, DSE-011
 
 ### Context
-Wire the calibrated statistic+threshold as a Precept contract that blocks low-information handoffs and re-prompts in the loop, and implement the two controls that make the causal claim valid (roadmap §2.5, §3.5). This is the active-control-layer contribution and the answer to the Lowe et al. critique.
+Wire the calibrated statistic+threshold as an in-repo `RuntimeGate` that blocks low-information handoffs and re-prompts in the loop, and implement the two controls that make the causal claim valid (roadmap §2.5, §3.5). This is the active-control-layer contribution and the answer to the Lowe et al. critique.
 
 ### Acceptance Criteria
-- [ ] `src/preceptx/gate/precept_integration.py`: a Precept contract/evaluator that, at the A-to-B boundary, computes the chosen statistic and blocks (re-prompts A) when below threshold; fail-open if Precept or the threshold is unavailable
+- [ ] `src/preceptx/gate/integration.py`: a `RuntimeGate` that, at the A-to-B boundary, computes the chosen statistic and blocks (re-prompts A) when below threshold; fail-open if the gate is disabled or the threshold is unavailable
 - [ ] Re-prompt path: on block, A is re-prompted (bounded retries) before proceeding; the block and retry are recorded
 - [ ] `src/preceptx/gate/controls.py`: a matched-firing-rate control (block the same number of randomly chosen handoffs) and a random-trigger control
 - [ ] A config flag selects {gate-active, matched-random, random-trigger, off}
 - [ ] Runs end to end against the 8B tier in each mode
 
 ### Technical Notes
-- Reuse the Precept contract layer rather than a bespoke gate, so the dissertation demonstrates the OSS harness as an active control layer.
+- The gate is implemented in-repo; keep `Statistic` and `RuntimeGate` cleanly separable so a later precept swap is a new concrete, not a rewrite (this repo stays standalone).
 - The matched-firing-rate control must block the same count as the real gate on the same episodes, so it is computed from the gate's firing rate (DSE-017).
 
 ### Testing Requirements
@@ -956,14 +956,14 @@ A common analysis library so every RQ uses the same effect-size, uncertainty-int
 **Epic:** E9 **Type:** infra **Priority:** P1 **Effort:** M (5-6h) **Phase:** 7 **Dependencies:** DSE-013, DSE-004
 
 ### Context
-Closes the repo-audit reproducibility gaps so the artefact is examiner-runnable (roadmap §6): pin the encoder revision, add `CITATION.cff` and a `.bib`, normalise the package layout, ensure run manifests are complete, and render a committed Precept observatory demonstration trace.
+Closes the repo-audit reproducibility gaps so the artefact is examiner-runnable (roadmap §6): pin the encoder revision, add `CITATION.cff` and a `.bib`, normalise the package layout, ensure run manifests are complete, and render a committed gate/handoff demonstration trace.
 
 ### Acceptance Criteria
 - [ ] Encoder (and any model) revisions pinned in config and verified by a check that fails on an unpinned revision
 - [ ] `CITATION.cff` and a project `.bib` added (the contact field is a human step, flagged)
 - [ ] Package layout normalised (the `Dev/`-style layout removed); imports clean
 - [ ] Run manifests confirmed complete on a sample run (git SHA, config hash, revisions, dep versions)
-- [ ] A committed Precept observatory demonstration trace renders from a canned dataset
+- [ ] A committed demonstration trace (handoff + gate-decision log) renders from a canned dataset
 
 ### Technical Notes
 - These map directly to the repo-audit gaps and to dissertation reproducibility marks.

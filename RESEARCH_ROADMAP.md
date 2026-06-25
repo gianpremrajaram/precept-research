@@ -69,7 +69,7 @@ Optional. **C5 principal-agent supervisor arm** tests the buried assumption in R
 
 ## 2. System architecture and the code to build it
 
-This is the concrete build. Four components, each independently testable, wired into one episode runner that the experiments call. The handoff message between the two agents is the object Precept scores; everything else exists to generate and label those handoffs.
+This is the concrete build. Four components, each independently testable, wired into one episode runner that the experiments call. The handoff message between the two agents is the object the measurement stack scores; everything else exists to generate and label those handoffs.
 
 ### 2.1 Simulator (Pymunk): the transposed piano-movers task
 
@@ -121,7 +121,7 @@ def apply_macro_action(space, body, action, impulse=400.0, dtheta=0.20, substeps
 
 ### 2.2 Agent loop (LangGraph): two agents, a degradable channel, structured actions
 
-Signals: a `StateGraph` with nodes for propose, respond, aggregate-into-action, apply, and check-done, looping until success or budget. The single inter-agent message is captured as the handoff payload Precept scores. Communication conditions degrade that channel only.
+Signals: a `StateGraph` with nodes for propose, respond, aggregate-into-action, apply, and check-done, looping until success or budget. The single inter-agent message is captured as the handoff payload the measurement stack scores. Communication conditions degrade that channel only.
 
 ```python
 from typing import TypedDict, Optional
@@ -168,7 +168,7 @@ g.add_conditional_edges("apply", lambda s: END if s["done"] else "A")
 runner = g.compile()
 ```
 
-The handoff capture and logging reuse Precept: each `msg_A` plus the pre-action `physics` is a record emitted through the OpenTelemetry exporter, and the runtime gate (when active in RQ3b) is the Precept contract evaluating that boundary before `apply`. This is the "active control layer" contribution; the harness is exercised end to end rather than described.
+The handoff capture and logging are in-repo: each `msg_A` plus the pre-action `physics` is a record emitted through a vanilla OpenTelemetry exporter, and the runtime gate (when active in RQ3b) is the in-repo `RuntimeGate` evaluating that boundary before `apply`. This is the "active control layer" contribution; the gate is exercised end to end rather than described.
 
 ### 2.3 Communication conditions C0-C5
 
@@ -269,7 +269,7 @@ Design: extract agent-to-agent handoffs and the surrounding state from real fail
 
 ### 3.5 RQ3b - causal gate
 
-Design: re-run a subset of RQ1 conditions with the Precept gate active, blocking handoffs whose runtime statistic falls below the RQ2-calibrated threshold and re-prompting, against the matched-firing-rate and random-trigger controls. Test H6 (gating beats both controls on success/efficiency). This is the interventional answer to the Lowe et al. (2019) critique and the demonstration of the active-control-layer contribution.
+Design: re-run a subset of RQ1 conditions with the runtime gate active, blocking handoffs whose runtime statistic falls below the RQ2-calibrated threshold and re-prompting, against the matched-firing-rate and random-trigger controls. Test H6 (gating beats both controls on success/efficiency). This is the interventional answer to the Lowe et al. (2019) critique and the demonstration of the active-control-layer contribution.
 
 ### 3.6 Optional arms with cut-lines
 
@@ -285,7 +285,7 @@ Signals: roughly ten to eleven weeks from mid-June to a late-August dissertation
 
 | Phase | Weeks (indicative) | Research milestone (R) | Engineering deliverable | Gate / decision |
 |---|---|---|---|---|
-| 0. Foundation | wk 1 | Compute and model ladder fixed; reproducibility baseline | Experiments repo, env, vLLM serving on Myriad, CI, data versioning, Precept repo gaps closed | DSE-014 compute decision resolved |
+| 0. Foundation | wk 1 | Compute and model ladder fixed; reproducibility baseline | Experiments repo, env, vLLM serving on Myriad, CI, data versioning, reproducibility gaps closed | DSE-014 compute decision resolved |
 | 1. Pilot | wk 2-3 | Task viability and presence of an information gradient established | Simulator, agent loop, conditions C0-C4, episode runner, logging | G1/G2/G3 pass, or invoke fallback ladder |
 | 2. Measurement stack | wk 3-4 | Y definition and probe family locked; CPVI estimator validated on pilot data | Featuriser, PVI/CPVI estimator, probe training, divergence proxy, runtime statistics | Y and V frozen; encoder chosen |
 | 3. RQ1 main runs | wk 4-6 | H1/H2 result: gradient measured, CPVI tracks it | Full factorial sweep executed and logged; self-play + heterogeneous + serialisation cells | RQ1 result frozen for write-up |
@@ -315,7 +315,7 @@ Signals: the live risks are the lit-review red-team's plus execution risk; each 
 
 Signals: a distinction-grade thesis is a coherent argument from a single defensible claim, with reproducible evidence and an honest treatment of the central risk; it is not maximal breadth. The chapter map below maps each experiment to its place, and the writing is incremental so nothing is left to the final fortnight.
 
-Chapter map: (1) introduction and the political-economy-to-multi-agent throughline; (2) the literature-review chapter already drafted; (3) the task, simulator, and agent architecture (from §2.1-2.3); (4) the measurement stack and the CPVI construct (from §2.4, with the IB framing and the conditioning rationale); (5) RQ1 results; (6) RQ2 results and the gate calibration; (7) RQ3a external validity; (8) RQ3b causal arm; (9) discussion, limitations (R1 front and centre), and future work (the C5 incentive-divergence half, the sender-side compression question); appendices for reproducibility (seeds, revisions, jobscripts) and the harness. Writing schedule: draft chapters 3 and 4 during Phases 2-3 while the system is fresh; draft each results chapter in the week its result freezes; reserve Phase 7 for synthesis and polish, not first drafts. Examiner-facing reproducibility: the Precept observatory renders a committed demonstration trace, and the repo gaps from the audit (pinned encoder revision, CITATION.cff and .bib, package layout) are closed in Phase 0 so the artefact is runnable.
+Chapter map: (1) introduction and the political-economy-to-multi-agent throughline; (2) the literature-review chapter already drafted; (3) the task, simulator, and agent architecture (from §2.1-2.3); (4) the measurement stack and the CPVI construct (from §2.4, with the IB framing and the conditioning rationale); (5) RQ1 results; (6) RQ2 results and the gate calibration; (7) RQ3a external validity; (8) RQ3b causal arm; (9) discussion, limitations (R1 front and centre), and future work (the C5 incentive-divergence half, the sender-side compression question); appendices for reproducibility (seeds, revisions, jobscripts) and the harness. Writing schedule: draft chapters 3 and 4 during Phases 2-3 while the system is fresh; draft each results chapter in the week its result freezes; reserve Phase 7 for synthesis and polish, not first drafts. Examiner-facing reproducibility: a committed demonstration trace renders (handoff + gate-decision log), and the repo gaps from the audit (pinned encoder revision, CITATION.cff and .bib, package layout) are closed in Phase 0 so the artefact is runnable.
 
 ---
 
