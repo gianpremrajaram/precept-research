@@ -79,6 +79,9 @@ module = [
   "omegaconf.*",
   "vllm.*",
   "datasets.*",
+  "torch.*",
+  "pandas.*",
+  "pyarrow.*",
 ]
 ignore_missing_imports = true
 

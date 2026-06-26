@@ -1,0 +1,10 @@
+# Resolved by Hydra, then validated into preceptx.config.ExperimentConfig.
+# Override any axis on the CLI, e.g. `condition=C3 serialisation=grid model=qwen8b seed=7`.
+defaults:
+  - condition: C0
+  - serialisation: numeric
+  - difficulty: easy
+  - model: qwen14b
+  - _self_
+
+seed: 0

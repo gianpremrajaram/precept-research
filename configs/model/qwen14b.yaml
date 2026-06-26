@@ -1,0 +1,5 @@
+# @package _global_
+model:
+  name: Qwen/Qwen3-14B-Instruct
+  revision: main  # TODO: pin to a commit SHA before any recorded run
+  tier: 14b
