@@ -91,3 +91,16 @@ def make_scenario(difficulty: Difficulty) -> Scenario:
     load = add_t_load(space, (geometry.chamber_w / 2.0, geometry.slit_y), LOAD_MASS)
     goal = Goal(center_x=2.5 * geometry.chamber_w, center_y=geometry.slit_y, radius=GOAL_RADIUS)
     return Scenario(space=space, load=load, goal=goal)
+
+
+def chamber_of(com_x: float, geometry: ArenaGeometry) -> int:
+    """Which chamber (1, 2 or 3, left to right) an x-coordinate falls in.
+
+    Boundaries belong to the chamber on their right (``x = chamber_w`` is chamber 2), keeping the
+    geodesic continuous across a slit centre. Shared by the serialiser and the outcome labeller.
+    """
+    if com_x < geometry.chamber_w:
+        return 1
+    if com_x < 2.0 * geometry.chamber_w:
+        return 2
+    return 3
