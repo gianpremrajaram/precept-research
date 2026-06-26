@@ -39,7 +39,7 @@ def _numeric_variance(outputs: list[dict[str, Any]]) -> dict[str, float]:
         return {}
     variances: dict[str, float] = {}
     for key in outputs[0]:
-        values = [o[key] for o in outputs if isinstance(o.get(key), (int, float))]
+        values = [o[key] for o in outputs if isinstance(o.get(key), int | float)]
         if len(values) == len(outputs):  # numeric in every run
             mean = sum(values) / len(values)
             variances[key] = sum((v - mean) ** 2 for v in values) / len(values)
