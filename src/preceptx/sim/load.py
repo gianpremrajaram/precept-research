@@ -18,6 +18,15 @@ T_FRICTION = 0.6
 # Half the total vertical extent; bar and stem are placed so the body is symmetric in y about 0.
 HALF_H = (T_THICK + T_STEM) / 2.0
 
+# Local-frame y of the area centroid (= centre of gravity for uniform density). The bar sits above
+# the stem, so the COG is offset from the body origin in +y; serialisers need it to place the
+# footprint from a COM-only read-back (BodyState reports the COM, not the body origin).
+_BAR_CY = HALF_H - T_THICK / 2.0
+_STEM_CY = HALF_H - T_THICK - T_STEM / 2.0
+_AREA_BAR = T_BAR * T_THICK
+_AREA_STEM = T_STEM * T_THICK
+COG_Y = (_AREA_BAR * _BAR_CY + _AREA_STEM * _STEM_CY) / (_AREA_BAR + _AREA_STEM)
+
 Vert = tuple[float, float]
 
 
@@ -48,3 +57,14 @@ def add_t_load(space: pymunk.Space, pos: tuple[float, float], mass: float) -> py
     bar_shape.friction = stem_shape.friction = T_FRICTION
     space.add(body, bar_shape, stem_shape)
     return body
+
+
+def point_in_t_local(lx: float, ly: float) -> bool:
+    """Whether a point in the load's local frame lies inside the T footprint (the bar or stem box).
+
+    The canonical T geometry lives here, so the grid serialiser rasterises against this rather than
+    re-deriving the box bounds; it matches the boxes ``_t_shape_verts`` builds.
+    """
+    in_bar = abs(lx) <= T_BAR / 2.0 and HALF_H - T_THICK <= ly <= HALF_H
+    in_stem = abs(lx) <= T_THICK / 2.0 and -HALF_H <= ly <= HALF_H - T_THICK
+    return in_bar or in_stem
