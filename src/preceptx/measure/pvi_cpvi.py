@@ -131,7 +131,7 @@ def _fit_regressor(X: FloatArray, y: FloatArray, cfg: ProbeConfig) -> Any:
             max_iter=cfg.max_iter,
             random_state=cfg.seed,
         ).fit(X, y)
-    return Ridge(alpha=1.0).fit(X, y)
+    return Ridge(alpha=1.0 / cfg.c).fit(X, y)  # alpha is direct-strength; C is its inverse
 
 
 def _proba_aligned(clf: Any, X: FloatArray, classes: IntArray) -> FloatArray:

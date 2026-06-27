@@ -40,6 +40,13 @@ def test_twin_agreement_high_on_informative() -> None:
     assert agree.n == len(y)
 
 
+def test_twin_agreement_single_handoff_is_nan_not_crash() -> None:
+    agree = twin_agreement(np.array([1.0]), np.array([0.5]))  # correlation undefined at n=1
+    assert agree.n == 1
+    assert np.isnan(agree.pearson_r)
+    assert np.isnan(agree.spearman_rho)
+
+
 def test_kl_cap_applied_and_counted() -> None:
     p_cond = np.array([[0.999999, 0.000001], [0.5, 0.5]])
     p_base = np.array([[0.000001, 0.999999], [0.5, 0.5]])

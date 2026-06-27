@@ -63,6 +63,13 @@ def test_continuous_informative_positive_and_noise_near_zero() -> None:
     assert float(np.mean(cpvi_continuous(e_s, e_m, y, g, CFG))) < 0.05
 
 
+def test_ridge_regulariser_tracks_config_c() -> None:
+    e_s, e_m, y, g = make_continuous("informative")
+    strong = float(np.mean(cpvi_continuous(e_s, e_m, y, g, ProbeConfig(c=0.001))))
+    weak = float(np.mean(cpvi_continuous(e_s, e_m, y, g, ProbeConfig(c=1000.0))))
+    assert strong < weak  # small c -> large alpha -> shrunk fit -> less recovered information
+
+
 def test_heteroscedastic_continuous_is_reserved() -> None:
     e_s, e_m, y, g = make_continuous("noise", n=40)
     with pytest.raises(NotImplementedError, match="heteroscedastic"):
