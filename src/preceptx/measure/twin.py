@@ -72,10 +72,11 @@ def twin_agreement(retro: FloatArray, prosp: FloatArray) -> TwinAgreement:
     diff = retro - prosp
     bias = float(np.mean(diff))
     sd = float(np.std(diff, ddof=1)) if len(diff) > 1 else 0.0
+    paired = len(retro) > 1  # correlation is undefined on a single handoff
     return TwinAgreement(
         n=len(retro),
-        pearson_r=float(pearsonr(retro, prosp)[0]),
-        spearman_rho=float(spearmanr(retro, prosp)[0]),
+        pearson_r=float(pearsonr(retro, prosp)[0]) if paired else float("nan"),
+        spearman_rho=float(spearmanr(retro, prosp)[0]) if paired else float("nan"),
         ba_bias=bias,
         ba_loa_low=bias - 1.96 * sd,
         ba_loa_high=bias + 1.96 * sd,

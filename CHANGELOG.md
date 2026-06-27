@@ -201,6 +201,18 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
     with near-zero B-A bias on an informative fixture; the KL cap is applied and counted; JSD is 0 on
     identical and 1 bit on disjoint binary distributions and is symmetric; cosine on known vectors.
 
+### Fixed
+- Post-merge review hardening of the DSE-013/014/015 measurement spine (no CPVI/PVI values change on
+  the default path — pure correctness/perf):
+  - `Featuriser.embed_texts`: classify cache hits/misses in a single pass. The prior code built a
+    `miss_idx` *list* then tested `i not in miss_idx` per row (O(n·m)) and called `_cache_path`/
+    `Path.exists()` twice per text; the sweep-scale cost is now O(n) with one stat per text.
+  - `_fit_regressor` (continuous CPVI path) now wires `ProbeConfig.c` to the Ridge regulariser as
+    `alpha = 1.0 / c` (alpha is direct-strength, `C` its inverse), so the config knob takes effect on
+    the regressor as it already did on the logistic probe. Default `c=1.0 → alpha=1.0` is unchanged.
+  - `twin_agreement` returns `nan` Pearson/Spearman on a single handoff (`n<2`) instead of raising an
+    opaque scipy `ValueError`; correlation is undefined there.
+
 ### Changed
 - Repositioned `ISSUES.md` and `RESEARCH_ROADMAP.md` to the **standalone** posture mandated by
   CLAUDE.md: the repo does not depend on or import precept. OTel capture (DSE-004) uses a vanilla

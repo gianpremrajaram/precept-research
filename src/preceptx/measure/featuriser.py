@@ -106,10 +106,13 @@ class Featuriser:
         if not texts:
             return np.empty((0, 0), dtype=np.float64)
         vectors: list[NDArray[np.float64] | None] = [None] * len(texts)
-        miss_idx = [i for i, t in enumerate(texts) if not self._cache_path(t).exists()]
-        for i, text in enumerate(texts):
-            if i not in miss_idx:
-                vectors[i] = np.load(self._cache_path(text))
+        miss_idx: list[int] = []
+        for i, text in enumerate(texts):  # one stat per text; load hits inline, collect misses
+            path = self._cache_path(text)
+            if path.exists():
+                vectors[i] = np.load(path)
+            else:
+                miss_idx.append(i)
         if miss_idx:
             encoded: NDArray[np.float64] = (
                 self._backend()
