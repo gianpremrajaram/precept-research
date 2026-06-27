@@ -281,6 +281,54 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
     under a Y-relabelling (the dual no-Y check — signature *and* call-path); twin agreement is high
     with near-zero B-A bias on an informative fixture; the KL cap is applied and counted; JSD is 0 on
     identical and 1 bit on disjoint binary distributions and is symmetric; cosine on known vectors.
+- **DSE-016** — Target-free runtime statistics (`src/preceptx/gate/statistics.py`):
+  - `Statistic` ABC — **`fit(e_s, e_m, y)` may use Y; `score(e_s, e_m)` never does**, so the no-outcome
+    guarantee is structural (a test asserts `score`'s signature is exactly `(self, e_s, e_m)`). Each
+    statistic owns the label it predicts via `label(records)`, so a caller cannot feed the wrong Y to
+    the wrong statistic; `key` is a stable string (`"info"`/`"fail"`/`"cosine"`) so DSE-018 loads by
+    key, not by Python class name (which a rename would silently break).
+  - `InfoStatistic` (`s_info`) — Shannon entropy `H(g_cond)` in bits of the offline probe's predicted
+    outcome distribution; reuses the CPVI estimator's `_fit_classifier`, so it is the *same* probe
+    family as `g_cond`. A one-class fold → `None` probe → entropy 0 (no crash); `n_classes` is stored
+    for threshold interpretability (entropy is bounded `[0, log2 K]`, so a raw threshold depends on K).
+  - `FailStatistic` (`s_fail`) — `P(fail)` from a failure-risk probe on `[e_s;e_m]` against
+    `¬y_terminal_success`; a one-class fold falls back to the base-rate constant predictor.
+  - `CosineStatistic` (`s_cos`) — `cos(e_m, e_s)` (message vs pre-handoff state), **reusing
+    `divergence.embedding_cosine`** (the DSE-015 state-echo bridge, zero-norm safe). Probe-independent
+    (no fit, no Y) — the statistic that answers the circularity objection.
+  - `score_records` returns `(scores, episode_groups)` so the DSE-017 cross-fit join lives in one
+    place; `_require_labelled` fails loud (`ConfigError`) on any `y_terminal_success=None`.
+  - `save_statistic`/`load_statistic` — joblib blob + a `StatisticManifest` (key, encoder name +
+    revision, probe config, train-dataset hash, `n_classes`, `git_sha`, timestamp), gitignored; the
+    key is validated on load. A linked provenance record rather than a second `RunManifest` schema.
+  - Tests: the no-Y signature check on all three; cosine probe-independence and zero-norm → 0; entropy
+    bounded and lower when the outcome is predictable; `s_fail` learns on a separable fixture;
+    single-class degeneracies; save/load round-trip + key-mismatch guard. Gate coverage 94%.
+- **DSE-017** — Offline gate calibration (`src/preceptx/gate/calibration.py`):
+  - `calibrate(records, featuriser)` validates each statistic against **realised failure**
+    (`¬y_terminal_success`), **never CPVI** — `target` is the literal `"realised_failure"` and the
+    entry point has no CPVI parameter (the D10 circularity guard, R5). The "predict low-CPVI" tracking
+    is deliberately left to DSE-022 so it can never feed the gate threshold.
+  - Honest held-out scores via `_oof_scores`: GroupKFold by episode (no episode spans train/test).
+    A per-handoff random split would let the probe memorise an episode's shared state and inflate
+    AUROC (R6); a quantitative test asserts `auroc_random − auroc_grouped > 0.1`.
+  - `_orient` flips a statistic anti-correlated with failure (AUROC < 0.5) and records the orientation;
+    the threshold sits on the **raw oriented score** so DSE-018 applies it with one comparison.
+  - `_choose_threshold` — most aggressive threshold with firing rate ≤ budget (default 0.2), i.e. max
+    failures-caught within budget; deterministic. A tie mass at the budget quantile steps just above
+    the tie (never overshoots the budget); if that empties, the no-op threshold fires nothing. The
+    firing rate is recorded for DSE-018's matched-firing-rate control.
+  - ECE / reliability — a **report-only** Platt map (1-D logistic) fit on the *held-out* scores (not
+    in-sample, or the ECE flatters itself) → `P(fail)`, then equal-width `n_bins` ECE. Empty bins are
+    skipped (keeps the JSON nan-free and round-trippable); per-bin counts are surfaced;
+    `ece_reliable=False` plus a log warning below N=200, where 10-bin ECE is high-variance.
+  - `write_report` — JSON always (the load-bearing artefact); a reliability PNG only with the `viz`
+    extra (`matplotlib` lazy-imported in `_render_figure`, skipped with a log line when absent). Added
+    the `viz` optional extra; `uv.lock` regenerated; DEPENDENCIES.md §3 updated.
+  - Tests: the group-vs-random leakage check (quantitative); AUROC perfect / single-class; orientation
+    flip; threshold budget + reproducibility + tie handling; Platt ECE low on an informative fixture
+    and `None` on a single-class one; the against-CPVI signature guard; an integration
+    calibrate → `write_report` → reload round-trip on a torch-free fixture.
 
 ### Fixed
 - **DSE-004** — `write_handoffs` now writes each Parquet part to a hidden temp (`.part-NNNNN.parquet.tmp`)
