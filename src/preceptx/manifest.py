@@ -67,7 +67,7 @@ def config_hash(config: ExperimentConfig) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
-def _git_sha() -> str:
+def git_sha() -> str:
     try:
         out = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -82,7 +82,7 @@ def _git_sha() -> str:
     return out.stdout.strip()
 
 
-def _dep_versions() -> dict[str, str]:
+def dep_versions() -> dict[str, str]:
     versions: dict[str, str] = {}
     for dep in _TRACKED_DEPS:
         try:
@@ -101,7 +101,7 @@ def build_manifest(
 ) -> RunManifest:
     """Assemble a complete manifest from the config plus the live environment."""
     return RunManifest(
-        git_sha=_git_sha(),
+        git_sha=git_sha(),
         config=config,
         config_hash=config_hash(config),
         model_name=config.model.name,
@@ -109,7 +109,7 @@ def build_manifest(
         encoder_revision=encoder_revision,
         seed=config.seed,
         command=list(sys.argv),
-        dep_versions=_dep_versions(),
+        dep_versions=dep_versions(),
         timestamp=dt.datetime.now(dt.UTC).isoformat(),
         metrics=metrics or {},
         artefact_paths=artefact_paths or {},

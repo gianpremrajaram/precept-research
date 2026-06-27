@@ -94,6 +94,17 @@ def test_append_creates_new_part_without_clobbering(tmp_path: Path) -> None:
     assert len(load_records("abc", root=tmp_path)) == 2
 
 
+def test_truncated_temp_part_does_not_poison_reads_or_part_index(tmp_path: Path) -> None:
+    write_handoffs([_record()], root=tmp_path, dataset_hash="abc")
+    # Simulate a crash mid-write: a leftover, truncated temp part (garbage, not valid parquet).
+    (tmp_path / "abc" / ".part-00001.parquet.tmp").write_bytes(b"truncated junk")
+    assert len(load_records("abc", root=tmp_path)) == 1  # read ignores the temp, no parse error
+    write_handoffs([_record()], root=tmp_path, dataset_hash="abc")  # resume
+    parts = sorted((tmp_path / "abc").glob("part-*.parquet"))
+    assert [p.name for p in parts] == ["part-00000.parquet", "part-00001.parquet"]  # temp uncounted
+    assert len(load_records("abc", root=tmp_path)) == 2
+
+
 def test_empty_write_raises(tmp_path: Path) -> None:
     with pytest.raises(DatasetError):
         write_handoffs([], root=tmp_path, dataset_hash="abc")

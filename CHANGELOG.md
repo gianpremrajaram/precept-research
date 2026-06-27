@@ -140,6 +140,87 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
     routed path exceeds the straight line (proving it routes through the slits); `reached_goal` fires
     only in the region; `step_progress` sign; the four labels on a solving episode; terminal-false +
     backward-progress on a pushed-away step; every label populated; labeller determinism.
+- **DSE-010** — Two-agent episode graph (`src/preceptx/agents/graph.py`, `prompts.py`):
+  - `graph.py` — a LangGraph `StateGraph` wiring `agent_A` (emits a natural-language handoff via
+    `LLMClient.chat`) → `agent_B` (chooses a structured `Action` via `LLMClient.structured` guided
+    decoding) → `apply` (steps the simulator and records one `HandoffRecord`), with a conditional
+    edge looping to `agent_A` until the goal is reached or the step budget is spent. **Key signal:**
+    termination is *our* step-budget logic, not LangGraph's — `recursion_limit` is set to
+    `3·max_steps + 10` so the route function (not a `GraphRecursionError`) ends the episode.
+  - `EpisodeRunner` — holds the injected `LLMClient` + fixed channel/step/outcome configs;
+    `run_episode(cell, episode_id)` builds the per-episode scenario, compiles a fresh graph over it,
+    runs to termination, then fills the four `Y` labels via `label_episode` (DSE-009). A mock client
+    makes the whole loop testable with no live model.
+  - **Framework-thin by design:** LangGraph only sequences nodes; static handles (pymunk
+    `space`/`load`, geometry, goal, slit) are closure-bound and only a minimal dynamic `TypedDict`
+    crosses the graph, so the langgraph-as-`Any` boundary is contained to one explicit `cast` at
+    `invoke`. A LangGraph API change touches only this module.
+  - `Action` (Pydantic, `extra="forbid"`) = `{action: MacroAction}`; its `model_json_schema()` is the
+    guided-decoding constraint. **Invalid action despite the schema → default `WAIT` + log** — the one
+    ticket-sanctioned fail-*soft* (an out-of-enum value raises `ValidationError`, caught at the node).
+  - The A→B message passes through a single `apply_channel` choke point — the seam the runtime gate
+    (DSE-018) later intercepts.
+  - `prompts.py` — versioned `PROMPT_A`/`PROMPT_B` (`PROMPT_VERSION = "v1"`). A wording change is
+    result-affecting, so the version is recorded in the **run manifest, not the record** (the frozen
+    `HandoffRecord` schema has no prompt field).
+  - Tests (mock LLM via `respx`, scripting A-chat vs B-structured by inspecting for `guided_json`):
+    loops to budget on `WAIT`; terminates on success (7 east pushes clear the easy goal); invalid
+    action falls back to `WAIT`; fixed responses give an identical trajectory (determinism); C1
+    delivery is captured on the record.
+- **DSE-011** — Communication channel (`src/preceptx/agents/channel.py`):
+  - `apply_channel(message, condition, …)` — the degradation ladder applied to the A→B message and
+    B's observation **only** (never physics or the action path): **C0** passthrough; **C1** whitespace-
+    token cap; **C2** one-step delivery delay (a sentinel `"(no message yet)"` at step 0, the final
+    message dropped); **C3** observation window (the message is left intact); **C4** seeded token
+    dropout. Each is selected by the cell's `condition`.
+  - `ChannelResult` (`NamedTuple`, mirroring `Scenario`) = `(message_delivered, observation_override,
+    new_buffer)` — the `observation_override` (C3) and `new_buffer` (C2) are how the channel signals
+    the graph without reaching into physics.
+  - **C3 is the sanctioned observation exception:** it restricts B's view, not the message —
+    grid → a row band `±c3_window_rows` around the load `T`; numeric → drop the `goal=` line; nl →
+    keep only the self-state sentence. This is what **forces the message to carry the goal/global
+    layout** (the asymmetry RQ depends on).
+  - **Determinism:** C4 dropout draws from `default_rng([seed, step])`, so a degraded message is a
+    reproducible function of the seed. *ponytail:* C1 caps on whitespace tokens, not the model
+    tokenizer (noted as the upgrade path).
+  - `ChannelConfig` — `c1_max_tokens`, `c3_window_rows`, `c4_dropout`, and **`c5_enabled` (a real
+    `bool` field, default `False`)** so the supervisor-relay stub (full impl DSE-026) is auditable in
+    the manifest rather than a comment/env-var.
+  - Tests: each condition transforms as specified; C2 delays by exactly one step incl. the step-0
+    edge; C4 dropout is seed-deterministic; C3 windows the observation (grid/numeric/nl) while
+    leaving the message intact; C5 off by default.
+- **DSE-012** — Episode runner and batch sweep executor (`src/preceptx/experiments/sweep.py`,
+  `runner.py`):
+  - `sweep.py::SweepConfig` — the RQ1 grid as axis lists (`conditions × serialisations × difficulties
+    × seeds`) plus the fixed `model`, `channel`, `max_steps`, `concurrency`. `expand` takes the
+    Cartesian product into validated single-cell `ExperimentConfig`s. **Key decision:** **one episode
+    per cell, with replication carried by the seed axis** — greedy decoding + deterministic physics
+    make repeated identical cells pointless, so there is no separate `n_episodes` knob.
+  - `episode_id(cell)` — the deterministic resume key; `sweep_hash` — the content hash feeding the
+    dataset hash. `RunSummary` (cells / episodes / handoffs / success rate / wall time) and
+    `SweepManifest` — the **run-level reproducibility record for a grid** (the per-cell `RunManifest`
+    in `manifest.py` models a single cell), carrying the resolved sweep + hash + `prompt_version` +
+    summary.
+  - `runner.py::run_grid(sweep, client, root)` — bounded-concurrent episode execution (a
+    `ThreadPoolExecutor` sized by `sweep.concurrency`, suited to the sync `LLMClient`), with **record
+    writes funnelled through one `threading.Lock`** so the append-only writer never races its
+    `len(glob("part-*"))` part index — concurrency sits on the LLM-bound work, serialisation on the
+    cheap write, and `write_handoffs`/DSE-004 is untouched. **Resumable:** completed `episode_id`s are
+    read **once** up front and skipped (idempotent); the summary rolls up the **whole** dataset incl.
+    earlier-run episodes. Fail-loud: an episode error propagates out of `pool.map`.
+  - **Key interaction signal:** run artefacts (`manifest.json`/`summary.json`) are written to a
+    **sibling `<dataset_hash>-run/` dir, not inside the dataset dir** — `load_records` reads the whole
+    dataset dir as one parquet table, so a stray JSON there breaks the read (caught by the
+    close-the-loop test). `register_dataset` links the manifest path.
+  - Supporting surgical edits: `arena.slit_width_for(difficulty)` exposed (the graph needs the active
+    slit to build the `SceneState`, which `make_scenario` does not return); `manifest._git_sha` /
+    `_dep_versions` promoted to public `git_sha` / `dep_versions` for reuse by `SweepManifest`
+    (mirroring the existing `config_hash` function/field idiom; no `RunManifest` schema change).
+  - Tests (mock LLM): a small grid writes one record set per cell with unique ids; **concurrency is
+    safe** (4 workers, no dropped/duplicated records — the write-lock test); resume skips completed
+    cells and does not duplicate. Integration `test_spine_closes_loop` — real runner output flows
+    through the featuriser (stub encoder) into `cpvi`, returning a finite score per handoff (hard +
+    east push moves-then-jams to carry both `y_binary_progress` classes for the group folds).
 - **DSE-013** — Embedding featuriser (`src/preceptx/measure/featuriser.py`):
   - `Featuriser` — turns `HandoffRecord`s into the aligned `(e_s, e_m)` arrays the estimator
     consumes (state from `state_str`, message from `message_delivered`), row-for-row in record
@@ -202,6 +283,13 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
     identical and 1 bit on disjoint binary distributions and is symmetric; cosine on known vectors.
 
 ### Fixed
+- **DSE-004** — `write_handoffs` now writes each Parquet part to a hidden temp (`.part-NNNNN.parquet.tmp`)
+  and atomically renames it into place (`os.replace`, atomic within one directory). A crash mid-write
+  previously left a truncated `part-*.parquet` that poisoned every subsequent whole-dir read
+  (`pq.read_table(dataset_dir)`) and resume. The temp is invisible to both the `part-*.parquet` glob
+  (wrong prefix/suffix, so it never inflates the next part index) and pyarrow's directory discovery
+  (which skips `.`-prefixed files); its name is keyed on the part index, so a resume overwrites any
+  stale leftover. Surfaced by the DSE-012 close-the-loop smoke.
 - Post-merge review hardening of the DSE-013/014/015 measurement spine (no CPVI/PVI values change on
   the default path — pure correctness/perf):
   - `Featuriser.embed_texts`: classify cache hits/misses in a single pass. The prior code built a

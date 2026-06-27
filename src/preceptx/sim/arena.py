@@ -93,6 +93,12 @@ def make_scenario(difficulty: Difficulty) -> Scenario:
     return Scenario(space=space, load=load, goal=goal)
 
 
+def slit_width_for(difficulty: Difficulty) -> float:
+    """The slit width for a difficulty (the load's y-extent is 1.3); the graph needs it to build the
+    ``SceneState`` for serialisation, which ``make_scenario`` does not return."""
+    return _DIFFICULTY_SLITS[difficulty]
+
+
 def chamber_of(com_x: float, geometry: ArenaGeometry) -> int:
     """Which chamber (1, 2 or 3, left to right) an x-coordinate falls in.
 

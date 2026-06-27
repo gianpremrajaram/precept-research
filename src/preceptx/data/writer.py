@@ -88,8 +88,14 @@ def write_handoffs(
     dataset_dir.mkdir(parents=True, exist_ok=True)
     part_index = len(list(dataset_dir.glob("part-*.parquet")))
     part_path = dataset_dir / f"part-{part_index:05d}.parquet"
+    # Write to a hidden temp, then atomically rename in. A crash mid-write leaves a ".part-*.tmp"
+    # that both the part-*.parquet glob (wrong prefix and suffix) and pyarrow's directory read
+    # (ignores "."-prefixed files) skip, so a truncated part can never poison a resume or read.
+    # The temp name is keyed on the part index, so a resume overwrites any stale leftover.
+    tmp_path = dataset_dir / f".part-{part_index:05d}.parquet.tmp"
     table = pa.Table.from_pylist([_record_to_row(r) for r in records], schema=_ARROW_SCHEMA)
-    pq.write_table(table, part_path)
+    pq.write_table(table, tmp_path)
+    tmp_path.replace(part_path)  # os.replace: atomic within one directory
     logger.info("wrote %d handoffs to %s", len(records), part_path)
     return part_path
 
