@@ -27,6 +27,7 @@ runs/*/probes/
 runs/*/embeddings/
 *.npy
 *.joblib
+.embed_cache/
 
 # Model / HF caches and weights
 .cache/
