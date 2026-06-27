@@ -71,6 +71,7 @@ Floor-and-ceiling pinned in `pyproject.toml`; `uv.lock` is the reproducibility a
 - `serving` → `vllm` (Myriad GPU nodes only; not needed by analysis code).
 - `embed` → `sentence-transformers` (the only `torch` puller; consumed by the DSE-013 featuriser onwards). **Deviation from roadmap §"stack baseline":** the roadmap lists `sentence-transformers` among primary deps; it is isolated to an extra here so core installs/CI stay fast. The science still requires it — install `.[embed]` for the measurement stack.
 - `data` → `datasets` (HuggingFace; RQ3a loaders, DSE-023).
+- `viz` → `matplotlib` (renders calibration/analysis figures, DSE-017 onwards). The JSON report is the load-bearing artefact and all tests pass without it, so figures stay optional and CI stays light; `gate/calibration.py` imports matplotlib lazily inside the render path and skips with a log line when absent.
 - `dev` → `pytest`, `pytest-cov`, `hypothesis`, `mypy`, `ruff`, `pip-audit`, `pre-commit`, `respx` (mocks the OpenAI/httpx endpoint for serving tests).
 
 Standalone constraint: **precept is NOT a dependency** and is never imported (CLAUDE.md). The OTel capture (DSE-004) and the runtime gate (DSE-018) are in-repo.
