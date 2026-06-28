@@ -329,6 +329,63 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
     flip; threshold budget + reproducibility + tie handling; Platt ECE low on an informative fixture
     and `None` on a single-class one; the against-CPVI signature guard; an integration
     calibrate → `write_report` → reload round-trip on a torch-free fixture.
+- **DSE-019** — Pilot gate harness (`src/preceptx/experiments/pilot.py`):
+  - Three go/no-go gates as stateless functions over the loaded handoff records (only G2 needs the
+    featuriser): **G1 capability** (C0 self-play episode success rate vs a configurable floor),
+    **G2 signal** (the C0-to-hard gap must clear thresholds in *both* outcome and CPVI — CPVI scored
+    held-out on the C0∪hard subset, with a single-outcome-class guard that returns a note rather than
+    crashing), **G3 groundedness** (fraction of a message's numeric tokens that match a true `state`
+    number within abs/rel tolerance; a message citing no numbers is vacuously grounded). `ponytail`
+    ceiling on G3: number-matching grounds load-pose mentions only — not directional lies or the
+    goal/slit (not persisted per record); upgrade path is per-serialisation entity parsing.
+  - "hard" is the highest-index condition present (C0<…<C4); fails loud (`ConfigError`) on unlabelled
+    episodes or a missing C0/contrast (a local 3-line labelled-data guard keeps the Phase-1 pilot
+    decoupled from the Phase-5 gate module).
+  - `run_pilot` → `PilotReport` whose recommendation escalates by `attempt`
+    (proceed → retune_once → fallback; exactly one retune allowed, per the roadmap);
+    `render_report`/`write_pilot_report` emit a one-page Markdown report + JSON with the fallback
+    ladder (elevate RQ3a; simplify the task; reframe as a diagnostic negative) always spelled out.
+  - Tests: each gate's known-answer fixture (grounded vs hallucinated coords; a constructed C0/C4
+    gradient for the CPVI gap; the single-class guard), the attempt→recommendation ladder, the report
+    render, and an integration run over a stub `run_grid` sweep that emits a report.
+- **DSE-020** — RQ1 information-gradient driver (`src/preceptx/experiments/rq1.py`):
+  - `rq1_sweep` assembles the C0–C4 × serialisation × difficulty × seed factorial; `analyse_rq1`
+    (runner-free, fixture-testable) scores per-handoff CPVI and PVI, summarises each condition
+    (success rate, steps, collisions, mean CPVI — each with a bootstrap CI — and the mandatory
+    **PVI−CPVI gap**), and builds Ck-vs-C0 contrasts (Cliff's δ + a two-sample bootstrap CI, with
+    Holm/BH-corrected mixed-model p-values). `run_rq1` = grid + analyse.
+  - **Mixed-effects model**: a linear-probability `statsmodels` MixedLM of the per-handoff progress
+    outcome on condition, with **seed as the group random intercept and episode as a variance
+    component nested within it** — the only level where random effects for both seed and episode plus
+    a per-handoff CPVI mediator fit one model (the episode id encodes the seed, so episode ⊂ seed).
+    The descriptive headline stays the episode-level success gradient (H1). H2 mediation is the
+    Baron-Kenny attenuation step (refit with CPVI; report the condition-coefficient shrinkage).
+    `ponytail`: LPM not GLMM, attenuation not a bootstrapped indirect effect — both upgrade paths noted.
+  - MixedLM fit warnings (e.g. `ConvergenceWarning` on small fits) are captured and surfaced as
+    WARNING log lines, not crashes (a degraded mode, under `filterwarnings=error`); `analyse_rq1`
+    fails loud on unlabelled or single-class progress data.
+  - `write_rq1` persists the analysis JSON, a per-condition results CSV, and the
+    outcome-vs-condition / CPVI-vs-condition figures (viz-guarded). No new dependency —
+    `statsmodels`/`scipy`/`pandas` are already core.
+  - Tests: the factorial assembles the expected cells; a synthetic C0→C4 known-answer fixture
+    (success + CPVI gradients, a negative C4 coefficient, corrected contrast p-values); the
+    table/JSON persistence; an integration mock-grid run end to end.
+- **DSE-028** — Shared analysis library (`src/preceptx/analysis/`):
+  - `stats.py` — generic primitives on plain arrays (functions, not classes): `cohens_d` (pooled-SD,
+    0.0 on zero spread), `cliffs_delta` (distribution-free, O(na·nb) pairwise sign — the right effect
+    size for skewed steps/CPVI), `bootstrap_ci` (seed-deterministic percentile bootstrap,
+    parameterised by statistic), `correct_pvalues` (wraps `statsmodels.multipletests` for Holm/BH —
+    never reimplemented; a property test pins corrected ≥ raw), `seed_sensitivity` (across-seed
+    mean/sd/spread — the mandatory LLM-non-determinism companion), `load_analysis_frame` (reuses
+    `data.writer.load_dataset`, adds a nullable `failure` that stays `None` on unlabelled episodes),
+    and `ANALYSIS_PROTOCOL` (the report-citable test-per-hypothesis map, frozen with Y/V).
+  - `figures.py` — one house style + a reusable `ci_plot` (asymmetric error bars so bootstrap
+    intervals render faithfully); `matplotlib` guarded behind the optional `viz` extra exactly like
+    the calibration figure, so the JSON/table artefacts stay load-bearing and figure calls no-op
+    (with a log line) when the extra is absent.
+  - Tests: effect sizes / bootstrap CI / corrections on known inputs, a Hypothesis property that
+    correction never increases significance, seed-sensitivity aggregation, the nullable-`failure`
+    loader, and the figure no-op-vs-render branches.
 
 ### Fixed
 - **DSE-004** — `write_handoffs` now writes each Parquet part to a hidden temp (`.part-NNNNN.parquet.tmp`)
