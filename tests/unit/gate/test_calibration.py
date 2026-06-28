@@ -67,5 +67,8 @@ def test_platt_ece_low_on_informative_and_none_on_single_class() -> None:
 
 
 def test_calibrate_target_is_failure_never_cpvi() -> None:
+    # Circularity guard, signature half: calibrate() cannot take CPVI. The real-report half -
+    # `report.target == "realised_failure"` on a calibrated report - is asserted in
+    # tests/integration/test_calibration_report.py.
     params = set(inspect.signature(calibrate).parameters)
     assert "cpvi" not in params and "cpvi_scores" not in params  # cannot calibrate against CPVI

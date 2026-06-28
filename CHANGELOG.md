@@ -348,6 +348,12 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
     the regressor as it already did on the logistic probe. Default `c=1.0 → alpha=1.0` is unchanged.
   - `twin_agreement` returns `nan` Pearson/Spearman on a single handoff (`n<2`) instead of raising an
     opaque scipy `ValueError`; correlation is undefined there.
+- Post-merge review hardening of the DSE-016/017 runtime gate (a log line + docs only; no threshold,
+  score, or report values change):
+  - `_choose_threshold` now emits a `WARNING` when the firing-rate budget is infeasible — degenerate
+    or constant oriented scores, where stepping above the budget-quantile tie empties the candidate
+    set — and the threshold falls back to no-op (fires nothing). The silent version handed DSE-018 a
+    never-firing gate with no diagnostic; the chosen threshold value itself is unchanged.
 
 ### Changed
 - Repositioned `ISSUES.md` and `RESEARCH_ROADMAP.md` to the **standalone** posture mandated by

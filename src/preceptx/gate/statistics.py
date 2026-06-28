@@ -112,6 +112,10 @@ class InfoStatistic(Statistic):
         self.n_classes = 0
 
     def label(self, records: list[HandoffRecord]) -> IntArray:
+        # Entropy is label-encoding-invariant for a binary outcome: training on success vs failure
+        # swaps the predict_proba columns, which _entropy_bits sums over - so the score is identical
+        # either way (the choice only bites once Y goes multiclass). Failure-orientation is set by
+        # the DSE-017 calibration downstream, not by which label is returned here.
         return outcome_label(records)
 
     def fit(self, e_s: FloatArray, e_m: FloatArray, y: IntArray) -> None:
