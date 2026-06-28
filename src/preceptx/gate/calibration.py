@@ -144,7 +144,14 @@ def _choose_threshold(score: FloatArray, budget: float) -> tuple[float, float]:
     firing = float(np.mean(score >= t))
     if firing > budget:
         above = score[score > t]
-        t = float(np.min(above)) if above.size else float(np.max(score)) + 1.0
+        if above.size:
+            t = float(np.min(above))
+        else:  # degenerate/constant scores: no within-budget cut exists, so block nothing
+            logger.warning(
+                "firing_rate_budget %.2f infeasible (degenerate scores) - threshold set to no-op",
+                budget,
+            )
+            t = float(np.max(score)) + 1.0
         firing = float(np.mean(score >= t))
     return t, firing
 
@@ -156,6 +163,8 @@ def _platt_reliability(
 
     The Platt fit is on the held-out (cross-fit) scores, not in-sample statistic scores, so the ECE
     is honest. The residual optimism of evaluating a 2-parameter map on its own fit is second order.
+    The map is a fixed 1-parameter logistic (default ``C``), deliberately not wired to
+    ``ProbeConfig.c``, which governs the statistic's probe rather than this calibration map.
     """
     if len(np.unique(fail)) < 2:
         return None, []
