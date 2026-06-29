@@ -50,11 +50,16 @@ class PilotConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     g1_success_floor: float = Field(default=0.5, ge=0, le=1)  # C0 self-play must clear this
-    g2_min_success_gap: float = Field(default=0.1, ge=0)  # C0 minus hard success rate
-    g2_min_cpvi_gap: float = Field(default=0.0)  # C0 minus hard mean CPVI (bits)
+    g2_min_success_gap: float = Field(default=0.1, ge=0)  # C0 minus hard success rate (magnitude)
+    # Directional only: CPVI is in bits and its scale is uncalibrated until the pilot runs,
+    # so a magnitude floor cannot be honestly pre-specified here. The 0.1 success-gap above carries
+    # the magnitude claim; this gate asks the CPVI gradient merely points the right way. Re-set this
+    # to a pre-registered positive floor once the pilot reveals the CPVI bit-scale (roadmap G2).
+    g2_min_cpvi_gap: float = Field(default=0.0)  # C0 minus hard mean CPVI (bits); see note above
     g3_grounding_floor: float = Field(default=0.8, ge=0, le=1)  # fraction of grounded mentions
     g3_abs_tol: float = Field(default=0.5, gt=0)  # a message number within this of a true one ...
     g3_rel_tol: float = Field(default=0.05, ge=0)  # ... or this fraction of it, is grounded
+    min_seeds_for_proceed: int = Field(default=3, ge=1)  # proceed needs >= this many seeds
     cpvi_probe: ProbeConfig = Field(default_factory=ProbeConfig)
 
 
@@ -78,9 +83,11 @@ class PilotReport(BaseModel):
 
     dataset_hash: str
     n_episodes: int
+    n_seeds: int
     attempt: int
     gates: list[GateResult]
     recommendation: Recommendation
+    recommendation_note: str = ""  # why a verdict was held back (e.g. too few seeds to proceed)
     fallback_ladder: str = FALLBACK_LADDER
 
 
@@ -242,10 +249,19 @@ def g3_groundedness(records: list[HandoffRecord], cfg: PilotConfig) -> GateResul
     )
 
 
-def _recommendation(gates: list[GateResult], attempt: int) -> Recommendation:
-    if all(g.passed for g in gates):
-        return "proceed"
-    return "retune_once" if attempt <= 1 else "fallback"  # one retune allowed, then pivot
+def _recommendation(
+    gates: list[GateResult], attempt: int, n_seeds: int, cfg: PilotConfig
+) -> tuple[Recommendation, str]:
+    """Verdict plus the reason it was held back, if any. Gates first, then the seed-count floor."""
+    if not all(g.passed for g in gates):
+        return ("retune_once" if attempt <= 1 else "fallback"), ""  # one retune allowed, then pivot
+    if n_seeds < cfg.min_seeds_for_proceed:
+        return "retune_once", (
+            f"all gates pass but only {n_seeds} seed(s) ran (< {cfg.min_seeds_for_proceed} needed "
+            "to proceed): a single-/few-seed pass is LLM noise, not a stable gradient. Add seeds "
+            "and re-pilot before greenlighting the full sweep."
+        )
+    return "proceed", ""
 
 
 def run_pilot(
@@ -265,12 +281,16 @@ def run_pilot(
         g2_signal(records, featuriser, cfg),
         g3_groundedness(records, cfg),
     ]
+    n_seeds = len({r.seed for r in records})
+    recommendation, note = _recommendation(gates, attempt, n_seeds, cfg)
     report = PilotReport(
         dataset_hash=dataset_hash,
         n_episodes=len(_episode_success(records)),
+        n_seeds=n_seeds,
         attempt=attempt,
         gates=gates,
-        recommendation=_recommendation(gates, attempt),
+        recommendation=recommendation,
+        recommendation_note=note,
     )
     logger.info("pilot %s: %s", dataset_hash or "(unnamed)", report.recommendation)
     return report
@@ -289,8 +309,9 @@ def render_report(report: PilotReport) -> str:
         "# Pilot gate report (G1/G2/G3)",
         "",
         f"- dataset: `{report.dataset_hash or '(unnamed)'}`",
-        f"- episodes: {report.n_episodes}  |  attempt: {report.attempt}",
+        f"- episodes: {report.n_episodes} | seeds: {report.n_seeds} | attempt: {report.attempt}",
         f"- **recommendation: {_ACTION_TEXT[report.recommendation]}**",
+        *([f"- _{report.recommendation_note}_"] if report.recommendation_note else []),
         "",
         "| Gate | Pass | Value | Threshold |",
         "| --- | --- | --- | --- |",

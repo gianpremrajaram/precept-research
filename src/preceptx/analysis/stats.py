@@ -14,6 +14,7 @@ protocol"); the RQ drivers cite it in their reports.
 from __future__ import annotations
 
 import logging
+import warnings
 from collections.abc import Callable, Mapping
 from typing import Literal
 
@@ -21,6 +22,8 @@ import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict
+from scipy.stats import DegenerateDataWarning
+from scipy.stats import bootstrap as _scipy_bootstrap
 from statsmodels.stats.multitest import multipletests
 
 from preceptx.data.writer import load_dataset
@@ -109,16 +112,37 @@ def bootstrap_ci(
     alpha: float = 0.05,
     seed: int = 0,
 ) -> tuple[float, float]:
-    """Percentile bootstrap CI for ``statistic`` at level ``1 - alpha``. Deterministic via ``seed``.
+    """Bias-corrected accelerated (BCa) bootstrap CI for ``statistic``, percentile fallback.
 
     Distribution-free interval used everywhere uncertainty is reported (CLAUDE.md: intervals, not
-    bare significance). Resamples row indices with replacement; the percentile method is sufficient
-    for the symmetric-ish means and rank statistics we report.
+    bare significance). BCa corrects the percentile method's small-sample bias and skew (DSE-028
+    hardening) - it is the standard for the small, skewed pilot samples here. It is undefined on a
+    degenerate sample (no spread, so the jackknife acceleration divides by zero) and unstable below
+    three observations; those use the plain percentile interval instead. Deterministic via ``seed``.
     """
     x = np.asarray(x, dtype=np.float64)
     if len(x) == 0:
         raise ValueError("bootstrap_ci needs a non-empty sample")
+    if np.ptp(x) == 0.0:
+        return float(x[0]), float(x[0])  # constant sample: the interval collapses to the point
     rng = np.random.default_rng(seed)
+    if len(x) >= 3:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DegenerateDataWarning)  # a fall-through, not log noise
+            try:
+                ci = _scipy_bootstrap(
+                    (x,),
+                    statistic,
+                    n_resamples=n_boot,
+                    confidence_level=1.0 - alpha,
+                    method="BCa",
+                    random_state=rng,
+                    vectorized=False,
+                ).confidence_interval
+                if np.isfinite(ci.low) and np.isfinite(ci.high):
+                    return float(ci.low), float(ci.high)
+            except (DegenerateDataWarning, ValueError):
+                pass  # ponytail: BCa undefined here; the percentile branch below is the floor
     boot = np.array(
         [statistic(x[rng.integers(0, len(x), len(x))]) for _ in range(n_boot)], dtype=np.float64
     )

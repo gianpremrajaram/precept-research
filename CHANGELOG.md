@@ -411,6 +411,43 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
     or constant oriented scores, where stepping above the budget-quantile tie empties the candidate
     set — and the threshold falls back to no-op (fires nothing). The silent version handed DSE-018 a
     never-firing gate with no diagnostic; the chosen threshold value itself is unchanged.
+- Post-merge review hardening of the DSE-019/020/028 analysis stack (result-*shape*-affecting; no RQ1
+  result is frozen yet, so nothing to re-freeze):
+  - **H2 mediation moved to the episode level (DSE-020).** The old test entered per-handoff CPVI as a
+    covariate on the per-handoff *progress* outcome and reported only the condition-coefficient
+    attenuation — a different DV from H1's episode success, and one that conflated within- vs
+    between-episode CPVI variance (the "easier episodes carry more CPVI" confound). `analyse_rq1` now
+    runs a full Baron-Kenny mediation on the **headline** DV: episode success on condition with the
+    mediator aggregated to **episode-mean CPVI** — path *a* (`cpvi~condition`), path *b*/*c'*
+    (`success~condition+cpvi`), total *c*, and the **indirect effect a·b per condition with a
+    percentile bootstrap CI** over episodes (degenerate resamples — a dropped condition or single-class
+    outcome — are skipped). The handoff-level CPVI attenuation is retained as a labelled *within-episode
+    diagnostic*, not the H2 test. H1's inferential model is unchanged (handoff LPM, seed RE + episode
+    VC — still the only level where both random effects fit). New `RQ1Config.n_boot_mediation` (default
+    400; the model-refit bootstrap is far costlier per draw than the one-sample CIs). New
+    `EpisodeMediation` model; `MixedModelSummary` reshaped — drops `coef_with_cpvi`, renames
+    `cpvi_coef`→`diagnostic_cpvi_coef`, adds the mediation block (`path_b`, `mediations`,
+    `mediation_outcome`) and `converged`/`mediation_converged` flags. `ponytail`: both fits stay LPMs;
+    logistic path *b* + delta-method indirect noted as the upgrade.
+  - **`bootstrap_ci` → BCa (DSE-028).** Bias-corrected-accelerated bootstrap via `scipy.stats.bootstrap`
+    (corrects the percentile method's small-sample bias/skew — the right default for the small, skewed
+    pilot samples), with a guarded fall-back to the plain percentile interval for the cases BCa cannot
+    handle: a constant sample (collapses to the point) and n < 3 (the jackknife acceleration is
+    undefined). Deterministic via `seed`. No new dependency — `scipy` is already core.
+  - **Mixed-model convergence is now persisted** into `rq1.json` (`converged`, `mediation_converged`),
+    so a non-converged fit is auditable, not just a transient WARNING line.
+  - **Seed sensitivity now tracks the gradient, not a collapsed metric (DSE-020).** `analyse_rq1` feeds
+    `seed_sensitivity` the per-seed **C0-minus-hardest success gap**, so its spread answers "is the
+    C0→C4 ordering seed-stable?" rather than "does overall success vary across seeds?" (which it always
+    does, from LLM non-determinism). `seed_sensitivity` itself is unchanged.
+  - **Pilot proceed-verdict seed floor (DSE-019).** `PilotConfig.min_seeds_for_proceed` (default 3)
+    downgrades an all-gates-pass verdict from `proceed` to `retune_once` with a `recommendation_note`
+    when too few seeds ran — a single-/few-seed pass is LLM noise, not a stable gradient. `PilotReport`
+    gains `n_seeds` and `recommendation_note` (both surfaced in the rendered report).
+  - **G2 CPVI-gap floor documented as deliberately directional (DSE-019).** The `g2_min_cpvi_gap=0.0`
+    default ("any positive CPVI gap") is now annotated as intentional: CPVI's bit-scale is uncalibrated
+    until the pilot runs, so a magnitude floor cannot be honestly pre-specified — the 0.1 success-gap
+    carries the magnitude; re-set to a pre-registered positive floor once the pilot reveals the scale.
 
 ### Changed
 - Repositioned `ISSUES.md` and `RESEARCH_ROADMAP.md` to the **standalone** posture mandated by
