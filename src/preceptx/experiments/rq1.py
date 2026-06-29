@@ -2,17 +2,26 @@
 
 Assemble the factorial (C0-C4 x serialisation x difficulty x seed), run self-play through the
 runner, then analyse: per-condition outcome and CPVI (always with the PVI-minus-CPVI gap, never bare
-message value), a mixed-effects model of outcome on condition, and the H2 mediation test entering
-CPVI as a covariate (roadmap §3.2). The descriptive headline is the *episode-level* success gradient
-C0->C4 (H1); the inferential model is fit at the *handoff* level on the per-step progress outcome,
-which is the only level where random effects for both seed and episode and a per-handoff CPVI
-mediator fit one model - episode is nested in seed (the episode id encodes the seed), so seed is the
-group random intercept and episode a variance component within it.
+message value), the H1 inferential model of outcome on condition, and the H2 mediation of that
+effect through CPVI (roadmap §3.2).
 
-ponytail: the mixed model is a linear probability model (statsmodels MixedLM on the binary progress
-outcome) - the lazy, AC-satisfying fit; upgrade to a GLMM if fitted probabilities stray out of
-[0,1]. Mediation is the Baron-Kenny attenuation step (refit with CPVI, watch the condition
-coefficients shrink), not a bootstrapped indirect effect - enough to test H2's direction here.
+Two models, deliberately at two levels:
+
+- **H1 (handoff level).** A linear probability MixedLM of per-step progress on condition, with seed
+  as the group random intercept and episode a variance component within it - the only level where
+  random effects for *both* seed and episode fit one model (the episode id encodes the seed). Its
+  Holm-corrected condition coefficients back the contrasts.
+- **H2 (episode level).** Mediation is tested on the *headline* outcome - episode success - with the
+  mediator aggregated to per-episode mean CPVI, so the DV matches H1 and within- vs between-episode
+  CPVI variance is not conflated (the "easier episodes happen to carry more CPVI" confound). Full
+  Baron-Kenny: path a (condition->CPVI), path b/c' (success~condition+CPVI), total c, and the
+  indirect effect a*b per condition with a bootstrap CI. The handoff-level CPVI attenuation is kept
+  as a within-episode diagnostic, not the H2 test.
+
+ponytail: both fits are linear probability MixedLMs (statsmodels) on the binary outcomes - the lazy,
+AC-satisfying fit; upgrade path b to a logistic GLMM with a delta-method indirect effect if fitted
+probabilities stray out of [0,1]. The indirect-effect CI is a percentile bootstrap over episodes
+(n_boot_mediation refits); cluster-resample seeds if seed clustering ever dominates.
 
 ``analyse_rq1`` is the analysis core (fixture-testable with no runner); ``run_rq1`` is the grid run
 plus that analysis.
@@ -22,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import warnings
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -62,7 +72,8 @@ class RQ1Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     probe: ProbeConfig = Field(default_factory=ProbeConfig)
-    n_boot: int = Field(default=2000, ge=100)
+    n_boot: int = Field(default=2000, ge=100)  # for the cheap one-sample/effect-size CIs
+    n_boot_mediation: int = Field(default=400, ge=50)  # model-refit bootstrap; costlier per draw
     alpha: float = Field(default=0.05, gt=0, lt=1)
     correction: Literal["holm", "bh"] = "holm"
 
@@ -98,15 +109,34 @@ class Contrast(BaseModel):
     p_corrected: float
 
 
+class EpisodeMediation(BaseModel):
+    """One Ck-vs-C0 mediation path set: the channel effect decomposed through episode-mean CPVI."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    condition: str
+    path_a: float  # condition -> episode-mean CPVI
+    indirect: float  # a * b: the channel effect on success carried *through* CPVI
+    indirect_ci: tuple[float, float]  # percentile bootstrap over episodes
+    direct: float  # c': condition -> success, controlling for CPVI
+    total: float  # c : condition -> success, unadjusted
+    prop_mediated: float  # indirect / total (0 when total == 0)
+
+
 class MixedModelSummary(BaseModel):
-    """The fitted LPM coefficients with and without the CPVI mediator (the H2 attenuation test)."""
+    """The H1 handoff model, the H2 episode-level mediation, and the within-episode diagnostic."""
 
     model_config = ConfigDict(extra="forbid")
 
     formula: str
-    coef_no_mediator: dict[str, float]
-    coef_with_cpvi: dict[str, float]
-    cpvi_coef: float
+    coef_no_mediator: dict[str, float]  # H1 handoff-level condition fixed effects
+    converged: bool  # H1 handoff model
+    mediation_outcome: str  # the H2 DV - "episode_success"
+    path_b: float  # episode-mean CPVI -> success, controlling for condition (shared across Ck)
+    mediations: list[EpisodeMediation]
+    mediation_converged: bool  # path-a and full-outcome episode models both converged
+    diagnostic_cpvi_coef: float  # within-episode: per-handoff CPVI -> progress
+    diagnostic_attenuation: float  # mean shrink of handoff condition coefs when CPVI enters
     mediation_note: str
 
 
@@ -213,21 +243,24 @@ def _delta_ci(a: FloatArray, b: FloatArray, cfg: RQ1Config) -> tuple[float, floa
     return float(lo), float(hi)
 
 
-def _fit_lpm(df: pd.DataFrame, formula: str) -> Any:
-    """Fit the LPM (seed random intercept, episode VC within seed), logging any fit warnings.
+def _fit_mixed(
+    df: pd.DataFrame, formula: str, *, vc: dict[str, str] | None = None, quiet: bool = False
+) -> tuple[Any, bool]:
+    """Fit a seed-grouped MixedLM (optional episode variance component); return (result, converged).
 
     statsmodels raises convergence (and other) warnings on small or stiff fits; we capture them so
-    they surface as WARNING log lines - a degraded mode, not a crash - rather than propagating. The
-    run still fails loud on real errors, but a non-converged small-pilot fit is expected, not fatal.
+    they surface as WARNING log lines - a degraded mode, not a crash - rather than propagating, and
+    thread ``converged`` into the persisted summary so a non-converged fit is auditable, never
+    silent. ``quiet`` mutes the log lines for the inner bootstrap refits (expected, and hundreds
+    of them); the run still fails loud on real errors.
     """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        result = smf.mixedlm(
-            formula, df, groups=df["seed"], vc_formula={"episode": "0 + C(episode)"}
-        ).fit()
-    for w in caught:
-        logger.warning("RQ1 mixed model fit (%s): %s", w.category.__name__, w.message)
-    return result
+        result = smf.mixedlm(formula, df, groups=df["seed"], vc_formula=vc).fit()
+    if not quiet:
+        for w in caught:
+            logger.warning("RQ1 mixed model fit (%s): %s", w.category.__name__, w.message)
+    return result, bool(getattr(result, "converged", True))
 
 
 def _condition_terms(params: Any) -> dict[str, float]:
@@ -239,26 +272,156 @@ def _condition_terms(params: Any) -> dict[str, float]:
     }
 
 
-def _mixed_model(df: pd.DataFrame) -> tuple[MixedModelSummary, dict[str, tuple[float, float]]]:
-    """Fit the LPM with and without CPVI; return the summary and per-condition (coef, p_raw)."""
-    base = _fit_lpm(df, "y ~ C(condition)")
-    mediated = _fit_lpm(df, "y ~ C(condition) + cpvi")
+def _handoff_model(
+    df: pd.DataFrame,
+) -> tuple[dict[str, float], float, float, bool, dict[str, tuple[float, float]]]:
+    """H1 handoff LPM (seed RE, episode VC) plus the within-episode CPVI attenuation diagnostic.
+
+    Returns the condition fixed effects, the per-handoff CPVI coefficient, the mean attenuation of
+    those condition coefs when CPVI enters, the H1 convergence flag, and per-condition (coef, p).
+    """
+    vc = {"episode": "0 + C(episode)"}
+    base, converged = _fit_mixed(df, "y ~ C(condition)", vc=vc)
+    mediated, _ = _fit_mixed(df, "y ~ C(condition) + cpvi", vc=vc)
     coef_no = _condition_terms(base.params)
     coef_with = _condition_terms(mediated.params)
     pvals = {k: float(base.pvalues[f"C(condition)[T.{k}]"]) for k in coef_no}
     shrink = [abs(coef_with[k]) / abs(coef_no[k]) for k in coef_no if coef_no[k] != 0.0]
-    atten = 1.0 - float(np.mean(shrink)) if shrink else 0.0
+    attenuation = 1.0 - float(np.mean(shrink)) if shrink else 0.0
+    cpvi_coef = float(mediated.params["cpvi"])
+    return coef_no, cpvi_coef, attenuation, converged, {k: (coef_no[k], pvals[k]) for k in coef_no}
+
+
+def _episode_mediation_frame(records: list[HandoffRecord], cpvi_scores: FloatArray) -> pd.DataFrame:
+    """One row per episode: condition, seed, binary terminal success, and mean per-handoff CPVI."""
+    rows: dict[str, dict[str, Any]] = {}
+    for r, s in zip(records, cpvi_scores, strict=True):
+        row = rows.setdefault(
+            r.episode_id, {"condition": r.condition, "seed": r.seed, "success": False, "_cpvi": []}
+        )
+        row["success"] = row["success"] or bool(r.y_terminal_success)
+        row["_cpvi"].append(float(s))
+    return pd.DataFrame(
+        [
+            {
+                "condition": v["condition"],
+                "seed": v["seed"],
+                "success": 1 if v["success"] else 0,
+                "cpvi": float(np.mean(v["_cpvi"])),
+            }
+            for v in rows.values()
+        ]
+    )
+
+
+def _bootstrap_indirect(
+    ep_df: pd.DataFrame, targets: Sequence[str], cfg: RQ1Config
+) -> dict[str, tuple[float, float]]:
+    """Percentile bootstrap CI of the indirect effect a*b per condition, resampling episodes.
+
+    Each draw refits path a (cpvi~condition) and path b (success~condition+cpvi) on the resampled
+    episodes; degenerate draws - a dropped condition (which would shift the C0 reference) or a
+    single-class outcome (unfittable) - are skipped. ponytail: plain episode resample,
+    n_boot_mediation refits; cluster-resample seeds only if seed clustering dominates the variance.
+    """
+    rng = np.random.default_rng(0)
+    n = len(ep_df)
+    n_conditions = ep_df["condition"].nunique()
+    draws: dict[str, list[float]] = {c: [] for c in targets}
+    for _ in range(cfg.n_boot_mediation):
+        boot = ep_df.iloc[rng.integers(0, n, n)].reset_index(drop=True)
+        if boot["success"].nunique() < 2 or boot["condition"].nunique() < n_conditions:
+            continue
+        try:
+            a_model, _ = _fit_mixed(boot, "cpvi ~ C(condition)", quiet=True)
+            y_model, _ = _fit_mixed(boot, "success ~ C(condition) + cpvi", quiet=True)
+        except (ValueError, np.linalg.LinAlgError):
+            continue
+        a = _condition_terms(a_model.params)
+        b = float(y_model.params.get("cpvi", 0.0))
+        for c in targets:
+            draws[c].append(a.get(c, 0.0) * b)
+    out: dict[str, tuple[float, float]] = {}
+    for c in targets:
+        vals = np.array(draws[c], dtype=np.float64)
+        if len(vals) < 2:
+            out[c] = (float("nan"), float("nan"))
+        else:
+            lo, hi = np.quantile(vals, [cfg.alpha / 2.0, 1.0 - cfg.alpha / 2.0])
+            out[c] = (float(lo), float(hi))
+    return out
+
+
+def _episode_mediation(
+    ep_df: pd.DataFrame, present: list[Condition], cfg: RQ1Config
+) -> tuple[list[EpisodeMediation], float, bool]:
+    """Episode-level Baron-Kenny: paths a, b, c, c' and the bootstrapped indirect effect per Ck."""
+    targets = [c for c in present if c != "C0"]
+    if ep_df["success"].nunique() < 2:  # single-class outcome: mediation unmeasurable (cf. G2)
+        nan = float("nan")
+        meds = [
+            EpisodeMediation(
+                condition=c,
+                path_a=nan,
+                indirect=nan,
+                indirect_ci=(nan, nan),
+                direct=nan,
+                total=nan,
+                prop_mediated=nan,
+            )
+            for c in targets
+        ]
+        return meds, nan, False
+    a_model, a_conv = _fit_mixed(ep_df, "cpvi ~ C(condition)")
+    y_full, yf_conv = _fit_mixed(ep_df, "success ~ C(condition) + cpvi")
+    y_red, _ = _fit_mixed(ep_df, "success ~ C(condition)")
+    a = _condition_terms(a_model.params)
+    cprime = _condition_terms(y_full.params)
+    total = _condition_terms(y_red.params)
+    b = float(y_full.params["cpvi"])
+    ci = _bootstrap_indirect(ep_df, targets, cfg)
+    meds = [
+        EpisodeMediation(
+            condition=c,
+            path_a=a.get(c, 0.0),
+            indirect=a.get(c, 0.0) * b,
+            indirect_ci=ci[c],
+            direct=cprime.get(c, 0.0),
+            total=total.get(c, 0.0),
+            prop_mediated=(a.get(c, 0.0) * b / total[c]) if total.get(c, 0.0) != 0.0 else 0.0,
+        )
+        for c in targets
+    ]
+    return meds, b, bool(a_conv and yf_conv)
+
+
+def _mixed_model(
+    handoff_df: pd.DataFrame, ep_df: pd.DataFrame, present: list[Condition], cfg: RQ1Config
+) -> tuple[MixedModelSummary, dict[str, tuple[float, float]]]:
+    """Assemble the H1 handoff model and the H2 episode mediation into the persisted summary."""
+    coef_no, cpvi_coef, attenuation, converged, coef_p = _handoff_model(handoff_df)
+    mediations, path_b, med_conv = _episode_mediation(ep_df, present, cfg)
+    finite_indirect = [m.indirect for m in mediations if np.isfinite(m.indirect)]
+    mean_indirect = float(np.mean(finite_indirect)) if finite_indirect else float("nan")
     summary = MixedModelSummary(
-        formula="y ~ C(condition) (+ cpvi); groups=seed, vc=episode",
+        formula="H1: y ~ C(condition) [groups=seed, vc=episode]; "
+        "H2: success ~ C(condition) + cpvi_epmean [groups=seed]",
         coef_no_mediator=coef_no,
-        coef_with_cpvi=coef_with,
-        cpvi_coef=float(mediated.params["cpvi"]),
+        converged=converged,
+        mediation_outcome="episode_success",
+        path_b=path_b,
+        mediations=mediations,
+        mediation_converged=med_conv,
+        diagnostic_cpvi_coef=cpvi_coef,
+        diagnostic_attenuation=attenuation,
         mediation_note=(
-            f"condition coefficients attenuate {atten:.0%} on average when CPVI is included "
-            f"(H2: CPVI mediates the condition->outcome effect)"
+            f"H2 (episode level): success mediated by CPVI; mean indirect effect a*b over Ck = "
+            f"{mean_indirect:.3f} (negative = the channel suppresses success by lowering CPVI). "
+            f"Within-episode diagnostic: handoff condition coefs attenuate {attenuation:.0%} "
+            f"when per-handoff CPVI enters."
         ),
     )
-    return summary, {k: (coef_no[k], pvals[k]) for k in coef_no}
+    return summary, coef_p
 
 
 def analyse_rq1(
@@ -296,13 +459,21 @@ def analyse_rq1(
             "cpvi": cpvi_scores,
         }
     )
-    mixed, coef_p = _mixed_model(model_df)
+    ep_med_df = _episode_mediation_frame(records, cpvi_scores)
+    mixed, coef_p = _mixed_model(model_df, ep_med_df, present, cfg)
 
     contrasts = _contrasts(present, ep_frame, coef_p, cfg)
-    seeds_metric = {
-        int(s): float(ep_frame[ep_frame["seed"] == s]["success"].mean())
-        for s in sorted(ep_frame["seed"].unique())
-    }
+    # Seed sensitivity on the *gradient*, not a collapsed metric: per-seed C0-minus-hardest success
+    # gap, so its spread answers "is the C0->C4 ordering seed-stable?" (the thesis question), rather
+    # not "does overall success vary across seeds?" (which it always does, from LLM nondeterminism).
+    hardest = present[-1]
+    seeds_metric: dict[int, float] = {}
+    for s in sorted(ep_frame["seed"].unique()):
+        sub = ep_frame[ep_frame["seed"] == s]
+        c0 = sub[sub["condition"] == "C0"]["success"]
+        hard = sub[sub["condition"] == hardest]["success"]
+        if len(c0) and len(hard):
+            seeds_metric[int(s)] = float(c0.mean() - hard.mean())
     return RQ1Result(
         dataset_hash=dataset_hash,
         n_handoffs=len(records),

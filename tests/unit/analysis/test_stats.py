@@ -42,6 +42,16 @@ def test_bootstrap_ci_brackets_mean_and_is_deterministic() -> None:
     assert (lo, hi) == bootstrap_ci(x, n_boot=2000, seed=0)  # seed-reproducible
 
 
+def test_bootstrap_ci_constant_sample_collapses_to_point() -> None:
+    lo, hi = bootstrap_ci(np.full(10, 2.5), n_boot=500)
+    assert (lo, hi) == (2.5, 2.5)  # no spread -> BCa undefined; the interval is the point
+
+
+def test_bootstrap_ci_tiny_sample_falls_back_without_error() -> None:
+    lo, hi = bootstrap_ci(np.array([1.0, 3.0]), n_boot=500, seed=0)  # n<3 -> percentile fallback
+    assert np.isfinite(lo) and np.isfinite(hi) and lo <= 2.0 <= hi
+
+
 def test_correct_pvalues_single_is_unchanged_and_both_methods_only_raise() -> None:
     assert correct_pvalues(np.array([0.03]))[0] == 0.03  # nothing to correct against
     raw = np.array([0.01, 0.02, 0.03, 0.04])

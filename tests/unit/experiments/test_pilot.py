@@ -147,6 +147,17 @@ def test_run_pilot_recommendation_tracks_attempt(tmp_path: Path) -> None:
     assert pivot.recommendation == "fallback"
 
 
+def test_run_pilot_holds_proceed_below_seed_floor(tmp_path: Path) -> None:
+    feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "e"), encoder=_MsgEncoder())
+    # All three gates pass, but demand more seeds than the data has: a few-seed pass is noise,
+    # so the proceed verdict is held back to retune rather than greenlighting the full sweep.
+    report = run_pilot(_gradient_dataset(), feat, cfg=PilotConfig(min_seeds_for_proceed=99))
+    assert all(g.passed for g in report.gates)
+    assert report.recommendation == "retune_once"
+    assert "seed" in report.recommendation_note
+    assert report.n_seeds == 10  # the gradient dataset spans 10 distinct seeds
+
+
 def test_render_and_write_report(tmp_path: Path) -> None:
     feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "e"), encoder=_MsgEncoder())
     report = run_pilot(_gradient_dataset(), feat, cfg=PilotConfig(), dataset_hash="d")
