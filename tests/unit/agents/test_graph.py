@@ -3,13 +3,15 @@ from __future__ import annotations
 import json
 
 import httpx
+import pytest
 import respx
 
 from preceptx.agents.channel import ChannelConfig
 from preceptx.agents.graph import EpisodeRunner
 from preceptx.config import ExperimentConfig, ModelConfig
 from preceptx.data.schema import Condition, Difficulty, Serialisation
-from preceptx.serving.client import LLMClient, ServingConfig
+from preceptx.serving.client import LLMClient, ServingConfig, ServingError
+from preceptx.sim.arena import ScenarioJitter
 
 BASE_URL = "http://localhost:8000/v1"
 CHAT = f"{BASE_URL}/chat/completions"
@@ -23,13 +25,14 @@ def _cell(
     condition: Condition = "C0",
     serialisation: Serialisation = "numeric",
     difficulty: Difficulty = "easy",
+    seed: int = 0,
 ) -> ExperimentConfig:
     return ExperimentConfig(
         condition=condition,
         serialisation=serialisation,
         difficulty=difficulty,
         model=ModelConfig(name="m", revision="rev", tier="8b"),
-        seed=0,
+        seed=seed,
     )
 
 
@@ -101,3 +104,42 @@ def test_records_capture_channel_delivery_under_c1() -> None:
     records = runner.run_episode(_cell(condition="C1"), "ep")
     assert records[0].message_raw == "push the load east"  # A's full message
     assert records[0].message_delivered == "push the"  # capped to 2 tokens by C1
+
+
+@respx.mock
+def test_records_persist_the_receiver_observation() -> None:
+    # P0-1: the record carries B's delivered view. Full visibility -> observation == state_str;
+    # C3 -> the restricted window (numeric mode hides the goal line), with state_str kept intact.
+    respx.post(CHAT).mock(side_effect=_script("WAIT"))
+    c0 = EpisodeRunner(_client(), max_steps=1).run_episode(_cell(), "ep")
+    assert c0[0].observation == c0[0].state_str
+
+    respx.post(CHAT).mock(side_effect=_script("WAIT"))
+    c3 = EpisodeRunner(_client(), max_steps=1).run_episode(_cell(condition="C3"), "ep")
+    assert c3[0].observation != c3[0].state_str
+    assert "goal=" not in c3[0].observation  # the window is what B actually saw
+    assert "goal=" in c3[0].state_str  # the full state stays for the dual-baseline diagnostic
+
+
+@respx.mock
+def test_transport_error_on_action_call_fails_the_episode_loud() -> None:
+    # P1-3: a dead endpoint mid-episode must crash the run, not record a passing-looking WAIT.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if b"guided_json" in request.content:  # B's structured action call: transport failure
+            return httpx.Response(500)
+        return httpx.Response(200, json=_completion("push the load east"))
+
+    respx.post(CHAT).mock(side_effect=handler)
+    with pytest.raises(ServingError):
+        EpisodeRunner(_client(), max_steps=3).run_episode(_cell(), "ep")
+
+
+@respx.mock
+def test_jittered_runner_reproduces_within_seed_and_varies_across_seeds() -> None:
+    respx.post(CHAT).mock(side_effect=_script("WAIT"))
+    runner = EpisodeRunner(_client(), max_steps=1, jitter=ScenarioJitter())
+    a = runner.run_episode(_cell(seed=0), "ep-a")
+    b = runner.run_episode(_cell(seed=0), "ep-b")
+    assert a[0].pre_state == b[0].pre_state  # same seed -> same jittered instance
+    c = runner.run_episode(_cell(seed=7), "ep-c")
+    assert c[0].pre_state != a[0].pre_state  # different seed -> different instance

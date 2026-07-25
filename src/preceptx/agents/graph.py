@@ -11,6 +11,7 @@ through one choke point (``apply_channel``) - the seam the runtime gate (DSE-018
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any, TypedDict, cast
 
 import numpy as np
@@ -21,8 +22,8 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from preceptx.agents.channel import ChannelConfig, apply_channel
 from preceptx.agents.prompts import prompt_a, prompt_b
 from preceptx.config import ExperimentConfig
-from preceptx.data.schema import HandoffRecord
-from preceptx.serving.client import LLMClient, ServingError
+from preceptx.data.schema import Difficulty, HandoffRecord
+from preceptx.serving.client import LLMClient
 from preceptx.sim.actions import (
     BodyState,
     MacroAction,
@@ -32,11 +33,15 @@ from preceptx.sim.actions import (
     detect_stuck,
     read_state,
 )
-from preceptx.sim.arena import ArenaGeometry, Goal, make_scenario, slit_width_for
+from preceptx.sim.arena import ArenaGeometry, Goal, ScenarioJitter, make_scenario, slit_width_for
 from preceptx.sim.outcomes import OutcomeConfig, label_episode, reached_goal, step_progress
 from preceptx.sim.serialise import SceneState, serialise
 
 logger = logging.getLogger(__name__)
+
+# Spawn-key salt for the jitter RNG stream: the channel streams key on [seed, step] with
+# step < max_steps, so any constant >= 2**16 can never collide with them.
+_JITTER_SALT = 2**16
 
 
 class Action(BaseModel):
@@ -73,24 +78,39 @@ class EpisodeRunner:
         self,
         client: LLMClient,
         *,
-        max_steps: int,
+        max_steps: int | Mapping[Difficulty, int],
         channel_cfg: ChannelConfig | None = None,
         step_cfg: StepConfig | None = None,
         outcome_cfg: OutcomeConfig | None = None,
+        jitter: ScenarioJitter | None = None,
     ) -> None:
         self._client = client
+        # Per-difficulty step budget (P1-4); a bare int applies to every difficulty (scripted tests)
         self._max_steps = max_steps
         self._channel_cfg = channel_cfg or ChannelConfig()
         self._step_cfg = step_cfg or StepConfig()
         self._outcome_cfg = outcome_cfg or OutcomeConfig()
+        # None = legacy fixed start pose (scripted unit tests); sweeps always pass a jitter so the
+        # seed axis is true replication (P0-2). The rng keys on [cell.seed, salt], so the same seed
+        # reproduces the same pose and different seeds get different problem instances.
+        self._jitter = jitter
+
+    def _budget(self, difficulty: Difficulty) -> int:
+        """Resolve the per-difficulty step budget (a bare int applies to every difficulty)."""
+        return self._max_steps if isinstance(self._max_steps, int) else self._max_steps[difficulty]
 
     def run_episode(self, cell: ExperimentConfig, episode_id: str) -> list[HandoffRecord]:
         """Run one episode for ``cell`` and return its records with the four Y labels filled."""
-        scenario = make_scenario(cell.difficulty)
+        scenario = make_scenario(
+            cell.difficulty,
+            rng=None if self._jitter is None else np.random.default_rng([cell.seed, _JITTER_SALT]),
+            jitter=self._jitter,
+        )
         geometry = ArenaGeometry()
         slit = slit_width_for(cell.difficulty)
+        budget = self._budget(cell.difficulty)
         graph = self._build(
-            cell, episode_id, scenario.space, scenario.load, scenario.goal, geometry, slit
+            cell, episode_id, scenario.space, scenario.load, scenario.goal, geometry, slit, budget
         )
         init: _GraphState = {
             "step": 0,
@@ -105,7 +125,7 @@ class EpisodeRunner:
         }
         final = cast(
             _GraphState,
-            graph.invoke(init, config={"recursion_limit": 3 * self._max_steps + 10}),
+            graph.invoke(init, config={"recursion_limit": 3 * budget + 10}),
         )
         return label_episode(final["records"], scenario.goal, geometry, self._outcome_cfg)
 
@@ -118,13 +138,9 @@ class EpisodeRunner:
         goal: Goal,
         geometry: ArenaGeometry,
         slit: float,
+        max_steps: int,
     ) -> Any:  # langgraph's compiled graph is untyped; callers cast invoke()'s result
-        client, channel_cfg, step_cfg, max_steps = (
-            self._client,
-            self._channel_cfg,
-            self._step_cfg,
-            self._max_steps,
-        )
+        client, channel_cfg, step_cfg = self._client, self._channel_cfg, self._step_cfg
         post_history: list[BodyState] = []
 
         def agent_a(state: _GraphState) -> dict[str, object]:
@@ -151,13 +167,16 @@ class EpisodeRunner:
             }
 
         def agent_b(state: _GraphState) -> dict[str, object]:
+            # Only a schema-invalid ACTION degrades to WAIT (the DSE-010-sanctioned fallback). A
+            # transport-level ServingError propagates and fails the episode loud - catching it here
+            # would let a dead endpoint record a passing-looking run of WAITs (P1-3).
+            raw = client.structured(
+                prompt_b(state["observation"], state["message_delivered"]),
+                Action.model_json_schema(),
+            )
             try:
-                raw = client.structured(
-                    prompt_b(state["observation"], state["message_delivered"]),
-                    Action.model_json_schema(),
-                )
                 action: MacroAction = Action.model_validate(raw).action
-            except (ServingError, ValidationError):
+            except ValidationError:
                 logger.warning("agent_B emitted an invalid action; defaulting to WAIT")
                 action = "WAIT"
             return {"action": action}
@@ -179,6 +198,7 @@ class EpisodeRunner:
                 seed=cell.seed,
                 state=pre.model_dump(),
                 state_str=state["state_str"],
+                observation=state["observation"],
                 message_raw=state["message_raw"],
                 message_delivered=state["message_delivered"],
                 action={"action": action},

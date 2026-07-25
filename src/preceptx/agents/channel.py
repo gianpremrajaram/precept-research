@@ -88,10 +88,14 @@ def _restrict(observation: str, serialisation: Serialisation, window_rows: int) 
 
 
 def _window_grid(grid: str, window_rows: int) -> str:
-    rows = grid.splitlines()
+    lines = grid.splitlines()
+    # The serialiser's constant legend header contains a literal "T": split it off before locating
+    # the load rows, and re-prepend it so B keeps the symbol key inside its restricted window.
+    has_legend = bool(lines) and lines[0].startswith("legend:")
+    header, rows = (lines[:1], lines[1:]) if has_legend else ([], lines)
     load_rows = [i for i, row in enumerate(rows) if "T" in row]
     if not load_rows:  # load off-grid: nothing to window (cannot happen in a valid scene)
         return grid
     lo = max(0, min(load_rows) - window_rows)
     hi = min(len(rows), max(load_rows) + window_rows + 1)
-    return "\n".join(rows[lo:hi])
+    return "\n".join(header + rows[lo:hi])

@@ -59,6 +59,7 @@ def _dataset(n_episodes: int = 24, per: int = 5) -> list[HandoffRecord]:
                     seed=ep,
                     state={},
                     state_str=f"{tag} state ep{ep} step{step}",
+                    observation=f"{tag} state ep{ep} step{step}",
                     message_raw="raw",
                     message_delivered=f"{tag} message ep{ep}",
                     action={},
@@ -80,6 +81,8 @@ def test_calibration_runs_and_persists_report(tmp_path) -> None:  # type: ignore
     report = calibrate(records, feat, dataset_hash="d0", cfg=CalibrationConfig(n_bins=5))
 
     assert report.target == "realised_failure"  # never CPVI
+    assert report.provenance.encoder_name == EncoderConfig().name  # P1-8: self-describing artefact
+    assert len(report.provenance.git_sha) == 40
     assert {s.key for s in report.statistics} == {"info", "fail", "cosine"}
     for sc in report.statistics:
         assert np.isfinite(sc.threshold)

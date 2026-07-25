@@ -14,6 +14,7 @@ import hashlib
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 from numpy.typing import NDArray
 
 from preceptx.config import ModelConfig
@@ -90,6 +91,7 @@ def _gradient_records(n_seeds: int = 6) -> list[HandoffRecord]:
                         seed=seed,
                         state={},
                         state_str=f"state {cond} s{seed} {step}",  # no outcome token in the state
+                        observation=f"state {cond} s{seed} {step}",
                         message_raw=msg,
                         message_delivered=msg,
                         action={},
@@ -108,7 +110,8 @@ def _gradient_records(n_seeds: int = 6) -> list[HandoffRecord]:
 
 def test_analyse_rq1_recovers_the_gradient(tmp_path: Path) -> None:
     feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "e"), encoder=_MsgEncoder())
-    result = analyse_rq1(_gradient_records(), feat, dataset_hash="d0", cfg=_FAST)
+    records = _gradient_records()
+    result, scores = analyse_rq1(records, feat, dataset_hash="d0", cfg=_FAST)
 
     order = [c.condition for c in result.conditions]
     assert order == ["C0", "C1", "C2", "C3", "C4"]
@@ -128,18 +131,32 @@ def test_analyse_rq1_recovers_the_gradient(tmp_path: Path) -> None:
     assert c4_med.path_a < 0.0  # C4 carries less CPVI than C0
     assert c4_med.indirect < 0.0  # negative indirect effect: degradation flows through CPVI
     assert all(np.isfinite(c4_med.indirect_ci))  # the indirect effect is reported with an interval
+    assert c4_med.indirect_n_draws > 0  # the CI's retained-draw count is visible (P2-6)
 
     c4 = next(c for c in result.contrasts if c.condition == "C4")
     assert c4.cliffs_delta < 0.0  # C4 episodes succeed less often than C0
+    assert np.isfinite(c4.steps_delta)  # efficiency endpoint reported per contrast (P1-11)
+    assert all(np.isfinite(c4.steps_delta_ci))
     assert c4.p_corrected >= c4.p_raw - 1e-12  # correction never increases significance
     assert result.seed_sensitivity.n_seeds == 6  # per-seed C0-minus-hardest gap, one value per seed
     assert result.seed_sensitivity.mean > 0.0  # the gradient holds on average across seeds
 
+    # Per-handoff scores are returned row-aligned to the records (P1-17: RQ2's join key).
+    assert list(scores.columns) == ["episode_id", "step", "condition", "seed", "cpvi", "pvi"]
+    assert len(scores) == len(records)
+    assert scores["episode_id"].tolist() == [r.episode_id for r in records]
 
-def test_write_rq1_emits_table_and_json(tmp_path: Path) -> None:
+    # Provenance rides the result (P1-8): encoder + probe + code identity.
+    assert result.provenance.encoder_name == EncoderConfig().name
+    assert len(result.provenance.git_sha) == 40
+
+
+def test_write_rq1_emits_table_json_and_scores(tmp_path: Path) -> None:
     feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "e"), encoder=_MsgEncoder())
-    result = analyse_rq1(_gradient_records(), feat, dataset_hash="d0", cfg=_FAST)
-    out = write_rq1(result, tmp_path / "rq1")
+    result, scores = analyse_rq1(_gradient_records(), feat, dataset_hash="d0", cfg=_FAST)
+    out = write_rq1(result, tmp_path / "rq1", scores=scores)
     assert (out / "rq1.json").exists()
     assert (out / "rq1_results.csv").exists()
+    persisted = pd.read_parquet(out / "scores.parquet")
+    assert len(persisted) == len(scores)  # the per-handoff distribution survives persistence
     # matplotlib is the optional viz extra; absent it the figures dict stays empty (no crash).

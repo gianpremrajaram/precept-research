@@ -79,11 +79,14 @@ def test_rq1_runs_on_a_small_grid_and_writes_artefacts(tmp_path: Path) -> None:
     )
     feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "embed"), encoder=_StubEncoder())
     client = LLMClient(ServingConfig(model="m", base_url=BASE_URL, max_retries=0))
-    result = run_rq1(
+    result, scores = run_rq1(
         sweep, client, feat, root=tmp_path, cfg=RQ1Config(probe=ProbeConfig(n_splits=2))
     )
 
     assert result.dataset_hash == dataset_hash(sweep_hash(sweep))
     assert {c.condition for c in result.conditions} == {"C0", "C4"}
-    out = write_rq1(result, tmp_path / "rq1")
+    assert len(scores) == result.n_handoffs  # per-handoff scores row-aligned to the dataset
+    assert result.provenance.encoder_name == EncoderConfig().name  # P1-8 provenance rides along
+    out = write_rq1(result, tmp_path / "rq1", scores=scores)
     assert (out / "rq1.json").exists() and (out / "rq1_results.csv").exists()
+    assert (out / "scores.parquet").exists()  # P1-17: the RQ2 join-key artefact is persisted

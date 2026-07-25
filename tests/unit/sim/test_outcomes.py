@@ -38,6 +38,7 @@ def _record(
         seed=0,
         state=_payload(*pre),
         state_str="",
+        observation="",
         message_raw="",
         message_delivered="",
         action={},
@@ -88,7 +89,9 @@ def test_label_episode_four_labels_on_solving_episode() -> None:
     out = label_episode(records, _GOAL, _GEO, OutcomeConfig(k=1))
     assert [r.y_binary_progress for r in out] == [True, True, True]
     assert all((r.y_continuous_displacement or 0.0) > 0 for r in out)
-    assert [r.y_discrete_config for r in out] == [1, 2, 3]
+    # Chamber at the window END (post-state), not at the handoff - the P1-10 fix: labelling the
+    # pre-state chamber would be a state feature with CPVI == 0 by construction.
+    assert [r.y_discrete_config for r in out] == [2, 3, 3]
     assert [r.y_terminal_success for r in out] == [True, True, True]  # success at the last step
 
 
@@ -109,7 +112,29 @@ def test_label_episode_populates_every_label() -> None:
         r.y_continuous_displacement,
         r.y_discrete_config,
         r.y_terminal_success,
+        r.y_window_truncated,
     )
+
+
+def test_discrete_config_uses_window_end_not_handoff_chamber() -> None:
+    records = [
+        _record(0, (2.0, 3.0), (4.0, 3.0), success=False),  # handoff in chamber 1
+        _record(1, (4.0, 3.0), (8.0, 3.0), success=False),  # handoff in chamber 2
+    ]
+    out = label_episode(records, _GOAL, _GEO, OutcomeConfig(k=2))
+    # Both windows end on post_state[1] = (8, 3) -> chamber 3; the handoff chambers are 1 and 2.
+    assert [r.y_discrete_config for r in out] == [3, 3]
+
+
+def test_window_truncation_flags_final_k_minus_1_handoffs() -> None:
+    records = [
+        _record(0, (2.0, 3.0), (3.0, 3.0), success=False),
+        _record(1, (3.0, 3.0), (4.0, 3.0), success=False),
+        _record(2, (4.0, 3.0), (5.0, 3.0), success=False),
+    ]
+    out = label_episode(records, _GOAL, _GEO, OutcomeConfig(k=3))
+    # i + k - 1 runs past the last index for the final k-1 handoffs; visible, never silent (P1-12).
+    assert [r.y_window_truncated for r in out] == [False, True, True]
 
 
 def test_label_episode_is_deterministic() -> None:

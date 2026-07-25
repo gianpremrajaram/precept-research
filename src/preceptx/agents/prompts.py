@@ -12,7 +12,10 @@ from __future__ import annotations
 
 from preceptx.serving.client import ChatMessage
 
-PROMPT_VERSION = "v1"
+# v2: serialisation bump (P1-5 + RD-7) - the grid gained its constant legend/axis header and the
+# numeric form dropped the dead vel line. Prompt templates themselves are unchanged from v1; the
+# serialised state is part of the prompt surface, so the recorded version moves with it.
+PROMPT_VERSION = "v2"
 
 _SYSTEM_A = (
     "You are agent A, the navigator in a two-agent cooperative-transport task. A T-shaped load "

@@ -37,8 +37,12 @@ _records = st.builds(
     seed=st.integers(min_value=0, max_value=1000),
     state=_payloads,
     state_str=st.text(max_size=16),
+    observation=st.text(max_size=16),
     message_raw=st.text(max_size=16),
     message_delivered=st.text(max_size=16),
+    gate_blocked=st.booleans(),
+    gate_retries=st.integers(min_value=0, max_value=3),
+    message_blocked=st.none() | st.text(max_size=8),
     action=_payloads,
     pre_state=_payloads,
     post_state=_payloads,
@@ -51,6 +55,7 @@ _records = st.builds(
     | st.floats(allow_nan=False, allow_infinity=False, width=32),
     y_discrete_config=st.none() | st.integers(min_value=0, max_value=9),
     y_terminal_success=st.none() | st.booleans(),
+    y_window_truncated=st.none() | st.booleans(),
 )
 
 
@@ -65,6 +70,7 @@ def _record() -> HandoffRecord:
         seed=0,
         state={"x": 1.0},
         state_str="x",
+        observation="x",
         message_raw="r",
         message_delivered="d",
         action={"dx": 1.0},
@@ -84,6 +90,7 @@ def test_write_then_load_dataset_typed_columns(tmp_path: Path) -> None:
     assert frame["success"].dtype == "bool"
     assert frame["step"].dtype == "int64"
     assert frame.loc[0, "state"] == {"x": 1.0}  # nested decoded back to a dict
+    assert frame.loc[0, "observation"] == "x"  # schema-v2 column present and typed
 
 
 def test_append_creates_new_part_without_clobbering(tmp_path: Path) -> None:

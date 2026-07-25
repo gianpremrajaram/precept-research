@@ -5,9 +5,12 @@
 # line (resource flags take precedence over the directives), and pass model/quant settings via -v:
 #
 #   8B / 14B (bf16):  qsub scripts/myriad/serve.sh
-#   32B (bf16):       qsub -l gpu=1 -v MODEL=Qwen/Qwen3-32B-Instruct,GPU_MEM_UTIL=0.95 scripts/myriad/serve.sh
-#   70B-AWQ (TP=2):   qsub -l gpu=2 -v MODEL=meta-llama/Llama-3.3-70B-Instruct-AWQ-INT4,QUANT=awq,TP=2 scripts/myriad/serve.sh
+#   32B (bf16):       qsub -l gpu=1 -v MODEL=Qwen/Qwen3-32B,GPU_MEM_UTIL=0.95 scripts/myriad/serve.sh
+#   70B-AWQ (TP=2):   qsub -l gpu=2 -v MODEL=<70B-AWQ-repo-id>,QUANT=awq,TP=2 scripts/myriad/serve.sh
+#                     (the 70B repo id is a PLACEHOLDER until DSE-005 verifies and pins it)
 #
+# Dense Qwen3 ids carry no -Instruct suffix (P0-3); pass the pinned REVISION from configs/model/.
+# Qwen3's hybrid thinking is disabled per-request by the client (chat_template_kwargs), not here.
 # Greedy decoding is enforced client-side (LLMClient temperature=0); the server only pins the seed
 # and the model revision. See docs/serving.md for the full tier/GPU table and queue notes.
 
@@ -23,7 +26,7 @@
 
 set -euo pipefail
 
-MODEL="${MODEL:-Qwen/Qwen3-14B-Instruct}"
+MODEL="${MODEL:-Qwen/Qwen3-14B}"
 REVISION="${REVISION:-main}"
 PORT="${PORT:-8000}"
 DTYPE="${DTYPE:-bfloat16}"
@@ -39,6 +42,13 @@ VENV="${VENV:-$HOME/venvs/precept-research}"
 module load "$CUDA_MODULE"
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
+
+# Serving-environment capture (P2-10): the client env cannot see server-side versions, so echo them
+# into the job log for the sweep manifest to copy (pairs with manifest._TRACKED_DEPS).
+echo "[serve-env] model=$MODEL revision=$REVISION"
+echo "[serve-env] vllm=$(python -c 'import vllm; print(vllm.__version__)' 2>/dev/null || echo unknown)"
+echo "[serve-env] torch=$(python -c 'import torch; print(torch.__version__)' 2>/dev/null || echo unknown)"
+echo "[serve-env] gpu=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | paste -sd, - || echo unknown)"
 
 args=(
   serve "$MODEL"

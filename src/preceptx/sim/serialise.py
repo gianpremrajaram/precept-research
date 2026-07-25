@@ -49,6 +49,12 @@ class GridConfig(BaseModel):
 
 _GRID = GridConfig()
 
+# Constant symbol key prepended to every grid (P1-5): without it B acts on an unexplained ASCII
+# matrix and the serialisation A/B measures legend absence, not representation. Constant text across
+# cells preserves the information-isomorphism argument. NOTE: the line contains a literal "T", so
+# grid consumers that locate load rows (channel C3 windowing, the centroid check here) must skip it.
+GRID_LEGEND = "legend: T=load G=goal #=wall .=free | top row = north (+y)"
+
 
 def serialise(scene: SceneState, mode: Serialisation) -> str:
     """Render ``scene`` to its prompt form for ``mode`` (numeric tuples / ASCII grid / NL)."""
@@ -84,10 +90,12 @@ def deserialise_check(scene: SceneState, mode: Serialisation) -> bool:
 
 
 def _numeric(scene: SceneState) -> str:
+    # No velocity line (RD-7): quasi-static settling zeroes velocity before every read, so it was
+    # constant dead weight in the prompt. Landed with the grid legend as one serialisation bump
+    # (PROMPT_VERSION v2).
     s, g = scene.load, scene.goal
     return (
         f"load=({s.com_x:.4f}, {s.com_y:.4f}, {s.angle:.4f})  # (com_x, com_y, angle)\n"
-        f"vel=({s.vx:.4f}, {s.vy:.4f}, {s.omega:.4f})  # (vx, vy, omega)\n"
         f"contact={s.in_contact}\n"
         f"goal=({g.center_x:.4f}, {g.center_y:.4f}, {g.radius:.4f})  # (center_x, center_y, radius)"
     )
@@ -118,7 +126,7 @@ def _grid(scene: SceneState, cfg: GridConfig) -> str:
             else:
                 line.append(".")
         rows.append("".join(line))
-    return "\n".join(rows)
+    return "\n".join([GRID_LEGEND, *rows])
 
 
 def _is_wall(cx: float, cy: float, geo: ArenaGeometry, half: float, cell: float) -> bool:
@@ -172,7 +180,7 @@ def _parse_numeric_load(text: str) -> tuple[float, float, float]:
 
 
 def _grid_load_centroid(scene: SceneState, cfg: GridConfig) -> tuple[float, float] | None:
-    rows = _grid(scene, cfg).splitlines()
+    rows = _grid(scene, cfg).splitlines()[1:]  # skip the legend header (contains a literal "T")
     n_rows = len(rows)
     xs: list[float] = []
     ys: list[float] = []

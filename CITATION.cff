@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this research or its code, please cite it as below."
+title: >-
+  precept-research: Conditional Pointwise V-usable Information at the
+  Natural-Language Coordination Boundary Between LLM Agents
+abstract: >-
+  A standalone research project measuring conditional pointwise V-usable
+  information (CPVI) at the natural-language handoff between two coordinating
+  LLM agents in a degradable communication channel, with an in-repo runtime
+  gate that can block low-information handoffs.
+type: software
+authors:
+  - given-names: Gian Prem
+    family-names: Rajaram
+repository-code: "https://github.com/gianpremrajaram/precept-research"
+license: MIT
+keywords:
+  - V-usable information
+  - multi-agent LLM coordination
+  - runtime gating
+  - information theory

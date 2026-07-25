@@ -4,6 +4,7 @@ import numpy as np
 
 from preceptx.agents.channel import ChannelConfig, ChannelResult, apply_channel
 from preceptx.data.schema import Condition, Serialisation
+from preceptx.sim.serialise import GRID_LEGEND
 
 CFG = ChannelConfig()
 
@@ -62,8 +63,16 @@ def test_c3_windows_grid_observation_and_leaves_message_intact() -> None:
     assert r.observation_override == "\n".join(["....", ".T..", "...."])  # band of +/-1 row
 
 
+def test_c3_grid_window_preserves_the_legend_header() -> None:
+    # The legend line contains a literal "T"; windowing must skip it when locating load rows and
+    # re-prepend it so B keeps the symbol key inside its restricted view (P1-5 wrinkle).
+    grid = "\n".join([GRID_LEGEND, "....", "....", ".T..", "....", "...."])
+    r = _ch("m", "C3", serialisation="grid", observation=grid, cfg=ChannelConfig(c3_window_rows=1))
+    assert r.observation_override == "\n".join([GRID_LEGEND, "....", ".T..", "...."])
+
+
 def test_c3_numeric_hides_the_goal_line() -> None:
-    obs = "load=(1, 2, 3)\nvel=(0, 0, 0)\ncontact=False\ngoal=(9, 9, 1)"
+    obs = "load=(1, 2, 3)\ncontact=False\ngoal=(9, 9, 1)"
     r = _ch("m", "C3", serialisation="numeric", observation=obs)
     assert r.observation_override is not None
     assert "goal=" not in r.observation_override and "load=" in r.observation_override

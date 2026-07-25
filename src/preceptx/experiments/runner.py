@@ -11,6 +11,7 @@ restarts without duplicating cells.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -62,7 +63,14 @@ def run_grid(sweep: SweepConfig, client: LLMClient, *, root: Path | str) -> RunS
         len(cells) - len(pending),
     )
 
-    runner = EpisodeRunner(client, max_steps=sweep.max_steps, channel_cfg=sweep.channel)
+    runner = EpisodeRunner(
+        client,
+        max_steps=sweep.max_steps,
+        channel_cfg=sweep.channel,
+        step_cfg=sweep.step,
+        outcome_cfg=sweep.outcome,
+        jitter=sweep.jitter,
+    )
     write_lock = threading.Lock()
 
     def _run_one(cell: ExperimentConfig) -> None:
@@ -81,7 +89,11 @@ def run_grid(sweep: SweepConfig, client: LLMClient, *, root: Path | str) -> RunS
     run_dir = root / f"{d_hash}-run"
     run_dir.mkdir(parents=True, exist_ok=True)
     manifest = build_sweep_manifest(
-        sweep, dataset_hash=d_hash, prompt_version=PROMPT_VERSION
+        sweep,
+        dataset_hash=d_hash,
+        prompt_version=PROMPT_VERSION,
+        serving_substrate=os.environ.get("PRECEPTX_SERVING_SUBSTRATE", "unspecified"),
+        endpoint_base_url=client.config.base_url,
     ).model_copy(update={"summary": summary})
     (run_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2))
     (run_dir / "summary.json").write_text(summary.model_dump_json(indent=2))

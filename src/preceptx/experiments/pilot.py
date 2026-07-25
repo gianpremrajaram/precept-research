@@ -126,9 +126,14 @@ def _groups(records: list[HandoffRecord]) -> NDArray[np.int_]:
     return np.unique([r.episode_id for r in records], return_inverse=True)[1].astype(int)
 
 
-def _success_per_handoff(records: list[HandoffRecord]) -> NDArray[np.int_]:
-    success = _episode_success(records)
-    return np.array([1 if success[r.episode_id] else 0 for r in records], dtype=int)
+def _progress_per_handoff(records: list[HandoffRecord]) -> NDArray[np.int_]:
+    """Per-handoff next-k progress labels - the construct RQ1's headline CPVI uses (P1-2): the gate
+    certifying "a measurable CPVI gap exists" must certify it for the Y the headline will use, not
+    for terminal success. Progress also varies within episodes, so the single-class spurious-fail
+    mode of an episode-level label largely disappears."""
+    if any(r.y_binary_progress is None for r in records):
+        raise ConfigError("G2 needs y_binary_progress; run the DSE-009 labeller first")
+    return np.array([1 if r.y_binary_progress else 0 for r in records], dtype=int)
 
 
 def g1_capability(records: list[HandoffRecord], cfg: PilotConfig) -> GateResult:
@@ -153,7 +158,11 @@ def g1_capability(records: list[HandoffRecord], cfg: PilotConfig) -> GateResult:
 
 
 def g2_signal(records: list[HandoffRecord], featuriser: Featuriser, cfg: PilotConfig) -> GateResult:
-    """G2: a C0-to-hard gap in *both* outcome (success rate) and CPVI (held-out, bits)."""
+    """G2: a C0-to-hard gap in *both* outcome (success rate) and CPVI (held-out, bits).
+
+    The success gap is on episode terminal success (the outcome claim); the CPVI gap is computed
+    against per-handoff ``y_binary_progress`` - the same construct the RQ1 headline uses (P1-2).
+    """
     _require_labelled(records)
     hard = _hardest_condition(records)
     success = _episode_success(records)
@@ -167,7 +176,7 @@ def g2_signal(records: list[HandoffRecord], featuriser: Featuriser, cfg: PilotCo
     success_gap = c0_rate - hard_rate
 
     subset = [r for r in records if r.condition in {"C0", hard}]
-    y = _success_per_handoff(subset)
+    y = _progress_per_handoff(subset)
     if len(np.unique(y)) < 2:
         return GateResult(
             name="G2 signal",
@@ -175,7 +184,7 @@ def g2_signal(records: list[HandoffRecord], featuriser: Featuriser, cfg: PilotCo
             value=success_gap,
             threshold=cfg.g2_min_success_gap,
             detail={"c0_success": c0_rate, "hard_success": hard_rate, "success_gap": success_gap},
-            note=f"hard={hard}; CPVI gap unmeasurable (single outcome class in the C0+hard subset)",
+            note=f"hard={hard}; CPVI gap unmeasurable (single progress class in C0+hard subset)",
         )
     e_s, e_m = featuriser.featurise(subset)
     scores = cpvi(e_s, e_m, y, _groups(subset), cfg.cpvi_probe)

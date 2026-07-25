@@ -8,6 +8,7 @@ from hypothesis import strategies as st
 
 from preceptx.analysis.stats import (
     bootstrap_ci,
+    build_provenance,
     cliffs_delta,
     cohens_d,
     correct_pvalues,
@@ -16,6 +17,8 @@ from preceptx.analysis.stats import (
 )
 from preceptx.data.schema import HandoffRecord
 from preceptx.data.writer import write_handoffs
+from preceptx.measure.featuriser import EncoderConfig
+from preceptx.measure.pvi_cpvi import ProbeConfig
 
 
 def test_cohens_d_recovers_known_separation() -> None:
@@ -90,6 +93,7 @@ def _rec(episode: str, y: bool | None) -> HandoffRecord:
         seed=0,
         state={},
         state_str="s",
+        observation="s",
         message_raw="r",
         message_delivered="d",
         action={},
@@ -101,6 +105,15 @@ def _rec(episode: str, y: bool | None) -> HandoffRecord:
         stuck=False,
         y_terminal_success=y,
     )
+
+
+def test_build_provenance_captures_encoder_probe_and_code_identity() -> None:
+    prov = build_provenance(EncoderConfig(revision="pinned-rev"), ProbeConfig(c=0.5))
+    assert prov.encoder_name == EncoderConfig().name
+    assert prov.encoder_revision == "pinned-rev"
+    assert prov.probe.c == 0.5
+    assert len(prov.git_sha) == 40  # full SHA from a real checkout
+    assert prov.timestamp  # ISO timestamp present
 
 
 def test_load_analysis_frame_adds_nullable_failure(tmp_path: object) -> None:

@@ -23,6 +23,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import GroupKFold
 
+from preceptx.analysis.stats import AnalysisProvenance, build_provenance
 from preceptx.data.schema import HandoffRecord
 from preceptx.gate.statistics import (
     CosineStatistic,
@@ -32,7 +33,6 @@ from preceptx.gate.statistics import (
     episode_groups,
     failure_label,
 )
-from preceptx.manifest import git_sha
 from preceptx.measure.featuriser import Featuriser
 from preceptx.measure.pvi_cpvi import ProbeConfig
 
@@ -87,7 +87,7 @@ class CalibrationReport(BaseModel):
 
     target: Literal["realised_failure"] = "realised_failure"  # never CPVI (R5 circularity guard)
     dataset_hash: str
-    git_sha: str
+    provenance: AnalysisProvenance  # encoder + probe + code identity (P1-8; subsumes git_sha)
     n: int
     n_bins: int
     ece_reliable: bool
@@ -239,7 +239,7 @@ def calibrate(
     ]
     return CalibrationReport(
         dataset_hash=dataset_hash,
-        git_sha=git_sha(),
+        provenance=build_provenance(featuriser.cfg, cfg.probe),
         n=len(records),
         n_bins=cfg.n_bins,
         ece_reliable=len(records) >= _ECE_RELIABLE_MIN,

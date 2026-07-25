@@ -7,6 +7,9 @@ from pydantic import ValidationError
 
 from preceptx.config import ModelConfig
 from preceptx.experiments.sweep import SweepConfig, episode_id, expand, sweep_hash
+from preceptx.sim.actions import StepConfig
+from preceptx.sim.arena import ScenarioJitter
+from preceptx.sim.outcomes import OutcomeConfig
 
 MODEL = ModelConfig(name="m", revision="rev", tier="8b")
 
@@ -38,6 +41,15 @@ def test_expand_cells_carry_the_axis_values() -> None:
 def test_sweep_hash_is_stable_and_config_sensitive() -> None:
     assert sweep_hash(_sweep()) == sweep_hash(_sweep())  # deterministic
     assert sweep_hash(_sweep()) != sweep_hash(_sweep(seeds=[9]))  # changes with the grid
+
+
+def test_sweep_hash_covers_jitter_step_and_outcome_knobs() -> None:
+    # P0-2/P1-6: a silent change to the jitter region, impulse, or the label horizon k must roll
+    # the hash - otherwise a re-run dataset would be silently relabelled under the same identity.
+    base = sweep_hash(_sweep())
+    assert sweep_hash(_sweep(jitter=ScenarioJitter(x_range=(1.5, 2.5)))) != base
+    assert sweep_hash(_sweep(step=StepConfig(linear_impulse=4.0))) != base
+    assert sweep_hash(_sweep(outcome=OutcomeConfig(k=5))) != base
 
 
 def test_empty_axis_is_rejected() -> None:

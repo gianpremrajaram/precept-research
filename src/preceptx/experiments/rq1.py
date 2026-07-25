@@ -43,8 +43,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from preceptx.analysis.figures import ci_plot
 from preceptx.analysis.stats import (
+    AnalysisProvenance,
     SeedSensitivity,
     bootstrap_ci,
+    build_provenance,
     cliffs_delta,
     correct_pvalues,
     seed_sensitivity,
@@ -55,8 +57,9 @@ from preceptx.data.writer import dataset_hash, load_records
 from preceptx.experiments.runner import run_grid
 from preceptx.experiments.sweep import SweepConfig, sweep_hash
 from preceptx.measure.featuriser import Featuriser
-from preceptx.measure.pvi_cpvi import ProbeConfig, cpvi, pvi
+from preceptx.measure.pvi_cpvi import ProbeConfig, cpvi, pvi, shuffled_message_cpvi
 from preceptx.serving.client import LLMClient
+from preceptx.sim.feasibility import STEP_BUDGETS
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +77,7 @@ class RQ1Config(BaseModel):
     probe: ProbeConfig = Field(default_factory=ProbeConfig)
     n_boot: int = Field(default=2000, ge=100)  # for the cheap one-sample/effect-size CIs
     n_boot_mediation: int = Field(default=400, ge=50)  # model-refit bootstrap; costlier per draw
+    n_shuffle: int = Field(default=20, ge=0)  # within-condition perms for the RD-15 null; 0 = off
     alpha: float = Field(default=0.05, gt=0, lt=1)
     correction: Literal["holm", "bh"] = "holm"
 
@@ -97,13 +101,17 @@ class ConditionSummary(BaseModel):
 
 
 class Contrast(BaseModel):
-    """A Ck-vs-C0 contrast: effect size with a CI, plus the mixed-model coefficient and its p."""
+    """A Ck-vs-C0 contrast: effect sizes with CIs, plus the mixed-model coefficient and its p."""
 
     model_config = ConfigDict(extra="forbid")
 
     condition: str
     cliffs_delta: float  # on episode success vs C0
     delta_ci: tuple[float, float]
+    # Efficiency endpoint (P1-11): Cliff's delta on steps-to-goal vs C0 (positive = Ck slower).
+    # Failures sit at steps == budget, so the rank-based delta handles the censoring mass.
+    steps_delta: float
+    steps_delta_ci: tuple[float, float]
     mixed_coef: float
     p_raw: float
     p_corrected: float
@@ -118,6 +126,7 @@ class EpisodeMediation(BaseModel):
     path_a: float  # condition -> episode-mean CPVI
     indirect: float  # a * b: the channel effect on success carried *through* CPVI
     indirect_ci: tuple[float, float]  # percentile bootstrap over episodes
+    indirect_n_draws: int  # retained (non-degenerate) bootstrap draws behind the CI (P2-6)
     direct: float  # c': condition -> success, controlling for CPVI
     total: float  # c : condition -> success, unadjusted
     prop_mediated: float  # indirect / total (0 when total == 0)
@@ -140,6 +149,22 @@ class MixedModelSummary(BaseModel):
     mediation_note: str
 
 
+class ShuffledMessageAudit(BaseModel):
+    """Within-condition message-permutation null for CPVI (RD-15): real >> null validates signal.
+
+    Recomputing CPVI with messages permuted within condition decouples them from their handoffs, so
+    the null mean must collapse toward 0; the real ``mean_cpvi`` sitting well above the null band is
+    the pre-registered "the estimator isn't hallucinating signal" manipulation check.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    n_perm: int
+    mean_cpvi: float  # the real pooled per-handoff mean CPVI
+    null_mean_cpvi: float  # mean over permutations of the mean CPVI (expected ~0)
+    null_std_cpvi: float  # spread of the permutation null
+
+
 class RQ1Result(BaseModel):
     """The full RQ1 analysis, ready to persist and to drive the figures/table."""
 
@@ -147,10 +172,12 @@ class RQ1Result(BaseModel):
 
     dataset_hash: str
     n_handoffs: int
+    provenance: AnalysisProvenance  # encoder + probe + code identity (P1-8)
     conditions: list[ConditionSummary]
     contrasts: list[Contrast]
     mixed_model: MixedModelSummary
     seed_sensitivity: SeedSensitivity
+    shuffled_message_audit: ShuffledMessageAudit | None = None  # RD-15 manipulation check
     figures: dict[str, str] = Field(default_factory=dict)
 
 
@@ -161,16 +188,20 @@ def rq1_sweep(
     serialisations: list[Serialisation] | None = None,
     difficulties: list[Difficulty] | None = None,
     conditions: list[Condition] | None = None,
-    max_steps: int = 12,
+    max_steps: dict[Difficulty, int] | int | None = None,
 ) -> SweepConfig:
-    """The RQ1 factorial: all of C0-C4 by default, crossed with serialisation/difficulty/seed."""
+    """The RQ1 factorial: all of C0-C4 by default, crossed with serialisation/difficulty/seed.
+
+    ``max_steps`` defaults to the certified per-difficulty feasibility budgets (P1-4); pass an int
+    to broadcast one budget or a dict to override per difficulty.
+    """
     return SweepConfig(
         conditions=conditions or CONDITION_ORDER,
         serialisations=serialisations or ["numeric"],
         difficulties=difficulties or ["hard"],
         seeds=seeds,
         model=model,
-        max_steps=max_steps,
+        max_steps=dict(STEP_BUDGETS) if max_steps is None else max_steps,
     )
 
 
@@ -316,13 +347,15 @@ def _episode_mediation_frame(records: list[HandoffRecord], cpvi_scores: FloatArr
 
 def _bootstrap_indirect(
     ep_df: pd.DataFrame, targets: Sequence[str], cfg: RQ1Config
-) -> dict[str, tuple[float, float]]:
+) -> tuple[dict[str, tuple[float, float]], dict[str, int]]:
     """Percentile bootstrap CI of the indirect effect a*b per condition, resampling episodes.
 
     Each draw refits path a (cpvi~condition) and path b (success~condition+cpvi) on the resampled
     episodes; degenerate draws - a dropped condition (which would shift the C0 reference) or a
-    single-class outcome (unfittable) - are skipped. ponytail: plain episode resample,
-    n_boot_mediation refits; cluster-resample seeds only if seed clustering dominates the variance.
+    single-class outcome (unfittable) - are skipped. The retained-draw count is returned alongside
+    the CIs so an interval built from few surviving draws is visibly flagged (P2-6). ponytail:
+    plain episode resample, n_boot_mediation refits; cluster-resample seeds only if seed
+    clustering dominates the variance.
     """
     rng = np.random.default_rng(0)
     n = len(ep_df)
@@ -341,15 +374,17 @@ def _bootstrap_indirect(
         b = float(y_model.params.get("cpvi", 0.0))
         for c in targets:
             draws[c].append(a.get(c, 0.0) * b)
-    out: dict[str, tuple[float, float]] = {}
+    cis: dict[str, tuple[float, float]] = {}
+    counts: dict[str, int] = {}
     for c in targets:
         vals = np.array(draws[c], dtype=np.float64)
+        counts[c] = len(vals)
         if len(vals) < 2:
-            out[c] = (float("nan"), float("nan"))
+            cis[c] = (float("nan"), float("nan"))
         else:
             lo, hi = np.quantile(vals, [cfg.alpha / 2.0, 1.0 - cfg.alpha / 2.0])
-            out[c] = (float(lo), float(hi))
-    return out
+            cis[c] = (float(lo), float(hi))
+    return cis, counts
 
 
 def _episode_mediation(
@@ -365,6 +400,7 @@ def _episode_mediation(
                 path_a=nan,
                 indirect=nan,
                 indirect_ci=(nan, nan),
+                indirect_n_draws=0,
                 direct=nan,
                 total=nan,
                 prop_mediated=nan,
@@ -379,13 +415,14 @@ def _episode_mediation(
     cprime = _condition_terms(y_full.params)
     total = _condition_terms(y_red.params)
     b = float(y_full.params["cpvi"])
-    ci = _bootstrap_indirect(ep_df, targets, cfg)
+    ci, n_draws = _bootstrap_indirect(ep_df, targets, cfg)
     meds = [
         EpisodeMediation(
             condition=c,
             path_a=a.get(c, 0.0),
             indirect=a.get(c, 0.0) * b,
             indirect_ci=ci[c],
+            indirect_n_draws=n_draws[c],
             direct=cprime.get(c, 0.0),
             total=total.get(c, 0.0),
             prop_mediated=(a.get(c, 0.0) * b / total[c]) if total.get(c, 0.0) != 0.0 else 0.0,
@@ -424,14 +461,51 @@ def _mixed_model(
     return summary, coef_p
 
 
+def _shuffle_audit(
+    e_s: FloatArray,
+    e_m: FloatArray,
+    y: IntArray,
+    groups: IntArray,
+    records: list[HandoffRecord],
+    cpvi_scores: FloatArray,
+    cfg: RQ1Config,
+) -> ShuffledMessageAudit | None:
+    """The RD-15 within-condition permutation null (skipped when ``cfg.n_shuffle == 0``)."""
+    if cfg.n_shuffle == 0:
+        return None
+    conditions = np.array([r.condition for r in records])
+    null = shuffled_message_cpvi(
+        e_s,
+        e_m,
+        y,
+        groups,
+        conditions,
+        cfg.probe,
+        rng=np.random.default_rng(0),
+        n_perm=cfg.n_shuffle,
+    )
+    return ShuffledMessageAudit(
+        n_perm=cfg.n_shuffle,
+        mean_cpvi=float(np.mean(cpvi_scores)),
+        null_mean_cpvi=float(np.mean(null)),
+        null_std_cpvi=float(np.std(null)),
+    )
+
+
 def analyse_rq1(
     records: list[HandoffRecord],
     featuriser: Featuriser,
     *,
     dataset_hash: str,
     cfg: RQ1Config | None = None,
-) -> RQ1Result:
-    """Score CPVI/PVI, summarise per condition, fit the mixed model + mediation, build contrasts."""
+) -> tuple[RQ1Result, pd.DataFrame]:
+    """Score CPVI/PVI, summarise per condition, fit the mixed model + mediation, build contrasts.
+
+    Returns the result plus the per-handoff score frame (episode_id, step, condition, seed, cpvi,
+    pvi), row-aligned to ``records`` - persisted by ``write_rq1`` (P1-17): the methodology promises
+    the per-handoff CPVI *distribution*, RQ2 consumes exactly these scores, and re-computing them
+    re-fits probes (probe-seed noise makes the recomputation non-identical).
+    """
     cfg = cfg or RQ1Config()
     if not records:
         raise ConfigError("analyse_rq1 called with no records")
@@ -443,6 +517,16 @@ def analyse_rq1(
     groups = _groups(records)
     cpvi_scores = cpvi(e_s, e_m, y, groups, cfg.probe)
     pvi_scores = pvi(e_m, y, groups, cfg.probe)
+    scores = pd.DataFrame(
+        {
+            "episode_id": [r.episode_id for r in records],
+            "step": [r.step for r in records],
+            "condition": [r.condition for r in records],
+            "seed": [r.seed for r in records],
+            "cpvi": cpvi_scores,
+            "pvi": pvi_scores,
+        }
+    )
     ep_frame = _episode_frame(records)
 
     present = [c for c in CONDITION_ORDER if any(r.condition == c for r in records)]
@@ -474,14 +558,17 @@ def analyse_rq1(
         hard = sub[sub["condition"] == hardest]["success"]
         if len(c0) and len(hard):
             seeds_metric[int(s)] = float(c0.mean() - hard.mean())
-    return RQ1Result(
+    result = RQ1Result(
         dataset_hash=dataset_hash,
         n_handoffs=len(records),
+        provenance=build_provenance(featuriser.cfg, cfg.probe),
         conditions=summaries,
         contrasts=contrasts,
         mixed_model=mixed,
         seed_sensitivity=seed_sensitivity(seeds_metric),
+        shuffled_message_audit=_shuffle_audit(e_s, e_m, y, groups, records, cpvi_scores, cfg),
     )
+    return result, scores
 
 
 def _contrasts(
@@ -490,21 +577,27 @@ def _contrasts(
     coef_p: dict[str, tuple[float, float]],
     cfg: RQ1Config,
 ) -> list[Contrast]:
-    """Ck-vs-C0 effect sizes (Cliff's delta on success) with corrected mixed-model p-values."""
+    """Ck-vs-C0 effect sizes (Cliff's delta on success and on steps) with corrected p-values."""
     if "C0" not in present:
         raise ConfigError("RQ1 contrasts need C0 as the reference condition")
     c0 = ep_frame[ep_frame["condition"] == "C0"]["success"].to_numpy(dtype=np.float64)
+    c0_steps = ep_frame[ep_frame["condition"] == "C0"]["steps"].to_numpy(dtype=np.float64)
     targets = [c for c in present if c != "C0"]
     raw_p = np.array([coef_p[c][1] for c in targets], dtype=np.float64)
     corrected = correct_pvalues(raw_p, method=cfg.correction)
     out: list[Contrast] = []
     for c, p_corr in zip(targets, corrected, strict=True):
         ck = ep_frame[ep_frame["condition"] == c]["success"].to_numpy(dtype=np.float64)
+        ck_steps = ep_frame[ep_frame["condition"] == c]["steps"].to_numpy(dtype=np.float64)
         out.append(
             Contrast(
                 condition=c,
                 cliffs_delta=cliffs_delta(ck, c0),  # negative = Ck worse than C0 (degradation)
                 delta_ci=_delta_ci(ck, c0, cfg),
+                # Efficiency (P1-11): positive = Ck takes more steps; failures sit at the budget,
+                # which the rank-based delta treats as the censored mass (ANALYSIS_PROTOCOL).
+                steps_delta=cliffs_delta(ck_steps, c0_steps),
+                steps_delta_ci=_delta_ci(ck_steps, c0_steps, cfg),
                 mixed_coef=coef_p[c][0],
                 p_raw=coef_p[c][1],
                 p_corrected=float(p_corr),
@@ -520,18 +613,19 @@ def run_rq1(
     *,
     root: Path | str,
     cfg: RQ1Config | None = None,
-) -> RQ1Result:
+) -> tuple[RQ1Result, pd.DataFrame]:
     """Run the RQ1 grid and analyse it end to end (full-scale run gated on DSE-005 compute)."""
     run_grid(sweep, client, root=root)
     d_hash = dataset_hash(sweep_hash(sweep))
     return analyse_rq1(load_records(d_hash, root=root), featuriser, dataset_hash=d_hash, cfg=cfg)
 
 
-def write_rq1(result: RQ1Result, dir: Path | str) -> Path:
-    """Persist the analysis JSON, a per-condition results table (CSV), and the two figures."""
+def write_rq1(result: RQ1Result, dir: Path | str, *, scores: pd.DataFrame) -> Path:
+    """Persist the analysis JSON, per-handoff scores (Parquet), the results table, and figures."""
     dir = Path(dir)
     dir.mkdir(parents=True, exist_ok=True)
     (dir / "rq1.json").write_text(result.model_dump_json(indent=2))
+    scores.to_parquet(dir / "scores.parquet", index=False)  # the P1-17 join-key artefact
     table = pd.DataFrame([c.model_dump() for c in result.conditions])
     table.to_csv(dir / "rq1_results.csv", index=False)
 

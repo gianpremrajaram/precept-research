@@ -45,6 +45,7 @@ def _rec(ep: str, success: bool | None) -> HandoffRecord:
         seed=0,
         state={},
         state_str=f"state-{ep}",
+        observation=f"state-{ep}",
         message_raw="r",
         message_delivered=f"msg-{ep}",
         action={},
