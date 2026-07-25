@@ -21,7 +21,6 @@ dependencies = [
   "statsmodels>=0.14,<1",
   "pymunk>=6.6,<7",
   "langgraph>=0.2,<1",
-  "langchain-openai>=0.2,<1",
   "openai>=1.40,<2",
   "hydra-core>=1.3,<2",
   "omegaconf>=2.3,<3",
@@ -46,6 +45,7 @@ dev = [
   "hypothesis>=6.100,<7",
   "mypy>=1.11,<2",
   "ruff>=0.6,<1",
+  "bandit>=1.7,<2",
   "pip-audit>=2.7,<3",
   "pre-commit>=3.8,<5",
   "respx>=0.21,<1",
@@ -76,7 +76,6 @@ module = [
   "scipy.*",
   "statsmodels.*",
   "langgraph.*",
-  "langchain_openai.*",
   "sentence_transformers.*",
   "hydra.*",
   "omegaconf.*",
@@ -100,5 +99,6 @@ source = ["src/preceptx"]
 
 [tool.coverage.report]
 show_missing = true
-# The >=80% gate (CLAUDE.md) is enforced once the load-bearing core (sim/measure/gate/runner)
-# exists; raise --cov-fail-under=80 in CI when those modules land.
+# The >=80% gate (CLAUDE.md) is enforced in CI, scoped to the load-bearing core
+# (preceptx.sim / measure / gate / agents.channel / experiments.runner) via --cov-fail-under=80;
+# see .github/workflows/ci.yml. Everything else is measured for visibility but not gated.

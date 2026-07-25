@@ -209,6 +209,38 @@ def pvi(e_m: FloatArray, y: IntArray, groups: IntArray | None, cfg: ProbeConfig)
     return _pvi_unconditional(e_m, y, groups, cfg, np.unique(y))
 
 
+def shuffled_message_cpvi(
+    e_s: FloatArray,
+    e_m: FloatArray,
+    y: IntArray,
+    groups: IntArray | None,
+    conditions: NDArray[Any],
+    cfg: ProbeConfig,
+    *,
+    rng: np.random.Generator,
+    n_perm: int = 20,
+) -> FloatArray:
+    """Null distribution of mean CPVI under within-condition message permutation (RD-15).
+
+    Recompute CPVI with ``e_m`` rows permuted *within each condition*, decoupling every message from
+    the handoff it belongs to; a faithful estimator's mean CPVI must then collapse toward 0. Returns
+    the per-permutation mean CPVI (length ``n_perm``); ``e_s``/``y``/``groups`` stay aligned to the
+    original rows, so only the message content is scrambled. The real mean CPVI sitting well above
+    this band is the "the estimator isn't hallucinating signal" exhibit - a pre-registered
+    manipulation check with an expected ~0 result (review section 7-6 / RD-13).
+    """
+    base = np.arange(len(y))
+    unique_conditions = np.unique(conditions)
+    means = np.empty(n_perm, dtype=np.float64)
+    for p in range(n_perm):
+        perm = base.copy()
+        for c in unique_conditions:
+            block = np.flatnonzero(conditions == c)
+            perm[block] = rng.permutation(block)
+        means[p] = float(np.mean(cpvi(e_s, e_m[perm], y, groups, cfg)))
+    return means
+
+
 def cpvi_continuous(
     e_s: FloatArray, e_m: FloatArray, y: FloatArray, groups: IntArray | None, cfg: ProbeConfig
 ) -> FloatArray:

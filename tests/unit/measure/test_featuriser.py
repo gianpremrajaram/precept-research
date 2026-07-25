@@ -39,7 +39,9 @@ def _cfg(cache_dir: Path) -> EncoderConfig:
     return EncoderConfig(revision="testrev", cache_dir=cache_dir)
 
 
-def _record(step: int, state_str: str, message: str) -> HandoffRecord:
+def _record(
+    step: int, state_str: str, message: str, *, observation: str | None = None
+) -> HandoffRecord:
     return HandoffRecord(
         episode_id="e0",
         step=step,
@@ -50,6 +52,7 @@ def _record(step: int, state_str: str, message: str) -> HandoffRecord:
         seed=0,
         state={},
         state_str=state_str,
+        observation=state_str if observation is None else observation,
         message_raw=message,
         message_delivered=message,
         action={},
@@ -92,6 +95,30 @@ def test_featurise_shapes_align_to_records(tmp_path: Path) -> None:
     e_s, e_m = Featuriser(_cfg(tmp_path), _StubEncoder()).featurise(recs)
     assert e_s.shape == (5, 16)
     assert e_m.shape == (5, 16)
+
+
+def test_featurise_embeds_receiver_observation_not_full_state(tmp_path: Path) -> None:
+    # The P0-1 conditioning semantics: e_s is the receiver's (possibly C3-restricted) view.
+    f = Featuriser(_cfg(tmp_path), _StubEncoder())
+    rec = _record(0, "full state with goal", "msg", observation="windowed view")
+    e_s, _ = f.featurise([rec])
+    assert np.array_equal(e_s, f.embed_texts(["windowed view"]))
+    assert not np.array_equal(e_s, f.embed_texts(["full state with goal"]))
+
+
+def test_cache_key_separates_encoders_by_name(tmp_path: Path) -> None:
+    # P1-16: two encoders at the same revision sharing one cache dir must never serve each other's
+    # vectors - that would fabricate a near-zero encoder-sensitivity result in DSE-022.
+    shared = tmp_path / "shared_cache"
+    stub_a, stub_b = _StubEncoder(), _StubEncoder()
+    Featuriser(EncoderConfig(name="enc/A", revision="main", cache_dir=shared), stub_a).embed_texts(
+        ["same text"]
+    )
+    Featuriser(EncoderConfig(name="enc/B", revision="main", cache_dir=shared), stub_b).embed_texts(
+        ["same text"]
+    )
+    assert stub_a.n_encoded == 1
+    assert stub_b.n_encoded == 1  # a cache hit here would mean enc/B was served enc/A's vector
 
 
 def test_batch_encoding_completes_quickly(tmp_path: Path) -> None:

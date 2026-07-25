@@ -13,6 +13,7 @@ protocol"); the RQ drivers cite it in their reports.
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import warnings
 from collections.abc import Callable, Mapping
@@ -27,6 +28,9 @@ from scipy.stats import bootstrap as _scipy_bootstrap
 from statsmodels.stats.multitest import multipletests
 
 from preceptx.data.writer import load_dataset
+from preceptx.manifest import git_sha
+from preceptx.measure.featuriser import EncoderConfig
+from preceptx.measure.pvi_cpvi import ProbeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +44,17 @@ ANALYSIS_PROTOCOL: dict[str, str] = {
         "episode); per-contrast effect size Cliff's delta with a bootstrap CI; Holm across the "
         "C0-vs-Ck contrasts."
     ),
+    "H1_efficiency": (
+        "Step-efficiency degrades C0->C4: Cliff's delta on steps-to-goal per C0-vs-Ck contrast "
+        "with a bootstrap CI. Failed episodes sit at the step budget (episodes terminate on "
+        "success or budget), so the rank-based delta treats them as the censored-at-budget mass."
+    ),
     "H2": (
-        "CPVI mediates condition->outcome: refit the MixedLM with per-handoff CPVI as a covariate "
-        "and report the attenuation of the condition coefficients (Baron-Kenny step)."
+        "CPVI mediates condition->outcome: episode-level Baron-Kenny mediation of terminal "
+        "success through episode-mean CPVI - path a (condition->CPVI), path b/c' "
+        "(success ~ condition + CPVI), total c, and the indirect effect a*b per condition with a "
+        "percentile-bootstrap CI over episodes. The handoff-level CPVI attenuation of the "
+        "condition coefficients is reported as a within-episode diagnostic, not the H2 test."
     ),
     "H3": "Twin agreement (DSE-022): retrospective-vs-prospective correlation and Bland-Altman.",
     "H4": "Proxy tracking (DSE-022): rank correlation and AUROC of each runtime statistic vs CPVI.",
@@ -63,6 +75,33 @@ class SeedSensitivity(BaseModel):
     sd: float
     spread: float  # max - min across seeds
     per_seed: dict[int, float]
+
+
+class AnalysisProvenance(BaseModel):
+    """Who/what produced an analysis artefact (P1-8): encoder, probe family, and code identity.
+
+    Embedded in every persisted analysis result (``RQ1Result``, ``CalibrationReport``) so each
+    artefact is self-describing - CLAUDE.md: a result with an unrecorded revision is not a result.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    encoder_name: str
+    encoder_revision: str
+    probe: ProbeConfig
+    git_sha: str
+    timestamp: str
+
+
+def build_provenance(encoder: EncoderConfig, probe: ProbeConfig) -> AnalysisProvenance:
+    """Assemble the provenance block from the live environment (the one shared constructor)."""
+    return AnalysisProvenance(
+        encoder_name=encoder.name,
+        encoder_revision=encoder.revision,
+        probe=probe,
+        git_sha=git_sha(),
+        timestamp=dt.datetime.now(dt.UTC).isoformat(),
+    )
 
 
 def load_analysis_frame(dataset_hash: str, *, root: str) -> pd.DataFrame:

@@ -448,8 +448,136 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
     default ("any positive CPVI gap") is now annotated as intentional: CPVI's bit-scale is uncalibrated
     until the pilot runs, so a magnitude floor cannot be honestly pre-specified — the 0.1 success-gap
     carries the magnitude; re-set to a pre-registered positive floor once the pilot reveals the scale.
+- **Implementation-review correction pass** (`docs/review/2026-07-11-implementation-review.md`,
+  Bundles 1–2: measurement validity + serving readiness, against `54e7b85`). Result-shape-affecting,
+  but no result is frozen and zero real datasets exist — nothing to re-freeze, no v1-loader shim kept:
+  - **CPVI now conditions on the receiver-observed state (P0-1).** `HandoffRecord` gains a required
+    `observation` field — B's delivered view at the handoff (equals `state_str` under C0/C1/C2/C4, the
+    restricted window under C3) — persisted by `graph.apply_node`, and `Featuriser.featurise` embeds
+    it (not `state_str`) for `e_s`. Pre-registered semantics documented in both modules: *the
+    conditioning state s is the state observable to the receiver at the handoff; under C3 that is the
+    windowed view, by design* (previously C3's construct was arithmetically inert — s contained what
+    the window hid). All consumers (estimator, twin, runtime statistics, calibration, G2) inherit
+    through the single featurise choke point — deliberate: the runtime statistics must also condition
+    on what B saw. `state_str` (A's full view) stays on the record, giving C3 a free dual-baseline
+    diagnostic.
+  - **Schema v2 — one deliberate bump.** `SCHEMA_VERSION = 2`; besides `observation`, the record gains
+    the DSE-018 gate fields now so the contract changes once (`gate_blocked: bool = False`,
+    `gate_retries: int = 0`, `message_blocked: str | None = None`) and the labeller's
+    `y_window_truncated: bool | None`. The Arrow schema in `writer.py` is extended to match;
+    `dataset_hash` keys on `SCHEMA_VERSION`, so dataset hashes roll automatically.
+    `docs/handoff_schema.md` updated.
+  - **The seed axis is now true replication (P0-2).** Under greedy decoding + a fixed scenario, seeds
+    only varied the C4 dropout mask — C0–C3 "replicates" were the same episode re-run. New
+    `arena.ScenarioJitter` (Pydantic): the start pose is sampled per seed with `x ∈ (1.2, 2.8)`,
+    `y ∈ (1.5, 4.5)`, `θ ∈ (−π/2, π/2)`; the max T-vertex radius from the COM is ≈ 0.9, so every
+    sample keeps clearance from walls, with belt-and-braces rejection sampling via `space.shape_query`
+    that fails loud (`ConfigError`) after 100 attempts. `make_scenario(rng=None)` keeps the legacy
+    fixed pose, so scripted physics tests stay meaningful. `EpisodeRunner` derives the rng as
+    `default_rng([cell.seed, 2**16])` — the salt cannot collide with the channel's `[seed, step]`
+    streams, and keying on the seed alone preserves cross-condition pairing (same seed → the same
+    scenario instance in every condition). The realised pose needs no schema field — it is step-0
+    `pre_state`. `SweepConfig.jitter` flows into `sweep_hash` and the manifest; the goal stays fixed
+    (the review's optional second knob, skipped as minimum change).
+  - **Serving actually starts (P0-3).** Dense Qwen3 checkpoints have no `-Instruct` suffix:
+    `configs/model/*.yaml` corrected to `Qwen/Qwen3-{8B,14B,32B}` and pinned to HF-API-verified
+    commit SHAs (fetched 2026-07-18; the `-Instruct` variants confirmed 404). Qwen3 hybrid thinking is
+    disabled per request: `ServingConfig.chat_template_kwargs` (default `{"enable_thinking": false}`,
+    override to `{}` for endpoints that reject unknown keys) rides `extra_body` on both `chat` and
+    `structured`; a `<think>` tag in returned chat content raises `ServingError` — a CoT message is a
+    category error, never a degraded mode. `serve.sh` default model fixed, the 70B example marked
+    placeholder pending DSE-005, and the jobscript now echoes vLLM/torch versions, GPU name and
+    model+revision into the job log (P2-10 rider). `docs/serving.md` updated.
+  - **Transport errors fail the episode loud (P1-3).** `agent_b` now catches `ValidationError` only
+    (the ticket-sanctioned invalid-action → WAIT path); `ServingError` propagates, so a dead endpoint
+    can no longer record an episode of passing-looking WAITs.
+  - **Grid legend + numeric vel drop — one serialisation bump (P1-5, RD-7).** `_grid` prepends the
+    constant header `legend: T=load G=goal #=wall .=free | top row = north (+y)` (constant text across
+    cells preserves the information-isomorphism argument). Wrinkle the review missed: the legend
+    contains a literal `T`, so `channel._window_grid` splits the header off before windowing the body
+    rows and `serialise._grid_load_centroid` skips it. `_numeric` drops the dead `vel=` line (always
+    ≈ 0 under quasi-static settling). `PROMPT_VERSION = "v2"` records both changes in the manifest.
+  - **Outcome labeller (P1-10, P1-12).** `y_discrete_config` is now the chamber at the **window end**
+    (the roadmap's "bucketed next pose region") — the pre-state chamber was a state feature with
+    CPVI ≡ 0 by construction. The final k−1 handoffs, whose forward window is clamped at episode end,
+    are flagged `y_window_truncated=True` (flag only; exclusion vs k-sensitivity stays a
+    pre-registration decision, not code).
+  - **G2 measures the headline construct (P1-2).** The pilot's CPVI gap now scores per-handoff
+    `y_binary_progress` (the label RQ1's headline uses) instead of episode terminal success, failing
+    loud on unlabelled records. Side benefit: progress varies within episodes, so the
+    single-class-in-C0∪hard degeneracy largely disappears. G1/G3 and the success-gap half of G2 stay
+    on episode success — they are about outcomes, not the probe construct.
+  - **Sweep/manifest provenance (P1-6, P1-9, §7-7).** `SweepConfig` gains `step: StepConfig` and
+    `outcome: OutcomeConfig`, so `k = 3` and the impulse parameters reach `sweep_hash` and the
+    manifest (P1-6). `manifest._TRACKED_DEPS` += pymunk, scipy, statsmodels, joblib,
+    sentence-transformers — the deps that shape trajectories, statistics and persisted artefacts
+    (P1-9). `SweepManifest` records `serving_substrate` (from `PRECEPTX_SERVING_SUBSTRATE`, default
+    `"unspecified"`) and `endpoint_base_url` (from the client) — deliberately **not** in `sweep_hash`
+    (an environment property, not experiment identity), so interim-GPU pilot data stays permanently
+    distinguishable from Myriad data (§7-7).
+  - **Analysis protocol + provenance (P1-7, P1-8, P1-11, P1-17, P2-6).** `ANALYSIS_PROTOCOL["H2"]`
+    rewritten to describe the shipped episode-level Baron-Kenny test (the old string described the
+    abandoned per-handoff covariate design); new `"H1_efficiency"` entry. New shared
+    `AnalysisProvenance` model (encoder name + revision, `ProbeConfig`, git SHA, timestamp) embedded
+    in `RQ1Result` and `CalibrationReport` (replacing the bare `git_sha` field) so both artefacts are
+    self-describing (P1-8). `Contrast` gains `steps_delta` + CI: Cliff's δ on steps-to-goal, Ck vs C0
+    — failures sit at `steps == max_steps`, so the rank statistic treats them as the
+    censored-at-budget mass (P1-11). `analyse_rq1` returns `(RQ1Result, scores)` and `write_rq1`
+    persists `scores.parquet` (`episode_id, step, condition, seed, cpvi, pvi`, row-aligned to the
+    dataset) — the RQ2 join key (P1-17). `EpisodeMediation.indirect_n_draws` records retained
+    bootstrap draws, so a CI from 40/400 degenerate-skipped draws is visibly flagged (P2-6).
+  - **Embedding cache key includes the encoder name (P1-16).** `_cache_path` digests
+    `sha256(name ⧵0 revision ⧵0 text)`; two encoders both at revision `"main"` can no longer poison
+    each other's cache. No migration — no cache exists.
+- **Implementation-review correction pass (Bundle 3 tooling + hygiene).** Pre-Myriad diagnostics
+  and repo hygiene; the difficulty/rotation retune this surfaced is under *Changed* below.
+  - **Feasibility certificates (`sim/feasibility.py`, P1-4).** An A\* search over the six
+    pose-changing macro-actions on the deterministic sim — Markovian on the load *pose* under
+    quasi-static settling (nodes restore by placement, not trajectory replay), states deduped on a
+    0.15-unit / 18° grid, guided by the geodesic-to-goal distance. `solve(difficulty)` returns the
+    shortest oracle path, its length, and a budget = `ceil(2.5 × optimum)`; `certify()` /
+    `python -m preceptx.sim.feasibility` print the whole ladder. Frozen `STEP_BUDGETS` = {easy 18,
+    medium 33, hard 33}. A unit test certifies easy solvability + **path soundness** (replaying the
+    returned path on the real sim reaches the goal); an integration test certifies medium/hard stay
+    feasible within budget. This tool caught the infeasible-hard finding (see *Changed* and
+    `docs/experiment_design_log.md`).
+  - **Episode renderer + transcript (`analysis/render.py`, §7-2 / the DSE-029 demo trace).**
+    `render_episode(records)` draws a per-step arena / T-pose / goal PNG grid (guarded on the `viz`
+    extra exactly like the other figures — no-op with a log line when absent); `render_transcript`
+    emits a markdown transcript pairing each state with the raw → delivered message and the action
+    (pure text, always available, channel degradation visible). Both reconstruct from persisted
+    records alone. The T polygons use the newly-public `load.t_shape_verts` with world =
+    `com + R(angle)·vert` (no COG offset — the read-back COM is the body origin), so the drawing
+    cannot drift from the physics body.
+  - **Shuffled-message audit (`measure/pvi_cpvi.shuffled_message_cpvi`, RD-15).** Permutes messages
+    *within condition* and recomputes CPVI; the null mean must collapse toward 0 — the pre-registered
+    "the estimator isn't hallucinating signal" manipulation check. Surfaced in `analyse_rq1` as
+    `RQ1Result.shuffled_message_audit` (real `mean_cpvi` vs `null_mean_cpvi`/`null_std_cpvi`),
+    controlled by `RQ1Config.n_shuffle` (default 20; 0 disables).
+  - **CI + repo hygiene.** Coverage `--cov-fail-under=80` **scoped to the load-bearing core**
+    (`preceptx.sim` / `measure` / `gate` / `agents.channel` / `experiments.runner`; currently ~97%);
+    a `bandit -r src/preceptx -ll` security job; a weekly scheduled `pip-audit` workflow
+    (`.github/workflows/audit.yml`). Added a `.gitattributes` **LFS allowlist** (final figures + the
+    demo trace only, per CLAUDE.md) and `CITATION.cff`.
+  - **Experiment Design Log (`docs/experiment_design_log.md`) + CLAUDE.md rule.** A dated log of
+    experiment/research-design decisions — complementary to, not a replacement for, the CHANGELOG —
+    with the difficulty-ladder fix as its first entry. CLAUDE.md §7 (ticket workflow) and "always
+    do" §8 now require an entry when a change alters the experiment/research design.
 
 ### Changed
+- **Difficulty ladder + rotation retuned pre-freeze (P1-4 finding; result-affecting).** The
+  feasibility search showed the shipped ladder was partly infeasible: a rigid T (bar 1.4
+  perpendicular to stem 1.0) cannot thread a thin-wall gap narrower than its **shorter member (the
+  stem, 1.0) at any orientation** — rotation does not shrink the threading cross-section — so medium
+  (slit 1.0) was zero-clearance and hard (0.7) impossible, while `rq1_sweep` defaults its headline to
+  hard. Fix: slit widths **1.0/0.7 → 1.2/1.1** (easy 1.8 kept), all above the 1.0 threshold and graded
+  by threading clearance; `StepConfig.angular_impulse` **2.0 → 0.5** (~34°/action — the old value spun
+  the small-moment T ~135°, reachable only at 45° multiples, too coarse to aim). `SweepConfig.max_steps`
+  is now a per-difficulty `dict[Difficulty, int]` (default = certified `STEP_BUDGETS`; a bare int
+  broadcasts to all difficulties) wired through `EpisodeRunner` and `rq1_sweep`, replacing the single
+  `max_steps=12` that under-fed hard — a `SweepConfig`-schema change, so `sweep_hash` rolls. No result
+  is frozen and no dataset exists, so nothing to re-freeze. Full first-principles rationale in
+  `docs/experiment_design_log.md` (2026-07-25).
 - Repositioned `ISSUES.md` and `RESEARCH_ROADMAP.md` to the **standalone** posture mandated by
   CLAUDE.md: the repo does not depend on or import precept. OTel capture (DSE-004) uses a vanilla
   OpenTelemetry SDK exporter; the runtime gate (DSE-018) is the in-repo `RuntimeGate`
@@ -463,6 +591,11 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
 - CI runs Python 3.11 only (CLAUDE.md's pinned-single-version rule), narrowing DSE-001's stated
   3.11/3.12 matrix.
 
+### Removed
+- **`langchain-openai`** — declared as a core dependency but never imported (the code uses the raw
+  `openai` client). Dropped from `pyproject.toml`, the mypy per-module override list,
+  `DEPENDENCIES.md` §3, and `uv.lock`. `bandit` added to the `dev` extra for the new CI security job.
+
 ### Notes
 - DSE-002's live-on-Myriad verification (one tier served + health check passing on the cluster)
   is deferred until cluster access is available; all authorable parts (script, client, mock tests,
@@ -471,6 +604,17 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
   served 8B tier (DSE-003 acceptance) is deferred until Myriad access, like DSE-002's live check. The
   config-tree model revisions are placeholder `main` and must be pinned to commit SHAs before any
   recorded run (`ModelConfig` already rejects an empty revision).
+- The review-correction pass resolves the DSE-003 note above: the config-tree model revisions are no
+  longer placeholder `main` — all three yamls pin HF commit SHAs. The *encoder* revision
+  (`EncoderConfig.revision="main"`) remains to be pinned before the Phase-2 freeze, as already noted
+  in DSE-013.
+- Bundle 3 tooling (BFS feasibility/P1-4, renderer, shuffled-message audit) and Bundle 4 hygiene
+  (coverage gate, bandit/pip-audit, dependency prune, `.gitattributes`, `CITATION.cff`) have now
+  landed (above). Still deliberately deferred: the **DSE-005 model-ladder harness** (its value needs
+  a served endpoint; write-and-run once compute is up); **P1-14 per-role clients** (lands with its
+  only consumer, DSE-021); **P1-1 `InfoStatistic` label repoint** (one line at Y-freeze); the
+  research one-pagers (`PREREGISTRATION.md`, the RQ3a Y-on-logs note, the Who&When/MAST loader spike);
+  and the thesis-text drift items (D-1..D-6).
 - A pre-existing `UP038` lint (`isinstance(x, (int, float))` → `isinstance(x, int | float)`) in
   `determinism.py` (DSE-003) was fixed in passing on the DSE-006/007 branch: pre-commit's pinned
   ruff enforces the rule while the uv-installed ruff (where it is deprecated) did not, so the commit

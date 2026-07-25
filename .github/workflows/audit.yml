@@ -1,0 +1,23 @@
+name: audit
+
+# Weekly dependency vulnerability scan (CLAUDE.md: "pip-audit weekly via a scheduled Action").
+# Kept out of the per-push CI so a newly-disclosed CVE in a pinned dep surfaces on a schedule
+# rather than blocking unrelated pushes; also runnable on demand.
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.11"
+      - run: uv sync --extra dev
+      - run: uv run pip-audit

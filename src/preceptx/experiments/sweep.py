@@ -1,9 +1,10 @@
 """Sweep configuration, grid expansion, run summary, and the sweep manifest (DSE-012).
 
 ``SweepConfig`` lists the RQ1 grid axes (condition x serialisation x difficulty x seed) plus the
-fixed model, channel, and step budget; ``expand`` takes their Cartesian product into validated
-``ExperimentConfig`` cells - one episode per cell, with replication carried by the seed axis (greedy
-decoding plus deterministic physics make repeated identical cells pointless). ``SweepManifest`` is
+fixed model, channel, scenario jitter, step and outcome configs, and step budget; ``expand`` takes
+their Cartesian product into validated ``ExperimentConfig`` cells - one episode per cell, with
+replication carried by the seed axis: the seed drives the start-pose jitter (P0-2), so different
+seeds are genuinely different problem instances, not identical greedy replays. ``SweepManifest`` is
 the run-level reproducibility record for a grid (the per-cell ``RunManifest`` in ``manifest.py``
 models a single cell); it reuses the git/dep capture there and carries the resolved sweep, its hash,
 the prompt version, and the run summary.
@@ -17,12 +18,16 @@ import itertools
 import json
 import sys
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from preceptx.agents.channel import ChannelConfig
 from preceptx.config import ExperimentConfig, ModelConfig
 from preceptx.data.schema import Condition, Difficulty, Serialisation
 from preceptx.manifest import dep_versions, git_sha
+from preceptx.sim.actions import StepConfig
+from preceptx.sim.arena import ScenarioJitter
+from preceptx.sim.feasibility import STEP_BUDGETS
+from preceptx.sim.outcomes import OutcomeConfig
 
 SWEEP_MANIFEST_VERSION = 1
 
@@ -38,8 +43,24 @@ class SweepConfig(BaseModel):
     seeds: list[int] = Field(min_length=1)
     model: ModelConfig
     channel: ChannelConfig = Field(default_factory=ChannelConfig)
-    max_steps: int = Field(default=12, gt=0)
+    # Result-shaping knobs carried here so they reach sweep_hash and the manifest (P0-2, P1-6):
+    # a silent change to the jitter region, impulse parameters, or the label horizon k would
+    # otherwise relabel a re-run dataset without changing its hash.
+    jitter: ScenarioJitter = Field(default_factory=ScenarioJitter)
+    step: StepConfig = Field(default_factory=StepConfig)
+    outcome: OutcomeConfig = Field(default_factory=OutcomeConfig)
+    # Per-difficulty step budget (P1-4): each difficulty's certified feasibility budget (~2.5x the
+    # oracle optimum from sim/feasibility.py), so hard is not starved relative to easy. A bare int
+    # is accepted and broadcast to every difficulty (so a caller can still pass one budget).
+    max_steps: dict[Difficulty, int] = Field(default_factory=lambda: dict(STEP_BUDGETS))
     concurrency: int = Field(default=4, gt=0)
+
+    @field_validator("max_steps", mode="before")
+    @classmethod
+    def _broadcast_scalar_budget(cls, v: object) -> object:
+        if isinstance(v, int) and not isinstance(v, bool):
+            return {"easy": v, "medium": v, "hard": v}
+        return v
 
 
 class RunSummary(BaseModel):
@@ -70,6 +91,11 @@ class SweepManifest(BaseModel):
     command: list[str]
     dep_versions: dict[str, str]
     timestamp: str
+    # Where the episodes were actually served (§7-7): interim-GPU pilot data must stay permanently
+    # distinguishable from Myriad data. Deliberately NOT part of sweep_hash - the substrate is an
+    # environment property, and separating roots (not hashes) keeps interim/Myriad datasets apart.
+    serving_substrate: str = "unspecified"
+    endpoint_base_url: str = ""
     summary: RunSummary | None = None
 
 
@@ -97,7 +123,12 @@ def sweep_hash(sweep: SweepConfig) -> str:
 
 
 def build_sweep_manifest(
-    sweep: SweepConfig, *, dataset_hash: str, prompt_version: str
+    sweep: SweepConfig,
+    *,
+    dataset_hash: str,
+    prompt_version: str,
+    serving_substrate: str = "unspecified",
+    endpoint_base_url: str = "",
 ) -> SweepManifest:
     """Assemble the run-level manifest from the sweep plus the live environment."""
     return SweepManifest(
@@ -111,4 +142,6 @@ def build_sweep_manifest(
         command=list(sys.argv),
         dep_versions=dep_versions(),
         timestamp=dt.datetime.now(dt.UTC).isoformat(),
+        serving_substrate=serving_substrate,
+        endpoint_base_url=endpoint_base_url,
     )

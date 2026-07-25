@@ -19,7 +19,7 @@ def _valid() -> dict[str, Any]:
         "condition": "C0",
         "serialisation": "numeric",
         "difficulty": "easy",
-        "model": {"name": "Qwen/Qwen3-14B-Instruct", "revision": "abc123", "tier": "14b"},
+        "model": {"name": "Qwen/Qwen3-14B", "revision": "abc123", "tier": "14b"},
         "seed": 0,
     }
 
@@ -40,7 +40,7 @@ def test_hydra_tree_composes_and_validates() -> None:
     config = load_config(OmegaConf.to_container(cfg, resolve=True))  # type: ignore[arg-type]
     assert config.condition == "C3"
     assert config.serialisation == "grid"
-    assert config.model.name == "Qwen/Qwen3-8B-Instruct"
+    assert config.model.name == "Qwen/Qwen3-8B"  # P0-3: dense Qwen3 has no -Instruct suffix
     assert config.seed == 5
 
 

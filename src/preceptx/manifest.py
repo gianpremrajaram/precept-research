@@ -24,6 +24,10 @@ from preceptx.config import ExperimentConfig
 MANIFEST_VERSION = 1
 
 # Dependencies whose installed versions are pinned into every manifest for reproducibility.
+# pymunk literally shapes trajectories; scipy/statsmodels shape the reported statistics;
+# joblib/sentence-transformers shape persisted probes and embeddings (P1-9). Server-side
+# vllm/torch versions are echoed into the job log by scripts/myriad/serve.sh - the client
+# environment cannot see them.
 _TRACKED_DEPS = (
     "pydantic",
     "numpy",
@@ -34,6 +38,11 @@ _TRACKED_DEPS = (
     "openai",
     "hydra-core",
     "omegaconf",
+    "pymunk",
+    "scipy",
+    "statsmodels",
+    "joblib",
+    "sentence-transformers",
 )
 
 

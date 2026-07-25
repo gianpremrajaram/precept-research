@@ -36,8 +36,14 @@ def _box_verts(cx: float, cy: float, w: float, h: float) -> list[Vert]:
     return [(cx - hw, cy - hh), (cx + hw, cy - hh), (cx + hw, cy + hh), (cx - hw, cy + hh)]
 
 
-def _t_shape_verts() -> tuple[list[Vert], list[Vert]]:
-    """Local-frame vertices for the bar (top) and stem (below), symmetric in y about 0."""
+def t_shape_verts() -> tuple[list[Vert], list[Vert]]:
+    """Local-frame vertices for the bar (top) and stem (below), symmetric in y about 0.
+
+    Public because it is the canonical T outline: ``add_t_load`` builds the physics shapes from it
+    and the episode renderer (analysis/render.py) draws the same two polygons, so the figure and the
+    simulated body cannot drift. World placement is ``com + R(angle)·vert`` (the body origin equals
+    the read-back COM, since ``center_of_gravity`` is the origin).
+    """
     bar = _box_verts(0.0, HALF_H - T_THICK / 2.0, T_BAR, T_THICK)
     stem = _box_verts(0.0, HALF_H - T_THICK - T_STEM / 2.0, T_THICK, T_STEM)
     return bar, stem
@@ -45,7 +51,7 @@ def _t_shape_verts() -> tuple[list[Vert], list[Vert]]:
 
 def add_t_load(space: pymunk.Space, pos: tuple[float, float], mass: float) -> pymunk.Body:
     """Add a dynamic T-load at ``pos``; mass is split by area and moment summed over both boxes."""
-    bar, stem = _t_shape_verts()
+    bar, stem = t_shape_verts()
     area_bar, area_stem = T_BAR * T_THICK, T_STEM * T_THICK
     area = area_bar + area_stem
     m_bar, m_stem = mass * area_bar / area, mass * area_stem / area

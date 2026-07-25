@@ -8,10 +8,15 @@ analysis code installs and runs anywhere; only serving needs a GPU node.
 
 | Tier | Model (default) | Serving mem | Fits | `serve.sh` overrides |
 |---|---|---|---|---|
-| Pilot / fast | Llama-3.1-8B-Instruct or Qwen3-8B | ~16–18 GB bf16 | any GPU (8B at 4-bit on V100-16GB) | `-v MODEL=…` |
-| Workhorse (default) | Qwen3-14B-Instruct | ~28–30 GB bf16 | A100-40GB, L40S-48GB, A100-80GB | none |
-| Strong | Qwen3-32B-Instruct | ~64 GB bf16 / ~20 GB AWQ | A100-80GB (bf16) or 40GB+ (AWQ) | `-v MODEL=Qwen/Qwen3-32B-Instruct` |
-| Scale / heterogeneous | Llama-3.3-70B-Instruct-AWQ | ~40 GB | 1× A100-80GB or 2× A100-40GB (TP=2) | `-l gpu=2 -v MODEL=…,QUANT=awq,TP=2` |
+| Pilot / fast | Qwen/Qwen3-8B | ~16–18 GB bf16 | any GPU (8B at 4-bit on V100-16GB) | `-v MODEL=…` |
+| Workhorse (default) | Qwen/Qwen3-14B | ~28–30 GB bf16 | A100-40GB, L40S-48GB, A100-80GB | none |
+| Strong | Qwen/Qwen3-32B | ~64 GB bf16 / ~20 GB AWQ | A100-80GB (bf16) or 40GB+ (AWQ) | `-v MODEL=Qwen/Qwen3-32B` |
+| Scale / heterogeneous | 70B-AWQ (repo id unverified — pin via DSE-005) | ~40 GB | 1× A100-80GB or 2× A100-40GB (TP=2) | `-l gpu=2 -v MODEL=…,QUANT=awq,TP=2` |
+
+Dense Qwen3 checkpoints carry **no `-Instruct` suffix** and default to hybrid *thinking* mode;
+`ServingConfig.chat_template_kwargs` disables it per request (`{"enable_thinking": false}`), and
+`LLMClient.chat` fails loud if a `<think>` block ever reaches a message (P0-3). Pinned revisions
+live in `configs/model/*.yaml`.
 
 (See `RESEARCH_ROADMAP.md` §0 for the authoritative table and licensing notes.)
 
@@ -31,8 +36,8 @@ autoscaling and non-vLLM backends are out of scope.
 # Workhorse (bf16 14B):
 qsub scripts/myriad/serve.sh
 
-# 70B-AWQ across 2 GPUs:
-qsub -l gpu=2 -v MODEL=meta-llama/Llama-3.3-70B-Instruct-AWQ-INT4,QUANT=awq,TP=2 scripts/myriad/serve.sh
+# 70B-AWQ across 2 GPUs (repo id is a placeholder until DSE-005 verifies and pins it):
+qsub -l gpu=2 -v MODEL=<70B-AWQ-repo-id>,QUANT=awq,TP=2 scripts/myriad/serve.sh
 ```
 
 Determinism: the server pins `--seed` and `--revision`; greedy decoding (`temperature=0`) is enforced
@@ -44,7 +49,7 @@ reproducibility.
 ```python
 from preceptx.serving import LLMClient, ServingConfig
 
-client = LLMClient(ServingConfig(model="Qwen/Qwen3-14B-Instruct"))  # base_url defaults to :8000/v1
+client = LLMClient(ServingConfig(model="Qwen/Qwen3-14B"))  # base_url defaults to :8000/v1
 assert client.health_check()        # /v1/models reachable + a smoke completion
 client.close()                      # close client connections
 ```

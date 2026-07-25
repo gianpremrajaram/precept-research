@@ -19,6 +19,7 @@ def _record() -> HandoffRecord:
         seed=0,
         state={"x": 1.0},
         state_str="x=1.0",
+        observation="x=1.0",
         message_raw="r",
         message_delivered="d",
         action={"dx": 1.0},

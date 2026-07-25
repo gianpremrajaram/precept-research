@@ -1,8 +1,11 @@
 """Embedding featuriser: pinned, cached, swappable sentence-embeddings for the CPVI stack.
 
-CPVI is computed on *frozen* embeddings of the serialised state (``state_str``) and the delivered
-message (``message_delivered``); this module turns ``HandoffRecord``s into the aligned arrays
-``e_s`` and ``e_m`` the estimator (DSE-014) consumes, row-for-row in record order. The encoder is
+CPVI is computed on *frozen* embeddings of the receiver-observed state (``observation``) and the
+delivered message (``message_delivered``); this module turns ``HandoffRecord``s into the aligned
+arrays ``e_s`` and ``e_m`` the estimator (DSE-014) consumes, row-for-row in record order. The
+conditioning state s is the state observable to the RECEIVER at the handoff - under C3 that is the
+windowed view, by design (P0-1): conditioning on A's full ``state_str`` would hand ``g_base`` the
+goal/global information the C3 message uniquely carries and floor its CPVI at ~0. The encoder is
 revision-pinned and content-hash cached, so the whole sweep re-fits probes on identical vectors
 without re-encoding (DEPENDENCIES.md: the encoder is frozen before probes fit). ``sentence-
 transformers`` is the optional ``embed`` extra (the only torch puller), so it is imported lazily -
@@ -62,11 +65,13 @@ class EncoderBackend(Protocol):
 
 
 class Featuriser:
-    """Embeds ``state_str``/``message_delivered`` with a pinned encoder, caching by content hash.
+    """Embeds ``observation``/``message_delivered`` with a pinned encoder, caching by content hash.
 
     The encoder is injected (a stub in tests) or lazily constructed from ``cfg`` on first use, so
     importing this module never requires ``sentence-transformers``/torch. The cache is content-
-    addressed by ``(revision, text)``, so one cache dir is safe to share across the whole sweep.
+    addressed by ``(encoder name, revision, text)``, so one cache dir is safe to share across the
+    whole sweep AND across encoders (P1-16: omitting the name would serve one encoder's vectors to
+    another whose revision string matches, fabricating a near-zero encoder-sensitivity result).
     """
 
     def __init__(
@@ -98,8 +103,8 @@ class Featuriser:
         return model  # type: ignore[no-any-return]  # untyped import duck-types EncoderBackend
 
     def _cache_path(self, text: str) -> Path:
-        digest = hashlib.sha256(f"{self.cfg.revision}\x00{text}".encode()).hexdigest()
-        return self.cfg.cache_dir / f"{digest}.npy"
+        key = f"{self.cfg.name}\x00{self.cfg.revision}\x00{text}"
+        return self.cfg.cache_dir / f"{hashlib.sha256(key.encode()).hexdigest()}.npy"
 
     def embed_texts(self, texts: list[str]) -> NDArray[np.float64]:
         """Embed ``texts`` to ``(len(texts), dim)``, serving cache hits and encoding only misses."""
@@ -133,7 +138,13 @@ class Featuriser:
     def featurise(
         self, records: list[HandoffRecord]
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        """Return ``(e_s, e_m)`` - state/message embeddings, row-aligned to ``records``."""
-        e_s = self.embed_texts([r.state_str for r in records])
+        """Return ``(e_s, e_m)`` - state/message embeddings, row-aligned to ``records``.
+
+        ``e_s`` embeds the RECEIVER's observation (P0-1 conditioning semantics), not A's full
+        ``state_str``; the two coincide except under C3, where the restricted window is the point.
+        Every downstream consumer (estimator, twin, runtime statistics, calibration, G2) inherits
+        the semantics through this one choke point.
+        """
+        e_s = self.embed_texts([r.observation for r in records])
         e_m = self.embed_texts([r.message_delivered for r in records])
         return e_s, e_m

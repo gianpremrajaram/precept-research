@@ -54,6 +54,7 @@ def _rec(
     success: bool,
     message: str = "hold",
     state: dict[str, float] | None = None,
+    y_progress: bool | None = None,  # per-handoff progress label; defaults to the episode outcome
 ) -> HandoffRecord:
     return HandoffRecord(
         episode_id=ep,
@@ -65,6 +66,7 @@ def _rec(
         seed=int(ep[-1]) if ep[-1].isdigit() else 0,
         state=state or {},
         state_str=f"state {ep} s{step}",  # no outcome token -> e_s carries no Y signal
+        observation=f"state {ep} s{step}",
         message_raw=message,
         message_delivered=message,
         action={},
@@ -74,6 +76,7 @@ def _rec(
         success=success,
         collision=False,
         stuck=False,
+        y_binary_progress=success if y_progress is None else y_progress,
         y_terminal_success=success,
     )
 
@@ -112,12 +115,33 @@ def test_g2_signal_detects_both_gaps(tmp_path: Path) -> None:
     assert res.detail["cpvi_gap"] > 0.0  # informative C0 messages lift CPVI over noisy C4
 
 
-def test_g2_guards_single_outcome_class(tmp_path: Path) -> None:
+def test_g2_guards_single_progress_class(tmp_path: Path) -> None:
     feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "e"), encoder=_MsgEncoder())
     records = [_rec(f"c0_{i}", 0, "C0", success=True) for i in range(3)]
-    records += [_rec(f"c4_{i}", 0, "C4", success=True) for i in range(3)]  # all succeed
+    records += [_rec(f"c4_{i}", 0, "C4", success=True) for i in range(3)]  # every label positive
     res = g2_signal(records, feat, PilotConfig())
-    assert not res.passed and "single outcome class" in res.note  # CPVI unmeasurable, not a crash
+    assert not res.passed and "single progress class" in res.note  # CPVI unmeasurable, not a crash
+
+
+def test_g2_cpvi_uses_progress_labels_not_terminal_success(tmp_path: Path) -> None:
+    # P1-2: every episode succeeds (terminal success is single-class - the old label would have
+    # bailed as unmeasurable), but per-handoff progress varies, so the progress-labelled CPVI gap
+    # is computable and positive for informative-C0 vs noise-C4 messages.
+    feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "e"), encoder=_MsgEncoder())
+    records: list[HandoffRecord] = []
+    for i in range(6):
+        for s in range(2):
+            prog = s == 0
+            msg = "report success" if prog else "report failure"  # names the PROGRESS label
+            records.append(_rec(f"c0_{i}", s, "C0", success=True, message=msg, y_progress=prog))
+    for i in range(6):
+        for s in range(2):
+            records.append(
+                _rec(f"c4_{i}", s, "C4", success=True, message="channel noise", y_progress=s == 0)
+            )
+    res = g2_signal(records, feat, PilotConfig())
+    assert "cpvi_gap" in res.detail  # measurable despite single-class terminal success
+    assert res.detail["cpvi_gap"] > 0.0
 
 
 def test_g3_grounded_passes_hallucinated_fails() -> None:

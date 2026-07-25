@@ -4,9 +4,11 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 import respx
 
 from preceptx.config import ModelConfig
+from preceptx.data.schema import HandoffRecord
 from preceptx.data.writer import dataset_hash, load_records
 from preceptx.experiments.runner import run_grid
 from preceptx.experiments.sweep import SweepConfig, sweep_hash
@@ -80,6 +82,42 @@ def test_run_grid_is_concurrency_safe(tmp_path: Path) -> None:
     records = load_records(dataset_hash(sweep_hash(sweep)), root=tmp_path)
     assert len(records) == 6 * 2  # every cell's records land exactly once (no part-index race)
     assert len({r.episode_id for r in records}) == 6
+
+
+@respx.mock
+def test_run_grid_jitters_start_pose_per_seed(tmp_path: Path) -> None:
+    # P0-2: the default sweep jitter makes seeds true replicates - three seeds, three distinct
+    # problem instances - while the same seed gives the SAME instance across conditions (paired).
+    respx.post(CHAT).mock(side_effect=_wait_script)
+    sweep = _sweep()
+    run_grid(sweep, _client(), root=tmp_path)
+    records = load_records(dataset_hash(sweep_hash(sweep)), root=tmp_path)
+
+    def pose(r: HandoffRecord) -> tuple[float, float, float]:
+        return (r.pre_state["com_x"], r.pre_state["com_y"], r.pre_state["angle"])
+
+    step0 = [r for r in records if r.step == 0]
+    c0_poses = {r.seed: pose(r) for r in step0 if r.condition == "C0"}
+    c4_poses = {r.seed: pose(r) for r in step0 if r.condition == "C4"}
+    assert len(set(c0_poses.values())) == 3  # distinct instance per seed
+    assert c0_poses == c4_poses  # same seed -> same instance across conditions (matched pairs)
+
+
+@respx.mock
+def test_manifest_records_substrate_endpoint_and_result_knobs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    respx.post(CHAT).mock(side_effect=_wait_script)
+    monkeypatch.setenv("PRECEPTX_SERVING_SUBSTRATE", "interim-test")
+    sweep = _sweep()
+    run_grid(sweep, _client(), root=tmp_path)
+    run_dir = tmp_path / f"{dataset_hash(sweep_hash(sweep))}-run"
+    manifest = json.loads((run_dir / "manifest.json").read_text())
+    assert manifest["serving_substrate"] == "interim-test"  # §7-7: interim data stays labelled
+    assert manifest["endpoint_base_url"] == BASE_URL
+    assert manifest["sweep"]["jitter"]["x_range"] == [1.2, 2.8]  # P0-2 knob is audit-visible
+    assert manifest["sweep"]["outcome"]["k"] == 3  # P1-6: the label horizon is manifested
+    assert manifest["sweep"]["step"]["linear_impulse"] == 3.0
 
 
 @respx.mock

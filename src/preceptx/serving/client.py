@@ -47,6 +47,11 @@ class ServingConfig(BaseModel):
     timeout: float = Field(default=60.0, gt=0)
     max_retries: int = Field(default=2, ge=0)
     guided_decoding_backend: Literal["xgrammar", "outlines"] = "xgrammar"
+    # Rendered into the served model's chat template per request (P0-3). The default disables
+    # Qwen3's hybrid thinking - greedy decoding in thinking mode is explicitly discouraged by Qwen,
+    # and a CoT dump in the A->B message would confound every channel condition. Templates that do
+    # not use the variable ignore it; set {} for endpoints that reject unknown body keys.
+    chat_template_kwargs: dict[str, Any] = Field(default_factory=lambda: {"enable_thinking": False})
 
 
 class LLMClient:
@@ -68,8 +73,18 @@ class LLMClient:
     def _payload(self, messages: list[ChatMessage]) -> list[ChatCompletionMessageParam]:
         return cast("list[ChatCompletionMessageParam]", [m.model_dump() for m in messages])
 
+    def _template_kwargs(self) -> dict[str, Any]:
+        """The chat-template extra-body payload, empty when no kwargs are configured."""
+        if not self._config.chat_template_kwargs:
+            return {}
+        return {"chat_template_kwargs": self._config.chat_template_kwargs}
+
     def chat(self, messages: list[ChatMessage], *, max_tokens: int | None = None) -> str:
-        """Return the assistant message content for a chat completion."""
+        """Return the assistant message content for a chat completion.
+
+        Fails loud on thinking-mode output: a ``<think>`` block in the A->B message is a category
+        error (the channel would degrade reasoning, not the instruction), never a degraded mode.
+        """
         try:
             response = self._client.chat.completions.create(
                 model=self._config.model,
@@ -77,6 +92,7 @@ class LLMClient:
                 temperature=self._config.temperature,
                 seed=self._config.seed,
                 max_tokens=max_tokens or self._config.max_tokens,
+                extra_body=self._template_kwargs() or None,
             )
         except openai.APIError as exc:
             raise ServingError(
@@ -85,6 +101,11 @@ class LLMClient:
         content = response.choices[0].message.content
         if content is None:
             raise ServingError("chat completion returned no content")
+        if "<think>" in content:
+            raise ServingError(
+                "thinking-mode output detected ('<think>' in the completion); disable it via "
+                "chat_template_kwargs={'enable_thinking': False} on the serving config"
+            )
         return content
 
     def structured(
@@ -105,6 +126,7 @@ class LLMClient:
                 extra_body={
                     "guided_json": schema,
                     "guided_decoding_backend": self._config.guided_decoding_backend,
+                    **self._template_kwargs(),
                 },
             )
         except openai.APIError as exc:

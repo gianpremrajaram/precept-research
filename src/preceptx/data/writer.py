@@ -44,8 +44,12 @@ _ARROW_SCHEMA = pa.schema(
         ("seed", pa.int64()),
         ("state", pa.string()),
         ("state_str", pa.string()),
+        ("observation", pa.string()),
         ("message_raw", pa.string()),
         ("message_delivered", pa.string()),
+        ("gate_blocked", pa.bool_()),
+        ("gate_retries", pa.int64()),
+        ("message_blocked", pa.string()),
         ("action", pa.string()),
         ("pre_state", pa.string()),
         ("post_state", pa.string()),
@@ -57,6 +61,7 @@ _ARROW_SCHEMA = pa.schema(
         ("y_continuous_displacement", pa.float64()),
         ("y_discrete_config", pa.int64()),
         ("y_terminal_success", pa.bool_()),
+        ("y_window_truncated", pa.bool_()),
     ]
 )
 

@@ -10,6 +10,7 @@ from preceptx.sim.actions import BodyState
 from preceptx.sim.arena import ArenaGeometry, Goal
 from preceptx.sim.load import COG_Y
 from preceptx.sim.serialise import (
+    GRID_LEGEND,
     GridConfig,
     SceneState,
     deserialise_check,
@@ -35,7 +36,7 @@ def _scene(
 
 def _char_at(grid: str, x: float, y: float) -> str:
     """Char of the grid cell containing world point (x, y)."""
-    rows = grid.splitlines()
+    rows = grid.splitlines()[1:]  # skip the constant legend header
     return rows[len(rows) - 1 - int(y / _CELL)][int(x / _CELL)]
 
 
@@ -63,11 +64,28 @@ def test_grid_occupancy_on_known_pose() -> None:
 def test_grid_draws_the_active_slit_width() -> None:
     # The hard slit (0.7) leaves a narrower gap than the easy slit (1.8) in the internal wall.
     def gap_cells(slit: float) -> int:
-        grid = serialise(_scene(2.0, 3.0 + COG_Y, slit=slit), "grid").splitlines()
+        grid = serialise(_scene(2.0, 3.0 + COG_Y, slit=slit), "grid").splitlines()[1:]
         col = int(ArenaGeometry().chamber_w / _CELL)
         return sum(1 for row in grid if row[col] != "#")
 
     assert gap_cells(0.7) < gap_cells(1.8)
+
+
+def test_grid_carries_a_constant_legend_header() -> None:
+    # P1-5: B must not act on an unexplained ASCII matrix; constant text across cells keeps the
+    # serialisation A/B about representation, not legend absence.
+    a = serialise(_scene(2.0, 3.0 + COG_Y), "grid")
+    b = serialise(_scene(6.0, 4.0, angle=1.0), "grid")
+    assert a.splitlines()[0] == GRID_LEGEND
+    assert b.splitlines()[0] == GRID_LEGEND
+    assert "T=load" in GRID_LEGEND and "G=goal" in GRID_LEGEND
+
+
+def test_numeric_has_no_dead_vel_line() -> None:
+    # RD-7: quasi-static settling zeroes velocity before every read; the line carried no signal.
+    text = serialise(_scene(2.0, 3.0), "numeric")
+    assert "vel=" not in text
+    assert "load=" in text and "goal=" in text and "contact=" in text
 
 
 def test_grid_deserialise_recovers_com() -> None:

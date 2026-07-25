@@ -1,0 +1,6 @@
+# Git LFS allowlist (CLAUDE.md, "Things to never do" #11): ONLY the final figure files and the
+# committed demo trace may use LFS - never broaden this. LFS has storage/bandwidth quotas with
+# overage charges. Everything else (configs, manifests, metrics JSON, markdown transcripts) stays
+# in plain git. Text artefacts must never be routed here.
+runs/**/figures/*.png filter=lfs diff=lfs merge=lfs -text
+docs/figures/*.png    filter=lfs diff=lfs merge=lfs -text

@@ -35,7 +35,10 @@ class StepConfig(BaseModel):
     substeps: int = Field(default=4, ge=1)
     settle_steps: int = Field(default=30, ge=1)
     linear_impulse: float = Field(default=3.0, gt=0)
-    angular_impulse: float = Field(default=2.0, gt=0)
+    # Sized for controllable rotation (~34 deg per action) so an agent can aim the T for threading.
+    # The old 2.0 spun it ~135 deg/action against the small T moment (~0.29), leaving only 45-deg-
+    # multiple orientations reachable - too coarse for the medium/hard threading maneuver (P1-4).
+    angular_impulse: float = Field(default=0.5, gt=0)
     quasi_static: bool = True
 
 

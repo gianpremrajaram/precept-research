@@ -1,5 +1,7 @@
 # @package _global_
 model:
-  name: Qwen/Qwen3-8B-Instruct
-  revision: main  # TODO: pin to a commit SHA before any recorded run
+  # Dense Qwen3 checkpoints carry no -Instruct suffix (P0-3); hybrid thinking is disabled
+  # per-request via ServingConfig.chat_template_kwargs.
+  name: Qwen/Qwen3-8B
+  revision: b968826d9c46dd6066d109eabc6255188de91218  # HF main @ 2026-07-18, verified via API
   tier: 8b

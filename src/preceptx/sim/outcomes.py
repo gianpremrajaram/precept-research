@@ -69,8 +69,13 @@ def label_episode(
     - ``y_binary_progress``: net geodesic progress over the next ``k`` steps is positive.
     - ``y_continuous_displacement``: that same signed net progress (the unthresholded twin of the
       binary label, so the analysis can ask whether the continuous form carries more usable info).
-    - ``y_discrete_config``: the chamber the load is in at the handoff (1, 2 or 3).
+    - ``y_discrete_config``: the chamber the load is in at the END of the forward window (the
+      roadmap's "bucketed next pose region"). Labelling the chamber AT the handoff would be a state
+      feature ``g_base`` reads straight off ``e_s``, making its CPVI 0 by construction (P1-10).
     - ``y_terminal_success``: the episode reaches the goal at this step or any later one.
+    - ``y_window_truncated``: the forward window was clamped at episode end, so this label's
+      horizon is shorter than ``k`` (P1-12: visible, never silent; whether truncated labels enter
+      probe fits is a pre-registration decision).
 
     The window anchors on the state entering the handoff (``pre_state``) and ends on the post-state
     ``k`` actions on, so ``k=1`` recovers exactly ``step_progress`` for that handoff.
@@ -89,8 +94,9 @@ def label_episode(
                 update={
                     "y_binary_progress": net > 0.0,
                     "y_continuous_displacement": net,
-                    "y_discrete_config": chamber_of(_com(r.pre_state)[0], geometry),
+                    "y_discrete_config": chamber_of(_com(records[end].post_state)[0], geometry),
                     "y_terminal_success": any(successes[i:]),
+                    "y_window_truncated": i + cfg.k - 1 > n - 1,
                 }
             )
         )

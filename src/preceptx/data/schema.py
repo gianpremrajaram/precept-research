@@ -13,8 +13,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION = 1
-"""Bump on any breaking change to ``HandoffRecord``; ``data.writer.load_dataset`` keys off it."""
+SCHEMA_VERSION = 2
+"""Bump on any breaking change to ``HandoffRecord``; ``data.writer.load_dataset`` keys off it.
+
+v2: adds ``observation`` (the receiver-conditioned state, P0-1), the DSE-018 gate fields
+(``gate_blocked``/``gate_retries``/``message_blocked``, P0-4), and ``y_window_truncated`` (P1-12),
+bundled as one deliberate bump before any real dataset exists. No v1 loader shim: no v1 data
+was ever recorded.
+"""
 
 Condition = Literal["C0", "C1", "C2", "C3", "C4"]
 Serialisation = Literal["numeric", "grid", "nl"]
@@ -46,9 +52,21 @@ class HandoffRecord(BaseModel):
     state: StatePayload
     state_str: str
 
+    # B's delivered view at the handoff - the CPVI conditioning state s (P0-1 semantics): the state
+    # observable to the RECEIVER, which under C3 is the restricted window, by design. Equals
+    # ``state_str`` in C0/C1/C2/C4. Keeping both gives the C3 dual-baseline diagnostic (CPVI vs the
+    # receiver's window vs the full state) for free.
+    observation: str
+
     # The A->B message, before and after the channel degrades it (DSE-011).
     message_raw: str
     message_delivered: str
+
+    # Runtime-gate outcome at this handoff (DSE-018; defaults = no gate in the loop). Reserved in
+    # the v2 bump so the gate lands without a second schema change.
+    gate_blocked: bool = False
+    gate_retries: int = Field(default=0, ge=0)
+    message_blocked: str | None = None
 
     # B's structured action and the physics either side of applying it.
     action: StatePayload
@@ -66,3 +84,6 @@ class HandoffRecord(BaseModel):
     y_continuous_displacement: float | None = None
     y_discrete_config: int | None = None
     y_terminal_success: bool | None = None
+    # True when the forward window for the progress labels was clamped at episode end (P1-12), so
+    # truncated-horizon labels are visible to the analysis rather than silently shortened.
+    y_window_truncated: bool | None = None

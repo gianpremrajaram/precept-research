@@ -15,6 +15,7 @@ from preceptx.measure.pvi_cpvi import (
     cpvi,
     cpvi_continuous,
     estimate,
+    shuffled_message_cpvi,
 )
 
 CFG = ProbeConfig(n_splits=5)
@@ -88,6 +89,21 @@ def test_ungrouped_fallback_warns(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING):
         cpvi(e_s, e_m, y, None, CFG)
     assert any("episode groups" in r.message for r in caplog.records)
+
+
+def test_shuffled_message_cpvi_collapses_to_zero() -> None:
+    # RD-15 manipulation check: an informative message scores CPVI > 0, but permuting messages
+    # within condition decouples them from their handoff and the mean CPVI must collapse toward 0.
+    e_s, e_m, y, g = make_binary("informative")
+    real = float(np.mean(cpvi(e_s, e_m, y, g, CFG)))
+    conditions = np.zeros(len(y), dtype=int)  # single condition: permute across all rows
+    null = shuffled_message_cpvi(
+        e_s, e_m, y, g, conditions, CFG, rng=np.random.default_rng(0), n_perm=15
+    )
+    assert len(null) == 15
+    assert real > 0.1  # the real informative message carries signal
+    assert abs(float(np.mean(null))) < 0.06  # the permuted null collapses toward zero
+    assert float(np.mean(null)) < real  # and sits well below the real signal
 
 
 @settings(max_examples=15, deadline=None)
