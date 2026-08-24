@@ -15,6 +15,152 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
+## 2026-08-24 — The RQ3a substrate, opened: the conditioning state is there, the outcome is not
+
+- **Area:** RQ3a external validity — the substrate, the outcome *Y* on real logs, and the refit
+  arm's confounding structure (methodology §9.8, roadmap §3.4, DSE-041/042/047).
+- **Status:** pre-freeze. No RQ3a analysis has been run; this entry records what the corpora
+  contain, measured, before any of it is written into a chapter.
+
+### Trigger
+
+The fallback ladder's first rung is "elevate RQ3a to the headline — it can carry the dissertation
+alone", and the bf16 re-gate can return `retune_once` a second time. That pivot has to be
+executable on measured ground, not on a substrate described only in papers. Phase F is scheduled
+parallel from day one for exactly this reason; it had never actually been opened.
+
+### Finding
+
+Five things, of which two change the design.
+
+**1. TraceElephant is the substrate the design assumed — under different field names.** The
+ticket and roadmap §3.4 both say it records `input_context` and `output_content` per step. It
+records `input` and `output`, and both are structured objects: `input` is an OpenAI-shape
+`{messages, model, stream}` and `output` is a full `ChatCompletion`. The substance holds — the
+receiver-observed context genuinely exists per step, which is the whole reason the substrate moved
+off Who&When — but the mapping needed writing rather than reading. (The HuggingFace repository is
+also auto-tagged `format:imagefolder` / `modality:image`, triggered by screenshot PNGs inside some
+web-agent traces. Taken at face value that tag says the corpus is images.)
+
+**2. TraceElephant is failure-only, and one of the two stated reasons for the substrate move does
+not hold.** Roadmap §3.4 moved RQ3a off Who&When for two reasons: TraceElephant records the
+receiver's input context, and it "ships non-failing executions too, so trace-level outcome is
+genuinely two-class". The first is confirmed above. The second is false.
+
+The corpus is **220 traces, not 380**, and every one of the 220 carries a populated
+`mistake_agent` / `mistake_step` / `mistake_reason`. The "380 executions of which about 220 are
+annotated failures" reading treated 220 as the failure subset of a larger pool; 220 is the whole
+pool, and it is entirely failures. Only the 44 `swe-agent-runs-swe-bench` traces carry any
+annotation-free outcome (`tests_status`, a SWE-bench harness result), and **0 of those 44 pass every
+test**. The other 176 traces have no outcome field at all — `captain-*` and `magentic-*` carry a
+`ground_truth` string but no recorded final answer to compare it against, and the ground-truth
+string appears in the last three steps' output in only 1 of 20 sampled traces, so it cannot be
+recovered by matching either.
+
+So on the primary corpus the refit arm is undefined for exactly the reason it is undefined on
+Who&When — the reason the substrate moved in the first place.
+
+**3. MAST's non-failure class exists at the assumed size, and is confounded with system identity.**
+DSE-047 flagged the non-failure proportion as resting on all-zero annotation rows glimpsed in a
+preview. Counted over all 1642 traces: **405 (24.7%)**. The assumption holds. But the class is
+distributed wildly unevenly across the seven systems — AG2 52.1%, Magentic 21.5%, HyperAgent 10.0%,
+ChatDev 7.6%, MetaGPT 5.1%, AppWorld and OpenManus 3.3% each.
+
+**4. MAST traces are unsegmented strings.** `trace.trajectory` is one formatted transcript per
+trace, laid out differently by each system, median ~9.7k characters and up to 2M. There are no
+recorded step boundaries.
+
+**5. Who&When is exactly as characterised.** 184 traces, **184 failures, zero non-failures**, 4092
+messages, and no per-step input context anywhere.
+
+### Impact
+
+**On *Y* for logs (methodology §9.8), and it is the opposite of convenient.** The four-way table
+ranked Y3 (counterfactual replay) as the recommended definition, with Y1 (trace success) as the
+cheaper option that needed a mixed-outcome corpus. Finding 2 says no such corpus is in hand at step
+level: Y1 is **degenerate** on both step-level corpora, because a constant cannot be predicted.
+
+This promotes DSE-042 from an upgrade path to **the load-bearing route**. Counterfactual replay is
+now the only way to obtain a within-trace two-class target on a corpus that also records the
+per-step conditioning state. Y2 (annotation-as-Y) remains forbidden for circularity — the pressure
+this finding creates is exactly the pressure that makes Y2 tempting, which is worth naming out loud
+now rather than discovering as a rationalisation later. MAST is the only two-class corpus available
+without replay, and it is trace-level only and confounded (finding 3), so the trace-level secondary
+cannot quietly stand in for the step-level primary.
+
+**On the MAST refit arm.** Finding 3 means a probe fitted on pooled MAST traces can reach much of
+the available accuracy by recognising *which system produced the trace* — AG2 is near a coin flip,
+OpenManus is almost always a failure — without reading the message at all. This is the same defect
+shape the simulator-side shuffled-message audit found, where condition identity leaked into CPVI
+through message style, and it is caught here by the same reflex. Any MAST arm must stratify by
+`system_name` or report the system-identity-only baseline beside it, as the control task does for
+the simulator arm.
+
+**On MAST's role.** Finding 4 fixes it as a trace-level secondary. It cannot test step
+localisation, because the corpus does not record steps.
+
+### Risk reduced
+
+The largest single risk in the fallback plan: that RQ3a is elevated to the headline and *then*
+found to rest on a corpus that cannot support the claim. That question is now answered with counts,
+and the answer is mixed rather than clean — the *conditioning state* is there in full (5,960 steps,
+2,488 inter-agent handoffs, recorded input contexts), and the *outcome* is not.
+
+Knowing that now costs a paragraph. Knowing it after the bf16 re-gate returned `retune_once` a
+second time, with rung 1 of the fallback ladder already taken and a chapter part-written, would have
+cost the fallback itself. The financial risk is unchanged and slightly sharper: replay is the one
+place this project could accidentally spend money, and it is now on the critical path for RQ3a
+rather than optional, so DSE-042's dry-run projection and hard spend cap are load-bearing controls
+rather than hygiene.
+
+### The fix
+
+`data/logs.py` (`LogHandoffRecord` / `LogTraceRecord`, versioned separately from the simulator
+schema, physics fields absent rather than nullable), `experiments/rq3a_load.py` (three loaders, one
+interface, local paths only), `scripts/fetch_rq3a.sh`, and `docs/rq3a_schema_mapping.md` carrying
+the field-by-field mapping, the counts and the three mapping decisions that change what a number
+means. Twenty offline unit tests against hand-built fixtures mirroring the verified layouts.
+
+### Result
+
+| Corpus | Traces | Steps | Handoffs | Failures | Non-failures | Observations |
+|---|---:|---:|---:|---:|---:|---|
+| TraceElephant | 220 | 5,960 | 2,488 | 220 | **0** | recorded |
+| Who&When | 184 | 4,092 | 3,505 | 184 | **0** | reconstructed |
+| MAST-Data | 1,642 | — | — | 1,237 | **405** | trace-level only |
+
+Two of three corpora are single-class at trace level; the third has no steps. Full per-family
+breakdown, the field-by-field mapping and the three mapping decisions that change what a number
+means are in `docs/rq3a_schema_mapping.md`.
+
+The transfer regime is untouched by any of this: a simulator-fitted probe applied to logs needs no
+log labels to *fit*, only to *evaluate*, and the step-level `mistake_step` annotation exists on all
+220 TraceElephant traces. It is the refit regime that needs replay.
+
+### So-what
+
+Two takeaways, one methodological and one about process.
+
+The methodological one is that **the observability caveat is now a measured property rather than a
+hedge**. `reconstructed_observation` is not a defensive flag on a hypothetical: Who&When
+demonstrably has no per-step input context and TraceElephant demonstrably does, so the flag
+partitions the corpora on a fact rather than on a worry.
+
+The process one is that this is the third time in this project that a cheap diagnostic run before
+the expensive thing found a defect the expensive thing would have buried — after the serialiser
+that printed no obstacle geometry, and the dataset hash that ignored the retune lever. The pattern
+is consistent enough to be a rule: **open the substrate before writing about it.** Reading the
+paper's field names would have produced a loader that silently found no `input_context` anywhere;
+reading its abstract produced a roadmap paragraph asserting a non-failure class that does not exist.
+
+Worth being precise about which half of the substrate decision survives. Moving RQ3a to
+TraceElephant was still right — the conditional construct is impossible on Who&When and works here,
+and that is the reason that mattered. But the move was argued on two grounds and only one of them
+was true, which is a reminder that a decision can be correct and still be defended with a claim that
+does not check out. The roadmap paragraph is corrected in place rather than quietly rewritten.
+
+---
+
 ## 2026-08-24 — Dataset identity now carries the world the episodes were simulated in
 
 - **Area:** reproducibility contract and the pilot retune path — what makes two datasets the same

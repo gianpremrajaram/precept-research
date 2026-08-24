@@ -49,3 +49,6 @@ runs/bench/smoke/
 
 # Secrets
 .env
+
+# Working-input PDFs: absorbed into docs/methodology.md and the deviation register; not tracked.
+*.pdf

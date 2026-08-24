@@ -8,6 +8,55 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
 ## [Unreleased]
 
 ### Added
+- **RQ3a corpus loaders and the E9 substrate spike** (`data/logs.py`,
+  `experiments/rq3a_load.py`, `scripts/fetch_rq3a.sh`, `docs/rq3a_schema_mapping.md`, DSE-041).
+  The pre-planned fallback that can carry the dissertation alone had never been opened; its
+  substrate was assumed from papers, not measured. All three corpora are now parsed from the real
+  files and the assumptions are either confirmed with numbers or corrected in place.
+  - `LogHandoffRecord` (Pydantic, `extra="forbid"`, `LOG_SCHEMA_VERSION` 1) is **separate from**
+    `HandoffRecord` and physics fields are **absent, not nullable** — a log row can never be read
+    as a degraded episode row. `trace_id` is the cross-fit grouping key, the exact analogue of
+    `episode_id`; the leakage discipline is unchanged, only the name.
+  - `LogTraceRecord` for corpora that publish a trace as one unsegmented transcript.
+  - `mark_handoffs(agents)` returns `(receiver, is_handoff)` per step: a step is an inter-agent
+    handoff when the component acting at `i+1` differs from the one at `i`, and the final step has
+    no successor. Intra-agent tool turns are **kept** in the dataset — dropping them would shift
+    the per-step base rate and make the handoff subset incomparable to the simulator's.
+  - `load_traceelephant` reads the unzipped `data/<family>/<task>/` tree. `trace_id` is
+    `family/task` so two families sharing a task id stay distinct groups.
+  - `load_who_and_when` reads both parquet splits, resolves the two spellings of the correctness
+    column (`is_correct` / `is_corrected`), falls back from `history[i].name` to `.role` for the
+    `Hand-Crafted` split which carries no `name`, and sets `reconstructed_observation=True` on
+    **every** row it emits.
+  - `load_mast` emits trace-level rows only, and counts the non-failure class rather than assuming
+    it.
+  - `count_handoff_corpus` / `count_trace_corpus` produce the per-corpus counts table; failure
+    counts are per *trace*, step counts per *step*. Never pooled across corpora.
+  - `CorpusError` on a missing file or an unexpected shape — raised, never skipped, because a
+    silently dropped trace changes every count downstream.
+  - Loaders take **local paths only** and never touch the network, so the 20 unit tests run offline
+    against hand-built fixtures mirroring the verified layouts, and CI never downloads 800 MB.
+    `scripts/fetch_rq3a.sh` does the fetching out of band with plain `curl` against HuggingFace
+    `resolve` endpoints.
+  - **Three mapping decisions that change what a number means**, all recorded in
+    `docs/rq3a_schema_mapping.md` §5: the observation is the *whole* context prefix rather than the
+    last turn (truncating would shrink the state-only baseline and inflate CPVI); tool calls are
+    part of the message (a `content: ""` step with populated `tool_calls` is TraceElephant's common
+    case, and scoring it empty would repeat the local-pilot fail-open bug); and TraceElephant's
+    `trace_failed` is derived from `tests_status` and **never** from the annotation triple, which
+    means it is `None` on the 176 traces with no harness result rather than being filled in.
+  - **Measured counts, which falsify a roadmap claim.** TraceElephant is **220 traces, 5,960 steps,
+    2,488 inter-agent handoffs — and 0 non-failures**: every trace carries a `mistake_agent`
+    annotation, only the 44 `swe-agent` traces carry `tests_status`, and 0 of those 44 pass. Roadmap
+    §3.4's "380 executions of which about 220 are annotated failures … it ships non-failing
+    executions too" is corrected in place. Who&When: 184 traces, 4,092 steps, 3,505 handoffs, 184
+    failures, 0 non-failures. MAST: 1,642 traces, 1,237 failures, **405 non-failures (24.7%)** —
+    the only two-class outcome of the three, and confounded with system identity (AG2 52.1%
+    non-failure against OpenManus 3.3%), so a probe can score by recognising the system rather than
+    by reading the message. Consequence for the design is in `docs/experiment_design_log.md`:
+    DSE-042's counterfactual replay moves from an upgrade path to the load-bearing route to a
+    two-class step-level *Y*.
+
 - **Dataset identity carries the simulated world** (`sim/fingerprint.py`, `data/writer.py`,
   `experiments/sweep.py`, `experiments/runner.py`). The pre-registered retune lever sat outside the
   dataset hash: `_DIFFICULTY_SLITS`, `ArenaGeometry`, the T dimensions, `LOAD_MASS`, `GOAL_RADIUS`,
