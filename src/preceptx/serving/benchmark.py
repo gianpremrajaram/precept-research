@@ -19,8 +19,11 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import os
 import shutil
+import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -30,7 +33,9 @@ from preceptx.agents.graph import Action
 from preceptx.config import ModelConfig
 from preceptx.experiments.runner import run_grid
 from preceptx.experiments.sweep import SweepConfig
+from preceptx.manifest import ServeEnv, git_dirty, git_sha, serve_env
 from preceptx.serving.client import ChatMessage, LLMClient, ServingError
+from preceptx.sim.fingerprint import SimulationFingerprint, simulation_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -265,3 +270,84 @@ def write_report(results: list[TierResult], dir: Path | str) -> Path:
     (dir / "recommendation.md").write_text(recommend(results) + "\n")
     (dir / "ladder.json").write_text(json.dumps([r.model_dump() for r in results], indent=2))
     return dir
+
+
+class BenchmarkInvocation(BaseModel):
+    """The immutable record of one benchmark invocation - written before the run, finalised after.
+
+    A ladder row is launched by hand from a terminal (one model is served per GPU job, so there is
+    no sweep driver to carry provenance), and ``--model`` / ``--revision`` are free-text arguments.
+    Their provenance therefore cannot rest on the operator remembering what they typed: the served
+    checkpoint is exactly the thing no downstream check can recover, because ``/v1/models`` carries
+    no revision at all.
+
+    So the record is written **before the first model call**, which makes persistence a precondition
+    of running rather than a courtesy afterwards - if it cannot be written, nothing is served. It is
+    rewritten once on completion to carry ``exit_status``, ``ended_at`` and the artefact paths. The
+    record is identical whether a human or a jobscript issued the command, so adding a batch
+    wrapper later changes who launches the run and nothing about what is attributable.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    tier: str
+    model: str
+    revision: str
+    substrate: str
+    command: list[str]
+    args: dict[str, str]
+    git_sha: str
+    git_dirty: bool
+    # The world the smoke episodes ran in, so a ladder row cannot be compared across a geometry
+    # retune by accident (see sim/fingerprint.py).
+    simulation: SimulationFingerprint
+    simulation_digest: str
+    # The server-side stack, when serve.sh captured one. Named by path and digest rather than
+    # inlined only, so the row can be traced back to the exact capture it ran against.
+    serve_env: ServeEnv | None
+    host: str
+    job_id: str
+    started_at: str
+    ended_at: str | None = None
+    exit_status: int | None = None
+    artefacts: list[str] = Field(default_factory=list)
+
+
+def begin_invocation(
+    *, tier: str, model: str, revision: str, substrate: str, args: dict[str, str]
+) -> BenchmarkInvocation:
+    """Snapshot everything about an invocation that is knowable before it runs."""
+    sha = git_sha()
+    started = dt.datetime.now(dt.UTC).isoformat()
+    fingerprint = simulation_fingerprint()
+    return BenchmarkInvocation(
+        run_id=f"{started[:19].replace(':', '').replace('-', '')}-{tier}-{sha[:7]}",
+        tier=tier,
+        model=model,
+        revision=revision,
+        substrate=substrate,
+        command=list(sys.argv),
+        args=args,
+        git_sha=sha,
+        git_dirty=git_dirty(),
+        simulation=fingerprint,
+        simulation_digest=fingerprint.digest(),
+        serve_env=serve_env(),
+        host=socket.gethostname(),
+        job_id=os.environ.get("JOB_ID", ""),
+        started_at=started,
+    )
+
+
+def write_invocation(invocation: BenchmarkInvocation, dir: Path | str) -> Path:
+    """Write (or rewrite) the invocation record under ``<dir>/<run_id>/``.
+
+    Called twice: once before the benchmark runs, once after it finishes. Deliberately not
+    append-only or content-hashed - the second write is the same invocation with its outcome
+    filled in, not a second event.
+    """
+    out = Path(dir) / invocation.run_id / "benchmark-invocation.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(invocation.model_dump_json(indent=2))
+    return out

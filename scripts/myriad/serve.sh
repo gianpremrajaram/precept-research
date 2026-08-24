@@ -86,12 +86,13 @@ source "$VENV/bin/activate"
 
 resolve_tier "$TIER_FILE" serve
 
-# Serving-environment capture (P2-10): the client env cannot see server-side versions, so echo them
-# into the job log for the sweep manifest to copy (pairs with manifest._TRACKED_DEPS).
-echo "[serve-env] tier=$TIER model=$MODEL revision=$REVISION"
-echo "[serve-env] vllm=$(python -c 'import vllm; print(vllm.__version__)' 2>/dev/null || echo unknown)"
-echo "[serve-env] torch=$(python -c 'import torch; print(torch.__version__)' 2>/dev/null || echo unknown)"
-echo "[serve-env] gpu=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | paste -sd, - || echo unknown)"
+# Serving-environment capture (P2-10). Written to a sidecar, not just echoed: manifest.serve_env()
+# reads it via PRECEPTX_SERVE_ENV so the server-side stack lands in the run manifest instead of
+# depending on someone copying it out of the job log. Echoed too, so the log still stands alone.
+SERVE_ENV_OUT="$(serve_env_path)"
+write_serve_env "$SERVE_ENV_OUT"
+echo "[serve-env] wrote $SERVE_ENV_OUT"
+sed 's/^/[serve-env] /' "$SERVE_ENV_OUT"
 
 args=(
   serve "$MODEL"

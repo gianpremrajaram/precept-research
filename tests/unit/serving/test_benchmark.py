@@ -14,17 +14,21 @@ import pytest
 import respx
 
 from preceptx.serving.benchmark import (
+    BenchmarkInvocation,
     TierResult,
     append_result,
+    begin_invocation,
     measure_schema_adherence,
     measure_throughput,
     measure_ttft,
     parse_nvidia_smi,
     recommend,
     render_table,
+    write_invocation,
     write_report,
 )
 from preceptx.serving.client import LLMClient, ServingConfig, ServingError
+from preceptx.sim.fingerprint import simulation_fingerprint
 
 BASE_URL = "http://localhost:8000/v1"
 CHAT = f"{BASE_URL}/chat/completions"
@@ -143,3 +147,68 @@ def test_probes_propagate_an_empty_completion_rather_than_scoring_it() -> None:
     client = LLMClient(ServingConfig(model="m", base_url=BASE_URL, max_retries=0))
     with pytest.raises(ServingError):
         measure_ttft(client, n_calls=1)
+
+
+# --- the invocation record: provenance for a hand-launched ladder row ---------------------------
+
+
+def _invocation() -> BenchmarkInvocation:
+    return begin_invocation(
+        tier="14b",
+        model="Qwen/Qwen3-14B",
+        revision="40c069824f4251a91eefaf281ebe4c544efd3e18",
+        substrate="myriad-a100",
+        args={"episodes": "10", "base_url": "http://localhost:8000/v1"},
+    )
+
+
+def test_the_invocation_record_pins_the_served_identity() -> None:
+    """A ladder row is launched by hand, so ``--model``/``--revision`` cannot rest on memory: the
+    served checkpoint is exactly what no later check recovers, since /v1/models carries no
+    revision."""
+    inv = _invocation()
+    assert inv.model == "Qwen/Qwen3-14B"
+    assert inv.revision == "40c069824f4251a91eefaf281ebe4c544efd3e18"
+    assert inv.substrate == "myriad-a100"
+    assert inv.git_sha and inv.simulation_digest and inv.host
+    assert inv.args["episodes"] == "10"
+
+
+def test_the_record_is_complete_before_the_run_and_says_it_has_not_finished() -> None:
+    """Written before the first model call, so persistence is a precondition of serving. An
+    unfinished record is the honest reading of a crashed run - and one fewer broad except clause
+    than recording the failure explicitly would have cost."""
+    inv = _invocation()
+    assert inv.started_at
+    assert inv.ended_at is None
+    assert inv.exit_status is None
+    assert inv.artefacts == []
+
+
+def test_the_record_carries_the_world_the_smoke_episodes_ran_in() -> None:
+    """So two ladder rows cannot be compared across a geometry retune by accident."""
+    assert _invocation().simulation_digest == simulation_fingerprint().digest()
+
+
+def test_the_record_names_the_serving_capture_it_ran_against(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sidecar = tmp_path / "serve_env.json"
+    sidecar.write_text(json.dumps({"vllm": "0.18.1", "gpu": "NVIDIA A100-40GB"}))
+    monkeypatch.setenv("PRECEPTX_SERVE_ENV", str(sidecar))
+    captured = _invocation().serve_env
+    assert captured is not None
+    assert captured.values["gpu"] == "NVIDIA A100-40GB"
+
+
+def test_write_invocation_round_trips_and_rewrites_in_place(tmp_path: Path) -> None:
+    """Two writes, one file: the second is the same invocation with its outcome filled in, not a
+    second event."""
+    inv = _invocation()
+    first = write_invocation(inv, tmp_path)
+    assert first == tmp_path / inv.run_id / "benchmark-invocation.json"
+    assert json.loads(first.read_text())["exit_status"] is None
+
+    second = write_invocation(inv.model_copy(update={"exit_status": 0}), tmp_path)
+    assert second == first
+    assert json.loads(second.read_text())["exit_status"] == 0

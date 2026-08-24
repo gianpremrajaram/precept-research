@@ -2,7 +2,7 @@
 
 Everything the repository needs from UCL Research Computing, and the order to do it in on a first
 session. Written from the [UCL RC documentation](https://www.rc.ucl.ac.uk/docs/) before any live
-session, so §9 lists what is *documented* but not yet *verified on the box* — check those first and
+session, so §10 lists what is *documented* but not yet *verified on the box* — check those first and
 correct this file in place.
 
 `docs/serving.md` covers the model ladder and the vLLM wire format. This file covers the cluster.
@@ -105,8 +105,12 @@ add a scheduling constraint that buys nothing.
 Check out under **`~/Scratch`**, not `$HOME`:
 
 ```bash
-cd ~/Scratch && git clone <repo-url> precept-research
+cd ~/Scratch && git clone https://github.com/gianpremrajaram/precept-research.git
 ```
+
+HTTPS, not SSH: the repository is public, so nothing needs a key on Myriad. Results do **not** come
+back by pushing from the cluster — run artefacts are gitignored by design. See §9 for how to
+retrieve them.
 
 UCL's example jobscripts all say compute nodes cannot write to `$HOME`. Myriad's own page says home
 *is* scratch and shares the 1 TB quota, which softens that — but both jobscripts use `#$ -cwd`, so
@@ -211,7 +215,28 @@ requested. Cluster data is therefore never poolable with `local-lmstudio` pilot 
 which is the point, since the local 4-bit G1 reading is indicative only and the **verdict of record
 is the bf16 re-gate run here**.
 
-## 9. Not yet verified on the cluster
+## 9. Getting the results back
+
+The pilot writes its verdict to Scratch and `runs/` is gitignored, so nothing leaves the cluster on
+its own. Pull the two small directories the run of record actually consists of:
+
+```bash
+# From your laptop, after the job finishes. <hash> is printed in the job log ("sweep <hash> ...").
+rsync -av --prune-empty-dirs \
+  --include='*/' --include='manifest.json' --include='summary.json' \
+  --include='pilot.json' --include='pilot.md' --include='serve_env.json' --exclude='*' \
+  myriad:~/Scratch/precept-research/runs/ ./runs/myriad/
+```
+
+That is deliberately not the whole tree: `handoffs.jsonl`, the Parquet parts, probes and embedding
+caches are large and regenerable, and none of them are committed. The manifest, the summary, the
+gate report and the serving-environment capture are what a frozen result is made of.
+
+Bring the Parquet dataset back too (`--include='*.parquet'`) when you want to re-run the analysis
+locally rather than trust the on-node run — it is the same estimator either way, but a local re-run
+is how you check that.
+
+## 10. Not yet verified on the cluster
 
 Documented, plausible, and unconfirmed. Check these in the first session and correct this file.
 
@@ -238,7 +263,7 @@ revision can no longer disagree with the manifest (it is read from the tier conf
 can no longer diverge from the lockfile (`uv sync` into the repo's `.venv`, which is what every
 script activates).
 
-## 10. Cost
+## 11. Cost
 
 Nothing here is billed. The Free allocation trades queue latency for cost, which suits development
 and the pilot; the three-monthly priority allocation is worth saving for the main RQ1 sweep. Every

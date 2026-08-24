@@ -9,7 +9,7 @@
 #
 # Two reasons this exists, in order of severity:
 #
-#  1. Compute nodes may have no outbound internet (docs/myriad.md §9 - unconfirmed, and the single
+#  1. Compute nodes may have no outbound internet (docs/myriad.md §10 - unconfirmed, and the single
 #     unknown that can write off a whole session). If they do not, a GPU job that downloads is not
 #     slow, it is dead, and it dies after the queue wait. Pulling here moves that failure to a
 #     login node where it costs nothing and is fixable.

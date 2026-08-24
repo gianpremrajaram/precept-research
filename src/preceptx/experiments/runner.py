@@ -10,6 +10,7 @@ restarts without duplicating cells.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -35,8 +36,36 @@ from preceptx.experiments.sweep import (
     sweep_hash,
 )
 from preceptx.serving.client import LLMClient
+from preceptx.sim.fingerprint import simulation_fingerprint
 
 logger = logging.getLogger(__name__)
+
+
+def _assert_simulation_matches(dataset_hash: str, root: Path) -> None:
+    """Refuse to resume into a dataset built under different world geometry.
+
+    Defence in depth, not the primary mechanism: the fingerprint is inside ``dataset_hash_for``,
+    so a mismatch cannot arise for anything written after that change - different geometry means
+    a different directory. This catches only what identity cannot: a manifest written before the
+    fingerprint existed, a directory copied in by hand, or a future change to how the hash is
+    composed. It fails closed, because what it guards is a run that looks complete and is not.
+
+    A dataset directory with **no** manifest is not a failure and must not be treated as one:
+    the manifest is written when a sweep finishes, so its absence is the ordinary
+    killed-at-wallclock case that resumability exists to serve.
+    """
+    manifest_path = root / f"{dataset_hash}-run" / "manifest.json"
+    if not (root / dataset_hash).exists() or not manifest_path.exists():
+        return
+    recorded = json.loads(manifest_path.read_text()).get("simulation_digest")
+    current = simulation_fingerprint().digest()
+    if recorded != current:
+        raise ConfigError(
+            f"dataset {dataset_hash} was built under simulation fingerprint {recorded!r}, "
+            f"but this process computes {current!r}. Resuming would pool episodes from two "
+            "different worlds; move the existing dataset aside, or restore the geometry it "
+            "was built with."
+        )
 
 
 def _completed_ids(dataset_hash: str, root: Path) -> set[str]:
@@ -66,6 +95,7 @@ def run_grid(
     root = Path(root)
     d_hash = dataset_hash_for(sweep)
     cells = expand(sweep)
+    _assert_simulation_matches(d_hash, root)
     done_ids = _completed_ids(d_hash, root)
     pending = [c for c in cells if episode_id(c) not in done_ids]
     logger.info(

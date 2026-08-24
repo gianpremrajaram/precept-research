@@ -35,7 +35,7 @@ Recommendation = Literal["proceed", "retune_once", "fallback"]
 
 # The documented pivot if a gate still fails after the one allowed retune (roadmap G-gate fallback).
 FALLBACK_LADDER = (
-    "1. Elevate RQ3a (Who&When / MAST external validity) to the headline - it is the pre-planned "
+    "1. Elevate RQ3a (TraceElephant external validity) to the headline - it is the pre-planned "
     "fallback and can carry the dissertation alone.\n"
     "2. Simplify the task (wider slits, fewer chambers, or a shorter horizon) and re-pilot once.\n"
     "3. Reframe RQ1 as a diagnostic negative: report the absence of an information gradient as the "

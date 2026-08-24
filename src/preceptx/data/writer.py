@@ -71,7 +71,11 @@ class DatasetError(RuntimeError):
 
 
 def dataset_hash(
-    config_hash: str, *, schema_version: int = SCHEMA_VERSION, prompt_version: str = ""
+    config_hash: str,
+    *,
+    schema_version: int = SCHEMA_VERSION,
+    prompt_version: str = "",
+    simulation_digest: str = "",
 ) -> str:
     """Derive a stable dataset hash from the run's config hash, schema version and prompt version.
 
@@ -80,10 +84,17 @@ def dataset_hash(
     resume path silently pools them into one dataset. Empty (the default) reproduces the pre-v3
     hash for callers that have no prompt surface. Sweep callers go through
     ``experiments.sweep.dataset_hash_for``, which never omits it.
+
+    ``simulation_digest`` is there for the same reason and is the same kind of value: the world
+    constants (slit widths, arena and load geometry, grid resolution) are module-level and
+    unreachable from ``SweepConfig``, so without it a geometry retune resumes into the dataset it
+    was meant to replace. See ``sim/fingerprint.py`` for why that is the dangerous case.
     """
     payload = f"{config_hash}:v{schema_version}"
     if prompt_version:
         payload += f":p{prompt_version}"
+    if simulation_digest:
+        payload += f":w{simulation_digest}"
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 

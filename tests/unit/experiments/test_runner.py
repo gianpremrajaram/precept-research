@@ -13,6 +13,8 @@ from preceptx.data.writer import load_records
 from preceptx.experiments.runner import run_grid
 from preceptx.experiments.sweep import SweepConfig, dataset_hash_for
 from preceptx.serving.client import LLMClient, ServingConfig
+from preceptx.sim import arena
+from preceptx.sim.fingerprint import simulation_fingerprint
 
 BASE_URL = "http://localhost:8000/v1"
 CHAT = f"{BASE_URL}/chat/completions"
@@ -207,3 +209,80 @@ def test_manifest_records_the_decoding_config_without_the_key(tmp_path: Path) ->
     assert serving["max_tokens"] == 64 and serving["thinking_switch"] == "/x"
     assert serving["temperature"] == 0.0 and serving["seed"] == 0
     assert serving["api_key"] == "REDACTED"
+
+
+# --- dataset identity carries the world it was simulated in (sim/fingerprint.py) ----------------
+
+
+@respx.mock
+def test_a_geometry_retune_schedules_a_fresh_grid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The failure the fingerprint exists to prevent, exercised end to end through ``run_grid``.
+
+    Before the world reached dataset identity: widen a slit, re-run, and this read the *pre*-retune
+    episode ids, found the grid already complete, scheduled nothing, and let the driver re-report
+    the old verdict against the new geometry. On the cluster, on the verdict of record, looking
+    exactly like a success. A unit test on the digest alone would not have caught it - the claim
+    is specifically that ``run_grid`` resolves and consumes the new identity.
+    """
+    respx.post(CHAT).mock(side_effect=_wait_script)
+    sweep = _sweep()
+    run_grid(sweep, _client(), root=tmp_path)
+    before = dataset_hash_for(sweep)
+    assert len(load_records(before, root=tmp_path)) == 6 * 2
+
+    monkeypatch.setitem(arena._DIFFICULTY_SLITS, "easy", 2.4)  # the pre-registered retune lever
+    after = dataset_hash_for(sweep)
+    assert after != before
+
+    summary = run_grid(sweep, _client(), root=tmp_path)
+    assert summary.n_episodes == 6  # a full fresh grid, not "0 pending"
+    assert len(load_records(after, root=tmp_path)) == 6 * 2
+    assert len(load_records(before, root=tmp_path)) == 6 * 2  # the old dataset is left intact
+
+
+@respx.mock
+def test_resuming_into_a_foreign_world_fails_loud(tmp_path: Path) -> None:
+    """Defence in depth: a recorded fingerprint that disagrees with this process aborts the run.
+
+    Unreachable through the hash (different world, different directory), so this stands in for what
+    identity cannot cover - a hand-copied directory, or a future change to how the hash is composed.
+    """
+    respx.post(CHAT).mock(side_effect=_wait_script)
+    sweep = _sweep()
+    run_grid(sweep, _client(), root=tmp_path)
+    path = tmp_path / f"{dataset_hash_for(sweep)}-run" / "manifest.json"
+    payload = json.loads(path.read_text())
+    payload["simulation_digest"] = "0" * 16
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ConfigError, match="simulation fingerprint"):
+        run_grid(sweep, _client(), root=tmp_path)
+
+
+@respx.mock
+def test_a_dataset_with_no_manifest_still_resumes(tmp_path: Path) -> None:
+    """The guard must not fail closed on a missing manifest.
+
+    The manifest is written when a sweep *finishes*, so its absence is the ordinary
+    killed-at-wallclock case - the one resumability exists to serve. Failing closed there would
+    have broken the feature the guard sits inside.
+    """
+    respx.post(CHAT).mock(side_effect=_wait_script)
+    sweep = _sweep()
+    run_grid(sweep, _client(), root=tmp_path)
+    (tmp_path / f"{dataset_hash_for(sweep)}-run" / "manifest.json").unlink()
+    assert run_grid(sweep, _client(), root=tmp_path).n_episodes == 6
+
+
+@respx.mock
+def test_the_manifest_records_the_world_and_its_digest(tmp_path: Path) -> None:
+    respx.post(CHAT).mock(side_effect=_wait_script)
+    sweep = _sweep()
+    run_grid(sweep, _client(), root=tmp_path)
+    manifest = _manifest(sweep, tmp_path)
+    assert manifest["simulation_digest"] == simulation_fingerprint().digest()
+    simulation = manifest["simulation"]
+    assert isinstance(simulation, dict)
+    # The payload, not only the digest: a digest says identity changed, the payload says why.
+    assert simulation["slit_widths"] == {"easy": 1.8, "medium": 1.2, "hard": 1.1}

@@ -36,6 +36,14 @@ WALL_FRICTION = 0.6
 _DIFFICULTY_SLITS: dict[Difficulty, float] = {"easy": 1.8, "medium": 1.2, "hard": 1.1}
 
 
+def slit_widths() -> dict[Difficulty, float]:
+    """A copy of the difficulty -> slit-width map, for ``sim/fingerprint.py``.
+
+    Copied rather than the live dict: the fingerprint must observe the map, never mutate it.
+    """
+    return dict(_DIFFICULTY_SLITS)
+
+
 class ArenaGeometry(BaseModel):
     """Static arena dimensions (world units). Three chambers, two internal walls."""
 

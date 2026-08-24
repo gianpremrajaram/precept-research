@@ -15,6 +15,95 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
+## 2026-08-24 — Dataset identity now carries the world the episodes were simulated in
+
+- **Area:** reproducibility contract and the pilot retune path — what makes two datasets the same
+  experiment (G1/G2 re-gate, PREREGISTRATION §6, RESEARCH_ROADMAP §3.1).
+- **Status:** pre-freeze, before the bf16 run of record. Deliberately done now: the fix re-keys
+  every existing dataset, which costs nothing today and would cost a re-freeze afterwards.
+
+### Trigger
+
+Reviewing what the first cluster session would actually hit, on the path the pre-registration
+prescribes: the E3 re-gate returns `retune_once`, and the named lever is difficulty — "difficulty
+and serialisation is retuned once, then re-gated" (roadmap §3.1), with the fallback ladder's second
+rung reading "simplify the task (wider slits …)".
+
+### Finding
+
+The retune lever was outside dataset identity. `_DIFFICULTY_SLITS`, `ArenaGeometry`, the T's
+dimensions, the goal radius, the load mass and `GridConfig.cell` are module constants;
+`ExperimentConfig` carries `difficulty` as a *label*, and `ArenaGeometry()` / `GridConfig()` are
+default-constructed at three call sites and never threaded from config. So widening a slit left
+`sweep_hash` and `dataset_hash_for` unchanged, and `run_grid` — which reads completed `episode_id`s
+out of the dataset directory and skips them — would find 40 of 40 episodes complete, log
+`0 pending`, run nothing, and let the driver re-analyse the **pre-retune** dataset and re-report its
+verdict as the post-retune result.
+
+`sweep.py` already carried exactly this reasoning for the knobs a caller *can* set — "a silent
+change to the jitter region, impulse parameters, or the label horizon k would otherwise relabel a
+re-run dataset without changing its hash" (P0-2, P1-6). The world itself had been missed.
+
+### Impact
+
+A passing-looking broken run, on the verdict of record, at precisely the moment the design is most
+load-bearing: the one permitted retune. The failure is silent by construction — the sweep reports a
+complete grid and a plausible verdict — and the run that produced it would have looked, in the
+manifest and the log, exactly like a correct one. Under the repo's own ordering of failure modes
+("a passing-looking broken run is the worst outcome") this is the worst available class.
+
+### Risk reduced
+
+Removes the possibility of pooling episodes from two different worlds under one dataset identity,
+and with it the possibility of a retune that silently does nothing.
+
+### The fix
+
+`sim/fingerprint.py`: `simulation_fingerprint()` returns a typed `SimulationFingerprint` over the
+world constants that are *not* reachable from `SweepConfig` — the slit map, arena dimensions, load
+geometry, damping/friction/mass, goal radius, grid resolution — plus an
+`ENVIRONMENT_SCHEMA_VERSION` escape hatch for a behavioural change that leaves every constant
+identical. Its 16-hex `digest()` joins `PROMPT_VERSION` inside `dataset_hash_for`, so changed
+geometry writes to a different directory rather than resuming into the one it was meant to replace.
+
+Two deliberate boundaries. Jitter, step and outcome configs are **not** re-fingerprinted: they are
+`SweepConfig` fields already inside `sweep_hash`, and hashing them twice would put one guarantee in
+two places to keep in step. Derived values (`HALF_H`, `COG_Y`) are omitted as pure functions of the
+dimensions that are hashed.
+
+The manifest records the **payload as well as the digest**: the digest is what prevents an unsafe
+resume, but only the payload answers *why* an identity changed, six weeks later, without the source
+tree. `SWEEP_MANIFEST_VERSION` is bumped 1 → 2 accordingly.
+
+A resume assertion sits behind the hash as defence in depth: on resume, a recorded fingerprint that
+disagrees with this process aborts. It is unreachable through the hash by construction, and exists
+for what identity cannot cover — a hand-copied directory, or a future change to how the hash is
+composed. It deliberately does **not** fail closed on a *missing* manifest: the manifest is written
+when a sweep finishes, so its absence is the ordinary killed-at-wallclock case, and failing closed
+there would have broken the resumability the guard sits inside.
+
+### Result
+
+The regression test drives the whole chain through `run_grid` rather than asserting on the digest:
+run the grid, widen `easy` from 1.8 to 2.4, re-run, and assert a full fresh grid is scheduled and
+the pre-retune dataset is left intact. A digest-level test alone would not have caught it — the
+claim is specifically that `run_grid` resolves and consumes the new identity. Cross-process
+stability is pinned under two `PYTHONHASHSEED` values, since a fingerprint that leaked iteration
+order would make every resume look like a geometry change.
+
+Cost paid now: `runs/local/*` and `runs/bench/smoke/*` are no longer resumable. Their findings
+survive in `docs/EXPERIMENTS.md`, the committed `runs/bench/ladder.*` table is append-only, and both
+local pilots were indicative by pre-registration in any case.
+
+### So what
+
+Difficulty was treated as a *label* in the config and as a *number* in the simulator, and only the
+label was part of experiment identity. The general lesson is that a knob named in the
+pre-registration as a thing you are allowed to change once is, for that reason, a knob that must be
+in the hash — the retune path is the one place a silent no-op is most expensive and least visible.
+
+---
+
 ## 2026-08-24 — The second length control, and why it is a sensitivity analysis rather than an adjusted effect
 
 - **Area:** RQ1 analysis — the pre-registered controls for the length/condition confound (H1, H2).

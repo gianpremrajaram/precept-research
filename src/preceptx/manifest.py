@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from importlib import metadata
@@ -26,8 +27,8 @@ MANIFEST_VERSION = 1
 # Dependencies whose installed versions are pinned into every manifest for reproducibility.
 # pymunk literally shapes trajectories; scipy/statsmodels shape the reported statistics;
 # joblib/sentence-transformers shape persisted probes and embeddings (P1-9). Server-side
-# vllm/torch versions are echoed into the job log by scripts/myriad/serve.sh - the client
-# environment cannot see them.
+# vllm/torch versions cannot be seen from the client environment at all; scripts/myriad/serve.sh
+# writes them to a sidecar that ``serve_env`` below reads into the manifest.
 _TRACKED_DEPS = (
     "pydantic",
     "numpy",
@@ -89,6 +90,64 @@ def git_sha() -> str:
             "could not resolve git SHA; runs must be made from a git checkout"
         ) from exc
     return out.stdout.strip()
+
+
+class ServeEnv(BaseModel):
+    """The server-side serving environment, as captured by ``scripts/myriad/serve.sh``.
+
+    vLLM's and torch's versions and the physical GPU live on the compute node, in the process
+    that serves the model - the client that writes the manifest cannot import them or see the
+    card. They were previously echoed to the job log only, which made the run of record's
+    server-side stack recoverable solely by a human copying four lines out of
+    ``precept-pilot.o<jobid>``. ``digest`` is over the sidecar bytes, so the invocation record
+    of a manual benchmark can name exactly which capture it ran against.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    digest: str
+    values: dict[str, str]
+
+
+def serve_env() -> ServeEnv | None:
+    """Read the serving-environment sidecar named by ``PRECEPTX_SERVE_ENV``, if there is one.
+
+    ``None`` off the cluster: a local run has no separate server process to describe, and the
+    absence is itself accurate rather than a degraded reading. A sidecar that is named but
+    unreadable is an error, not a silent ``None`` - it means the job wrote one and we lost it.
+    """
+    raw = os.environ.get("PRECEPTX_SERVE_ENV", "")
+    if not raw:
+        return None
+    path = Path(raw)
+    try:
+        payload = path.read_bytes()
+    except OSError as exc:
+        raise ManifestError(
+            f"PRECEPTX_SERVE_ENV points at {path}, which cannot be read: {exc}"
+        ) from exc
+    try:
+        values = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ManifestError(f"serving-environment sidecar {path} is not valid JSON: {exc}") from exc
+    return ServeEnv(
+        path=str(path),
+        digest=hashlib.sha256(payload).hexdigest()[:16],
+        values={str(k): str(v) for k, v in values.items()},
+    )
+
+
+def git_dirty() -> bool:
+    """Whether the working tree has uncommitted changes.
+
+    Recorded beside the SHA because a dirty tree means the SHA does not describe the code that
+    ran, which is the difference between a reproducible artefact and a plausible-looking one.
+    """
+    out = subprocess.run(
+        ["git", "status", "--porcelain"], check=False, capture_output=True, text=True
+    )
+    return bool(out.stdout.strip())
 
 
 def dep_versions() -> dict[str, str]:
