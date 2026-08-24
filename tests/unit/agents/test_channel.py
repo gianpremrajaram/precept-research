@@ -71,11 +71,12 @@ def test_c3_grid_window_preserves_the_legend_header() -> None:
     assert r.observation_override == "\n".join([GRID_LEGEND, "....", ".T..", "...."])
 
 
-def test_c3_numeric_hides_the_goal_line() -> None:
-    obs = "load=(1, 2, 3)\ncontact=False\ngoal=(9, 9, 1)"
+def test_c3_numeric_hides_every_global_layout_line() -> None:
+    # The v3 prompt surface added walls_x / slit_y. C3 must strip all global layout, not just the
+    # goal, or B keeps the arena geometry and the asymmetry C3 exists to create is only nominal.
+    obs = "load=(1, 2, 3)\ncontact=False\ngoal=(9, 9, 1)\nwalls_x=(4, 8)\nslit_y=(2.1, 3.9)"
     r = _ch("m", "C3", serialisation="numeric", observation=obs)
-    assert r.observation_override is not None
-    assert "goal=" not in r.observation_override and "load=" in r.observation_override
+    assert r.observation_override == "load=(1, 2, 3)\ncontact=False"
 
 
 def test_c3_nl_keeps_only_the_self_state_sentence() -> None:

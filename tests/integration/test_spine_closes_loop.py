@@ -19,9 +19,9 @@ import respx
 from numpy.typing import NDArray
 
 from preceptx.config import ModelConfig
-from preceptx.data.writer import dataset_hash, load_records
+from preceptx.data.writer import load_records
 from preceptx.experiments.runner import run_grid
-from preceptx.experiments.sweep import SweepConfig, sweep_hash
+from preceptx.experiments.sweep import SweepConfig, dataset_hash_for
 from preceptx.measure.featuriser import EncoderConfig, Featuriser
 from preceptx.measure.pvi_cpvi import ProbeConfig, cpvi
 from preceptx.serving.client import LLMClient, ServingConfig
@@ -86,7 +86,7 @@ def test_spine_output_feeds_cpvi(tmp_path: Path) -> None:
         sweep, LLMClient(ServingConfig(model="m", base_url=BASE_URL, max_retries=0)), root=tmp_path
     )
 
-    records = load_records(dataset_hash(sweep_hash(sweep)), root=tmp_path)
+    records = load_records(dataset_hash_for(sweep), root=tmp_path)
     assert records, "the spine produced no records"
 
     featuriser = Featuriser(EncoderConfig(cache_dir=tmp_path / "embed"), encoder=_StubEncoder())

@@ -69,14 +69,16 @@ class _GraphState(TypedDict):
 class EpisodeRunner:
     """Runs one episode of the negotiation loop end to end, returning labelled handoff records.
 
-    Holds the injected ``LLMClient`` and the fixed channel / step / outcome configs; ``run_episode``
+    Holds the injected per-role ``LLMClient``s and the fixed channel / step / outcome configs;
+    ``run_episode``
     builds the per-episode scenario, compiles a fresh graph over it, runs to termination, and labels
     the trajectory (DSE-009). A stub/mock client makes the whole loop testable with no live model.
     """
 
     def __init__(
         self,
-        client: LLMClient,
+        client_a: LLMClient,
+        client_b: LLMClient | None = None,
         *,
         max_steps: int | Mapping[Difficulty, int],
         channel_cfg: ChannelConfig | None = None,
@@ -84,7 +86,11 @@ class EpisodeRunner:
         outcome_cfg: OutcomeConfig | None = None,
         jitter: ScenarioJitter | None = None,
     ) -> None:
-        self._client = client
+        self._client_a = client_a
+        # Self-play stays the default and the primary cell (DSE-049): omitting client_b points both
+        # roles at one client, so the path is identical to the single-client runner. A second client
+        # is what unblocks the heterogeneous-pair cell (DSE-021) with no further runner change.
+        self._client_b = client_b or client_a
         # Per-difficulty step budget (P1-4); a bare int applies to every difficulty (scripted tests)
         self._max_steps = max_steps
         self._channel_cfg = channel_cfg or ChannelConfig()
@@ -140,7 +146,8 @@ class EpisodeRunner:
         slit: float,
         max_steps: int,
     ) -> Any:  # langgraph's compiled graph is untyped; callers cast invoke()'s result
-        client, channel_cfg, step_cfg = self._client, self._channel_cfg, self._step_cfg
+        client_a, client_b = self._client_a, self._client_b
+        channel_cfg, step_cfg = self._channel_cfg, self._step_cfg
         post_history: list[BodyState] = []
 
         def agent_a(state: _GraphState) -> dict[str, object]:
@@ -148,7 +155,7 @@ class EpisodeRunner:
                 load=read_state(space, load), geometry=geometry, goal=goal, slit_width=slit
             )
             state_str = serialise(scene, cell.serialisation)
-            message_raw = client.chat(prompt_a(state_str))
+            message_raw = client_a.chat(prompt_a(state_str))
             result = apply_channel(
                 message_raw,
                 cell.condition,
@@ -170,7 +177,7 @@ class EpisodeRunner:
             # Only a schema-invalid ACTION degrades to WAIT (the DSE-010-sanctioned fallback). A
             # transport-level ServingError propagates and fails the episode loud - catching it here
             # would let a dead endpoint record a passing-looking run of WAITs (P1-3).
-            raw = client.structured(
+            raw = client_b.structured(
                 prompt_b(state["observation"], state["message_delivered"]),
                 Action.model_json_schema(),
             )

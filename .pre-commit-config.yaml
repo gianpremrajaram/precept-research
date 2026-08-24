@@ -1,9 +1,12 @@
 # Run `pre-commit install` after cloning. Never bypass with --no-verify.
 repos:
+  # Keep this rev in step with the ruff the project venv resolves (`uv run ruff --version`). Pinned
+  # at v0.6.9 the hook enforced UP038, which later ruff dropped from its defaults, so the hook and
+  # `ruff check .` disagreed permanently and the hook could only be satisfied by bypassing it.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    rev: v0.15.20
     hooks:
-      - id: ruff
+      - id: ruff-check      # `ruff` is a legacy alias for this id in current ruff-pre-commit
         args: [--fix]
       - id: ruff-format
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -15,11 +18,30 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: check-added-large-files
+  # Two SGE jobscripts now carry real control flow (a background server, a trap, a wait loop) and
+  # they only ever run on the cluster, where a typo costs a queue slot rather than a test run.
+  # shellcheck-py is the pip wrapper: no Docker, so it works in CI and in a bare pre-commit install.
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        # -x follows `source`d files, so scripts/myriad/_common.sh is checked as it is actually
+        # used rather than reported as unresolvable (SC1091).
+        args: [-x]
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.11.2
     hooks:
       - id: mypy
         files: ^src/preceptx/
+        # The hook runs mypy in its own isolated env, so every library whose *types* matter has to
+        # be listed here or the check is worthless: without numpy, `FloatArray = NDArray[np.float64]`
+        # degrades to a plain variable and every use of it reports "not valid as a type". The hook
+        # was reporting 187 such errors on main against a tree that `mypy --strict src/` passes
+        # clean, which is a hook that can only be satisfied by bypassing it. Untyped libraries
+        # (sklearn, pymunk, langgraph) do not belong here - they are handled by the
+        # ignore_missing_imports overrides in pyproject.toml.
         additional_dependencies:
           - pydantic>=2.5,<3
           - openai>=1.40,<2
+          - numpy>=1.26,<3
+          - pandas-stubs

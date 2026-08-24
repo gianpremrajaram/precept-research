@@ -81,6 +81,14 @@ def test_grid_carries_a_constant_legend_header() -> None:
     assert "T=load" in GRID_LEGEND and "G=goal" in GRID_LEGEND
 
 
+def test_numeric_names_the_load_size_alongside_the_slit() -> None:
+    # v4: naming the gap without naming the object leaves "aligned with the slit" underdetermined -
+    # the threading band is +/-0.25 about the centre for a 1.8 gap and a 1.3-tall load, not +/-0.9.
+    text = serialise(_scene(2.0, 3.0, slit=1.8), "numeric")
+    assert "load_size=(1.4000, 1.3000)" in text
+    assert "slit_y=(2.1000, 3.9000)" in text  # the gap is still stated as its own interval
+
+
 def test_numeric_has_no_dead_vel_line() -> None:
     # RD-7: quasi-static settling zeroes velocity before every read; the line carried no signal.
     text = serialise(_scene(2.0, 3.0), "numeric")

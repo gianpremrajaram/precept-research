@@ -138,29 +138,41 @@ def _md_cell(text: str, n: int = 60) -> str:
 
 
 def render_transcript(records: list[HandoffRecord]) -> str:
-    """A markdown transcript of the episode: per-step action, message (raw -> delivered), progress.
+    """A markdown transcript: per-step action, message (raw -> delivered), progress, flags.
 
     Always available (pure text). Shows the raw and delivered message side by side so channel
     degradation (C1 truncation, C4 dropout, C3 restriction) is visible next to the chosen action.
+
+    Records spanning several episodes get **one section each**, in first-appearance order. A single
+    table under one episode's header would attribute every step and the whole handoff count to that
+    episode - and the E1 transcript read, which this exists for, is where that would mislead most.
     """
     if not records:
         raise ValueError("render_transcript needs at least one record")
-    r0 = records[0]
-    terminal = any(r.success for r in records)
-    lines = [
-        f"# Episode `{r0.episode_id}`",
-        "",
-        f"- condition **{r0.condition}** | serialisation **{r0.serialisation}** | "
-        f"difficulty **{r0.difficulty}** | model `{r0.model}` | seed {r0.seed}",
-        f"- {len(records)} handoffs | terminal success: **{terminal}**",
-        "",
-        "| step | action | message (raw -> delivered) | progress | flags |",
-        "|---|---|---|---|---|",
-    ]
+    episodes: dict[str, list[HandoffRecord]] = {}
     for r in records:
-        raw, delivered = _md_cell(r.message_raw), _md_cell(r.message_delivered)
-        msg = raw if raw == delivered else f"{raw} -> {delivered}"
-        active = (("goal", r.success), ("collision", r.collision), ("stuck", r.stuck))
-        flags = " ".join(name for name, on in active if on) or "-"
-        lines.append(f"| {r.step} | {r.action['action']} | {msg} | {r.progress:+.3f} | {flags} |")
-    return "\n".join(lines) + "\n"
+        episodes.setdefault(r.episode_id, []).append(r)
+
+    lines: list[str] = []
+    for episode_id, rows in episodes.items():
+        r0 = rows[0]
+        lines += [
+            f"# Episode `{episode_id}`",
+            "",
+            f"- condition **{r0.condition}** | serialisation **{r0.serialisation}** | "
+            f"difficulty **{r0.difficulty}** | model `{r0.model}` | seed {r0.seed}",
+            f"- {len(rows)} handoffs | terminal success: **{any(r.success for r in rows)}**",
+            "",
+            "| step | action | message (raw -> delivered) | progress | flags |",
+            "|---|---|---|---|---|",
+        ]
+        for r in rows:
+            raw, delivered = _md_cell(r.message_raw), _md_cell(r.message_delivered)
+            msg = raw if raw == delivered else f"{raw} -> {delivered}"
+            active = (("goal", r.success), ("collision", r.collision), ("stuck", r.stuck))
+            flags = " ".join(name for name, on in active if on) or "-"
+            lines.append(
+                f"| {r.step} | {r.action['action']} | {msg} | {r.progress:+.3f} | {flags} |"
+            )
+        lines.append("")
+    return "\n".join(lines).rstrip("\n") + "\n"

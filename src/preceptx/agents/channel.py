@@ -75,13 +75,21 @@ def _drop_tokens(text: str, p: float, rng: Generator) -> str:
     return " ".join(t for t in text.split() if rng.random() >= p)
 
 
+_C3_NUMERIC_KEEP = ("load=", "contact=")  # B's self-state; every other numeric key is layout
+
+
 def _restrict(observation: str, serialisation: Serialisation, window_rows: int) -> str:
     """Restrict B's observation to a local window: a band around the load (grid) or self-state only
     (numeric / nl), so the goal and global layout must come from A's message - the C3 asymmetry."""
     if serialisation == "grid":
         return _window_grid(observation, window_rows)
     if serialisation == "numeric":
-        return "\n".join(line for line in observation.splitlines() if not line.startswith("goal="))
+        # Whitelist B's *own* state, do not blacklist global keys: the v3 serialiser added
+        # `walls_x=` and `slit_y=` and a blacklist silently kept delivering them, leaving C3's
+        # observation only nominally restricted. A whitelist fails closed when a key is added.
+        return "\n".join(
+            line for line in observation.splitlines() if line.startswith(_C3_NUMERIC_KEEP)
+        )
     # nl: keep only the first sentence (the load-pose clause), dropping the goal / slit clauses.
     head = observation.split(". ", 1)[0]
     return head if head.endswith(".") else head + "."

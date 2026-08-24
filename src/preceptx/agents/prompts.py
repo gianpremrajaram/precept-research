@@ -15,29 +15,81 @@ from preceptx.serving.client import ChatMessage
 # v2: serialisation bump (P1-5 + RD-7) - the grid gained its constant legend/axis header and the
 # numeric form dropped the dead vel line. Prompt templates themselves are unchanged from v1; the
 # serialised state is part of the prompt surface, so the recorded version moves with it.
-PROMPT_VERSION = "v2"
+# v3 (E1, first live read): the numeric form gained the wall/slit geometry it had never carried, and
+# both system prompts were rewritten. A was emitting near-constant boilerplate (7 distinct messages
+# across 75 handoffs) because it had no obstacle to describe, and B chose the same action 75/75
+# because nothing told it to act on the message. Both are prerequisites for any information gradient
+# to exist at all. One of the three budgeted pre-E3 bumps.
+# v4 (E3-local): the numeric form gained `load_size` and A's system prompt now states that the WHOLE
+# load must fit the slit, not its centre. The state named the gap's extent and never the object's,
+# so "aligned with the slit" was underdetermined: the pilot watched A call com_y=2.0074 aligned with
+# a (2.1, 3.9) gap and push into the wall for the rest of the budget. The dimensions are constants
+# of the load, not a derived pass band. Bump two of the three budgeted pre-E3 bumps.
+PROMPT_VERSION = "v4"
 
 _SYSTEM_A = (
     "You are agent A, the navigator in a two-agent cooperative-transport task. A T-shaped load "
-    "must be pushed rightward through narrow slits between chambers to a goal region. You can see "
-    "the scene but cannot act. Send agent B one short, concrete instruction (one or two "
-    "sentences): the direction to push, or whether to rotate the load to clear a slit. Be brief."
+    "must be pushed rightward (+x) through a slit in each vertical wall to reach the goal region. "
+    "+y is north, -y is south. The load only passes a wall when the WHOLE load fits inside that "
+    "wall's slit - its centre being inside the slit's y-range is not enough, because the load has "
+    "size of its own (see load_size) and juts out either side of its centre. You can see the whole "
+    "scene; B acts but sees less than you. Send B one or two sentences saying where the load is "
+    "relative to the next slit and what to do now - which way to push, or whether to rotate first "
+    "so the load fits through. Use the actual numbers in front of you; do not give generic advice."
 )
 
 _SYSTEM_B = (
     "You are agent B, the actuator in a two-agent cooperative-transport task. You receive a "
-    "partial observation of the scene and one instruction from agent A. Choose exactly one "
-    "macro-action that best advances the T-load toward the goal."
+    "partial observation of the scene and one instruction from agent A, who can see more of the "
+    "scene than you. Choose exactly one macro-action that best advances the T-load toward the "
+    "goal, following A's instruction unless your own observation plainly contradicts it."
 )
 
-_ACTION_HINT = "Actions: N/S/E/W push the load; ROT+/ROT- rotate it; WAIT does nothing. Choose one."
+_ACTION_HINT = (
+    "Actions: N pushes the load north (+y), S south (-y), E east (+x), W west (-x); ROT+/ROT- "
+    "rotate it; WAIT does nothing. Choose one."
+)
 
 
-def prompt_a(state_str: str) -> list[ChatMessage]:
-    """A's chat: observe the full serialised state, emit a natural-language handoff to B."""
+# The gate's retry feedback (DSE-045). Versioned separately from PROMPT_VERSION because it is part
+# of the RQ3b *treatment*, not of the base task: it only ever reaches a model on a blocked retry, so
+# a wording change re-shapes the causal arm while leaving every ungated dataset untouched.
+#
+# Why a feedback template at all: under greedy decoding a re-prompt is a fixed point. The same
+# prompt yields the same message, the same statistic and the same block, for every bounded retry, so
+# a gate that merely re-asks is vacuous - it would pass its unit tests and change nothing live.
+# The retry prompt must differ in content, which is what this template supplies.
+#
+# Rejected alternative - raise the temperature on the retry. It escapes the fixed point, but it
+# breaks the determinism story mid-episode (the run is greedy except at exactly the handoffs the
+# gate touched) and it confounds the gate's effect with an increase in sampling entropy: a
+# post-retry improvement could not be attributed to the feedback rather than to having sampled
+# twice. The four-arm contrast in H6 needs the arms to differ in one thing, so retries stay greedy
+# and the *content* is what changes.
+GATE_FEEDBACK_VERSION = "v1"
+
+GATE_FEEDBACK = (
+    "Your previous instruction was blocked: it did not carry enough information for B to act on. "
+    "Write a different one. Using the actual numbers in front of you, state explicitly: which way "
+    "to push now (north, south, east or west); whether the load must rotate first to fit through "
+    "the slit and if so which way; and which direction the goal lies in. Do not reuse your "
+    "previous wording."
+)
+
+
+def prompt_a(state_str: str, *, gate_feedback: bool = False) -> list[ChatMessage]:
+    """A's chat: observe the full serialised state, emit a natural-language handoff to B.
+
+    ``gate_feedback`` appends ``GATE_FEEDBACK`` for a gate-blocked retry (DSE-045); the default
+    False path is byte-identical to the ungated prompt, so no existing dataset shifts.
+    """
+    feedback = f"\n\n{GATE_FEEDBACK}" if gate_feedback else ""
     return [
         ChatMessage(role="system", content=_SYSTEM_A),
-        ChatMessage(role="user", content=f"Current scene:\n{state_str}\n\nYour instruction to B:"),
+        ChatMessage(
+            role="user",
+            content=f"Current scene:\n{state_str}{feedback}\n\nYour instruction to B:",
+        ),
     ]
 
 

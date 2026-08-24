@@ -7,11 +7,11 @@ import httpx
 import pytest
 import respx
 
-from preceptx.config import ModelConfig
+from preceptx.config import ConfigError, ModelConfig
 from preceptx.data.schema import HandoffRecord
-from preceptx.data.writer import dataset_hash, load_records
+from preceptx.data.writer import load_records
 from preceptx.experiments.runner import run_grid
-from preceptx.experiments.sweep import SweepConfig, sweep_hash
+from preceptx.experiments.sweep import SweepConfig, dataset_hash_for
 from preceptx.serving.client import LLMClient, ServingConfig
 
 BASE_URL = "http://localhost:8000/v1"
@@ -39,7 +39,7 @@ def _completion(content: str) -> dict[str, object]:
 
 
 def _wait_script(request: httpx.Request) -> httpx.Response:
-    if b"guided_json" in request.content:
+    if b"guided_json" in request.content or b"response_format" in request.content:
         return httpx.Response(200, json=_completion(json.dumps({"action": "WAIT"})))
     return httpx.Response(200, json=_completion("hold position"))
 
@@ -57,7 +57,7 @@ def _sweep(concurrency: int = 4) -> SweepConfig:
 
 
 def _data_dir(sweep: SweepConfig, root: Path) -> Path:
-    return root / dataset_hash(sweep_hash(sweep))
+    return root / dataset_hash_for(sweep)
 
 
 @respx.mock
@@ -68,9 +68,9 @@ def test_run_grid_writes_one_record_set_per_cell(tmp_path: Path) -> None:
     assert summary.n_cells == 6  # 2 conditions x 3 seeds
     assert summary.n_episodes == 6
     assert summary.n_handoffs == 6 * 2  # max_steps=2 per episode
-    run_dir = tmp_path / f"{dataset_hash(sweep_hash(sweep))}-run"
+    run_dir = tmp_path / f"{dataset_hash_for(sweep)}-run"
     assert (run_dir / "manifest.json").exists()  # run manifest persisted beside the dataset dir
-    records = load_records(dataset_hash(sweep_hash(sweep)), root=tmp_path)
+    records = load_records(dataset_hash_for(sweep), root=tmp_path)
     assert len({r.episode_id for r in records}) == 6  # no dropped/duplicated episodes
 
 
@@ -79,7 +79,7 @@ def test_run_grid_is_concurrency_safe(tmp_path: Path) -> None:
     respx.post(CHAT).mock(side_effect=_wait_script)
     sweep = _sweep(concurrency=4)  # the serialised-write lock must survive 4 concurrent episodes
     run_grid(sweep, _client(), root=tmp_path)
-    records = load_records(dataset_hash(sweep_hash(sweep)), root=tmp_path)
+    records = load_records(dataset_hash_for(sweep), root=tmp_path)
     assert len(records) == 6 * 2  # every cell's records land exactly once (no part-index race)
     assert len({r.episode_id for r in records}) == 6
 
@@ -91,7 +91,7 @@ def test_run_grid_jitters_start_pose_per_seed(tmp_path: Path) -> None:
     respx.post(CHAT).mock(side_effect=_wait_script)
     sweep = _sweep()
     run_grid(sweep, _client(), root=tmp_path)
-    records = load_records(dataset_hash(sweep_hash(sweep)), root=tmp_path)
+    records = load_records(dataset_hash_for(sweep), root=tmp_path)
 
     def pose(r: HandoffRecord) -> tuple[float, float, float]:
         return (r.pre_state["com_x"], r.pre_state["com_y"], r.pre_state["angle"])
@@ -111,7 +111,7 @@ def test_manifest_records_substrate_endpoint_and_result_knobs(
     monkeypatch.setenv("PRECEPTX_SERVING_SUBSTRATE", "interim-test")
     sweep = _sweep()
     run_grid(sweep, _client(), root=tmp_path)
-    run_dir = tmp_path / f"{dataset_hash(sweep_hash(sweep))}-run"
+    run_dir = tmp_path / f"{dataset_hash_for(sweep)}-run"
     manifest = json.loads((run_dir / "manifest.json").read_text())
     assert manifest["serving_substrate"] == "interim-test"  # §7-7: interim data stays labelled
     assert manifest["endpoint_base_url"] == BASE_URL
@@ -130,5 +130,80 @@ def test_run_grid_resume_skips_completed_cells(tmp_path: Path) -> None:
     parts_second = len(list(_data_dir(sweep, tmp_path).glob("part-*.parquet")))
     assert parts_second == parts_first  # no new parts written on resume
     assert summary.n_episodes == 6  # summary still reports the full grid
-    records = load_records(dataset_hash(sweep_hash(sweep)), root=tmp_path)
+    records = load_records(dataset_hash_for(sweep), root=tmp_path)
     assert len(records) == 6 * 2  # not duplicated
+
+
+# --- DSE-049 / DSE-032: what the sweep manifest records about serving --------------------------
+
+BASE_URL_B = "http://localhost:8001/v1"
+CHAT_B = f"{BASE_URL_B}/chat/completions"
+
+
+def _manifest(sweep: SweepConfig, root: Path) -> dict[str, object]:
+    run_dir = root / f"{dataset_hash_for(sweep)}-run"
+    return json.loads((run_dir / "manifest.json").read_text())
+
+
+@respx.mock
+def test_manifest_records_structured_mode_and_self_play_roles(tmp_path: Path) -> None:
+    respx.post(CHAT).mock(side_effect=_wait_script)
+    sweep = _sweep()
+    client = LLMClient(
+        ServingConfig(
+            model="m", base_url=BASE_URL, max_retries=0, structured_mode="response_format"
+        )
+    )
+    run_grid(sweep, client, root=tmp_path)
+    manifest = _manifest(sweep, tmp_path)
+    assert manifest["structured_mode"] == "response_format"
+    assert manifest["model_b_name"] is None  # self-play: B is served by A's model
+    assert manifest["endpoint_base_url_b"] == ""
+
+
+@respx.mock
+def test_manifest_records_both_role_identities(tmp_path: Path) -> None:
+    respx.post(CHAT).mock(
+        return_value=httpx.Response(200, json=_completion("hold position")),
+    )
+    respx.post(CHAT_B).mock(
+        return_value=httpx.Response(200, json=_completion(json.dumps({"action": "WAIT"}))),
+    )
+    sweep = _sweep().model_copy(
+        update={"model_b": ModelConfig(name="mb", revision="rev-b", tier="14b")}
+    )
+    client_b = LLMClient(ServingConfig(model="mb", base_url=BASE_URL_B, max_retries=0))
+    run_grid(sweep, _client(), client_b, root=tmp_path)
+
+    manifest = _manifest(sweep, tmp_path)
+    assert manifest["model_name"] == "m" and manifest["model_revision"] == "rev"
+    assert manifest["model_b_name"] == "mb" and manifest["model_b_revision"] == "rev-b"
+    assert manifest["endpoint_base_url_b"] == BASE_URL_B
+
+
+def test_second_client_without_a_declared_model_fails_loud(tmp_path: Path) -> None:
+    # A second endpoint with no model_b block would leave the manifest lying about role B.
+    with pytest.raises(ConfigError):
+        run_grid(_sweep(), _client(), _client(), root=tmp_path)
+
+
+@respx.mock
+def test_manifest_records_the_decoding_config_without_the_key(tmp_path: Path) -> None:
+    # Temperature, seed, token budget and the thinking switch shape what the model emits and live
+    # nowhere in SweepConfig; the api key must never reach an artefact.
+    respx.post(CHAT).mock(side_effect=_wait_script)
+    sweep = _sweep()
+    run_grid(
+        sweep,
+        LLMClient(
+            ServingConfig(
+                model="m", base_url=BASE_URL, max_retries=0, max_tokens=64, thinking_switch="/x"
+            )
+        ),
+        root=tmp_path,
+    )
+    serving = _manifest(sweep, tmp_path)["serving_a"]
+    assert isinstance(serving, dict)
+    assert serving["max_tokens"] == 64 and serving["thinking_switch"] == "/x"
+    assert serving["temperature"] == 0.0 and serving["seed"] == 0
+    assert serving["api_key"] == "REDACTED"

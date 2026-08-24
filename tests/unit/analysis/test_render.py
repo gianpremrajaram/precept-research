@@ -73,3 +73,16 @@ def test_render_episode_noops_without_viz_or_writes_a_png(tmp_path: Path) -> Non
 def test_render_episode_empty_fails_loud(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         render_episode([], path=tmp_path / "ep.png")
+
+
+def test_transcript_gives_each_episode_its_own_section() -> None:
+    # One table under one header would attribute every step and the whole handoff count to the
+    # first episode - the exact thing the E1 transcript read must not be misled by.
+    a = [_record(0, "E"), _record(1, "N", success=True)]
+    b = [_record(0, "W")]
+    b[0] = b[0].model_copy(update={"episode_id": "ep-other"})
+    text = render_transcript([*a, *b])
+    assert text.count("# Episode ") == 2
+    assert "# Episode `ep-demo`" in text and "# Episode `ep-other`" in text
+    assert text.count("- 2 handoffs") == 1 and text.count("- 1 handoffs") == 1
+    assert text.count("terminal success: **True**") == 1  # only ep-demo reached the goal

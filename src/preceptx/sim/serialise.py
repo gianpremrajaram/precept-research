@@ -2,11 +2,16 @@
 
 How the physics state is written into the prompt is an experimental factor (the RoCo lesson that
 prompt formatting can masquerade as spatial reasoning), so three forms are selectable by config.
-The three are *isomorphic in information* - each exposes the same load pose and goal, differing
-only in surface form - which keeps the serialisation factor a clean A/B over representation, not
-over information content. Every serialiser is pure, deterministic and total; ``deserialise_check``
-guards the numeric and grid forms against dropping the load COM (the grid certifies angle via the
-occupancy-correctness tests, not by recovering it from a coarse ASCII raster).
+The three are *isomorphic in information* - each exposes the same load pose, goal AND wall/slit
+geometry, differing only in surface form - which keeps the serialisation factor a clean A/B over
+representation, not over information content. That isomorphism is a claim about the code, not a
+hope: the numeric form carried no wall or slit geometry until v3, while the grid drew it and the NL
+form named it, so the serialisation axis was silently confounding representation with information
+content (found in E1 - see docs/experiment_design_log.md, 2026-08-24).
+
+Every serialiser is pure, deterministic and total; ``deserialise_check`` guards the numeric and
+grid forms against dropping the load COM (the grid certifies angle via the occupancy-correctness
+tests, not by recovering it from a coarse ASCII raster).
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from preceptx.data.schema import Serialisation
 from preceptx.sim.actions import BodyState
 from preceptx.sim.arena import ArenaGeometry, Goal, chamber_of
-from preceptx.sim.load import COG_Y, point_in_t_local
+from preceptx.sim.load import COG_Y, T_BAR, T_STEM, T_THICK, point_in_t_local
 
 
 class SceneState(BaseModel):
@@ -93,11 +98,25 @@ def _numeric(scene: SceneState) -> str:
     # No velocity line (RD-7): quasi-static settling zeroes velocity before every read, so it was
     # constant dead weight in the prompt. Landed with the grid legend as one serialisation bump
     # (PROMPT_VERSION v2).
-    s, g = scene.load, scene.goal
+    # The wall and slit lines are v3: without them this form named no obstacle at all, so A could
+    # only emit generic advice and the numeric-vs-grid contrast was not information-isomorphic.
+    # The load's y-extent is 1.3, so the slit interval is what decides whether it threads or jams.
+    # `load_size` is v4: naming the gap without naming the object left "aligned with the slit"
+    # underdetermined, and the pilot watched a model call com_y=2.0074 aligned with a (2.1, 3.9)
+    # gap and push into the wall. The dimensions are constants of the load, not a derived pass
+    # band - deriving the threading band from them is still the agent's inference to make.
+    s, g, geo = scene.load, scene.goal, scene.geometry
+    half = scene.slit_width / 2.0
     return (
         f"load=({s.com_x:.4f}, {s.com_y:.4f}, {s.angle:.4f})  # (com_x, com_y, angle)\n"
         f"contact={s.in_contact}\n"
-        f"goal=({g.center_x:.4f}, {g.center_y:.4f}, {g.radius:.4f})  # (center_x, center_y, radius)"
+        f"goal=({g.center_x:.4f}, {g.center_y:.4f}, {g.radius:.4f})"
+        "  # (center_x, center_y, radius)\n"
+        f"walls_x=({geo.chamber_w:.4f}, {2.0 * geo.chamber_w:.4f})  # vertical walls to pass\n"
+        f"slit_y=({geo.slit_y - half:.4f}, {geo.slit_y + half:.4f})  "
+        f"# the only gap in each wall (width {scene.slit_width:.4f})\n"
+        f"load_size=({T_BAR:.4f}, {T_THICK + T_STEM:.4f})  "
+        "# (bar length, height across bar+stem) - the WHOLE load must clear the gap, not its centre"
     )
 
 

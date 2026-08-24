@@ -25,6 +25,14 @@ htmlcov/
 runs/*/handoffs.jsonl
 runs/*/probes/
 runs/*/embeddings/
+# The handoff dataset itself: hash-stamped Parquet parts plus their index. Raw episode data, never
+# committed - a frozen result is its manifest, metrics, table and figure, not its rows.
+runs/**/*.parquet
+runs/**/index.json
+# Interim substrates: local-pilot and benchmark-smoke episodes are decision inputs, never headline
+# data, so nothing under them is committed (the ladder table itself sits directly in runs/bench).
+runs/local/
+runs/bench/smoke/
 *.npy
 *.joblib
 .embed_cache/

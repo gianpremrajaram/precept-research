@@ -19,10 +19,7 @@ from pathlib import Path
 
 from preceptx.agents.graph import EpisodeRunner
 from preceptx.agents.prompts import PROMPT_VERSION
-from preceptx.config import ExperimentConfig
-from preceptx.data.writer import (
-    dataset_hash as derive_dataset_hash,
-)
+from preceptx.config import ConfigError, ExperimentConfig
 from preceptx.data.writer import (
     load_records,
     register_dataset,
@@ -32,6 +29,7 @@ from preceptx.experiments.sweep import (
     RunSummary,
     SweepConfig,
     build_sweep_manifest,
+    dataset_hash_for,
     episode_id,
     expand,
     sweep_hash,
@@ -48,10 +46,25 @@ def _completed_ids(dataset_hash: str, root: Path) -> set[str]:
     return {r.episode_id for r in load_records(dataset_hash, root=root)}
 
 
-def run_grid(sweep: SweepConfig, client: LLMClient, *, root: Path | str) -> RunSummary:
-    """Run the full grid under ``root``, writing handoffs plus a manifest + summary alongside."""
+def run_grid(
+    sweep: SweepConfig,
+    client_a: LLMClient,
+    client_b: LLMClient | None = None,
+    *,
+    root: Path | str,
+) -> RunSummary:
+    """Run the full grid under ``root``, writing handoffs plus a manifest + summary alongside.
+
+    ``client_b`` serves agent B (DSE-049); omitted means self-play through ``client_a``. The sweep's
+    ``model_b`` and the second client must be set together - a second endpoint with no declared
+    model identity would produce a dataset whose manifest lies about what served role B.
+    """
+    if (sweep.model_b is None) != (client_b is None):
+        raise ConfigError(
+            "sweep.model_b and client_b must be supplied together (or both omitted for self-play)"
+        )
     root = Path(root)
-    d_hash = derive_dataset_hash(sweep_hash(sweep))
+    d_hash = dataset_hash_for(sweep)
     cells = expand(sweep)
     done_ids = _completed_ids(d_hash, root)
     pending = [c for c in cells if episode_id(c) not in done_ids]
@@ -64,7 +77,8 @@ def run_grid(sweep: SweepConfig, client: LLMClient, *, root: Path | str) -> RunS
     )
 
     runner = EpisodeRunner(
-        client,
+        client_a,
+        client_b,
         max_steps=sweep.max_steps,
         channel_cfg=sweep.channel,
         step_cfg=sweep.step,
@@ -93,7 +107,11 @@ def run_grid(sweep: SweepConfig, client: LLMClient, *, root: Path | str) -> RunS
         dataset_hash=d_hash,
         prompt_version=PROMPT_VERSION,
         serving_substrate=os.environ.get("PRECEPTX_SERVING_SUBSTRATE", "unspecified"),
-        endpoint_base_url=client.config.base_url,
+        endpoint_base_url=client_a.config.base_url,
+        endpoint_base_url_b="" if client_b is None else client_b.config.base_url,
+        structured_mode=client_a.config.structured_mode,
+        serving_a=client_a.config,
+        serving_b=None if client_b is None else client_b.config,
     ).model_copy(update={"summary": summary})
     (run_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2))
     (run_dir / "summary.json").write_text(summary.model_dump_json(indent=2))

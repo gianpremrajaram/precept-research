@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 
+from preceptx.config import ConfigError
 from preceptx.data.schema import HandoffRecord
 from preceptx.measure.featuriser import EncoderConfig, Featuriser
 
@@ -126,3 +129,25 @@ def test_batch_encoding_completes_quickly(tmp_path: Path) -> None:
     start = time.perf_counter()
     Featuriser(_cfg(tmp_path), _StubEncoder()).featurise(recs)
     assert time.perf_counter() - start < 5.0
+
+
+# --- DSE-033: the encoder is pinned, and an unpinned one cannot reach a recorded run ------------
+
+
+def test_default_revisions_are_resolved_commit_shas() -> None:
+    cfg = EncoderConfig()
+    assert re.fullmatch(r"[0-9a-f]{40}", cfg.revision)
+    assert re.fullmatch(r"[0-9a-f]{40}", cfg.second_encoder_revision)
+
+
+def test_unpinned_revision_raises_on_the_real_load_path(tmp_path: Path) -> None:
+    # No injected encoder, so embedding falls through to the real load path - which must refuse a
+    # branch name rather than warn and carry on into a recorded run.
+    f = Featuriser(EncoderConfig(revision="main", cache_dir=tmp_path))
+    with pytest.raises(ConfigError, match="unpinned revision"):
+        f.embed_texts(["anything"])
+
+
+def test_stub_path_is_unaffected_by_the_pin_check(tmp_path: Path) -> None:
+    f = Featuriser(EncoderConfig(revision="main", cache_dir=tmp_path), _StubEncoder())
+    assert f.embed_texts(["anything"]).shape == (1, 16)

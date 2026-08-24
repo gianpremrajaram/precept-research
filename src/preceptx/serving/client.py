@@ -47,11 +47,24 @@ class ServingConfig(BaseModel):
     timeout: float = Field(default=60.0, gt=0)
     max_retries: int = Field(default=2, ge=0)
     guided_decoding_backend: Literal["xgrammar", "outlines"] = "xgrammar"
+    # Wire format for schema-constrained decoding (DSE-032). vLLM takes the schema as `guided_json`
+    # in extra_body; an OpenAI-compatible local runtime (the free pre-cluster pilot) takes the
+    # standard `response_format.json_schema`. Both constrain decoding against the SAME schema
+    # object - xgrammar under vLLM, llama.cpp grammars / Outlines locally - so this is a wire-format
+    # difference, not a semantic one. Default keeps served-vLLM behaviour unchanged.
+    structured_mode: Literal["guided_json", "response_format"] = "guided_json"
     # Rendered into the served model's chat template per request (P0-3). The default disables
     # Qwen3's hybrid thinking - greedy decoding in thinking mode is explicitly discouraged by Qwen,
     # and a CoT dump in the A->B message would confound every channel condition. Templates that do
     # not use the variable ignore it; set {} for endpoints that reject unknown body keys.
     chat_template_kwargs: dict[str, Any] = Field(default_factory=lambda: {"enable_thinking": False})
+    # In-band fallback for runtimes that ignore chat_template_kwargs. LM Studio's MLX runtime does:
+    # Qwen3 stays in thinking mode, the reasoning lands in a non-standard `reasoning_content` field
+    # and `content` comes back EMPTY. Qwen3's `/no_think` switch selects the same non-thinking
+    # branch the cluster selects via the template kwarg, so this is a substrate adapter, not a
+    # prompt change - the rendered conversation is what differs between substrates, and it is
+    # recorded per run. Empty (the default) leaves the vLLM path untouched.
+    thinking_switch: str = ""
 
 
 class LLMClient:
@@ -71,13 +84,43 @@ class LLMClient:
         return self._config
 
     def _payload(self, messages: list[ChatMessage]) -> list[ChatCompletionMessageParam]:
-        return cast("list[ChatCompletionMessageParam]", [m.model_dump() for m in messages])
+        payload = [m.model_dump() for m in messages]
+        if self._config.thinking_switch:  # appended to the final user turn, where Qwen3 reads it
+            last_user = next(
+                (i for i in reversed(range(len(payload))) if payload[i]["role"] == "user"), None
+            )
+            if last_user is not None:
+                payload[last_user]["content"] += f" {self._config.thinking_switch}"
+        return cast("list[ChatCompletionMessageParam]", payload)
 
     def _template_kwargs(self) -> dict[str, Any]:
         """The chat-template extra-body payload, empty when no kwargs are configured."""
         if not self._config.chat_template_kwargs:
             return {}
         return {"chat_template_kwargs": self._config.chat_template_kwargs}
+
+    def _structured_kwargs(self, schema: dict[str, Any]) -> dict[str, Any]:
+        """Request kwargs carrying ``schema`` in whichever wire format the endpoint speaks.
+
+        The schema object itself is passed through untouched in both branches, so the constraint
+        the two backends enforce is identical and a schema-adherence difference between them is a
+        property of the runtime, not of this code (DSE-005 reports that rate).
+        """
+        if self._config.structured_mode == "guided_json":
+            return {
+                "extra_body": {
+                    "guided_json": schema,
+                    "guided_decoding_backend": self._config.guided_decoding_backend,
+                    **self._template_kwargs(),
+                }
+            }
+        return {
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "action", "schema": schema, "strict": True},
+            },
+            "extra_body": self._template_kwargs() or None,
+        }
 
     def chat(self, messages: list[ChatMessage], *, max_tokens: int | None = None) -> str:
         """Return the assistant message content for a chat completion.
@@ -99,8 +142,14 @@ class LLMClient:
                 f"chat completion failed for model {self._config.model!r}: {exc}"
             ) from exc
         content = response.choices[0].message.content
-        if content is None:
-            raise ServingError("chat completion returned no content")
+        # Empty is as broken as absent and far more dangerous: a runtime that spends the whole
+        # budget in a reasoning channel returns "" with a 200, and an episode of empty A-messages
+        # would look like a completed run rather than a failed one.
+        if content is None or not content.strip():
+            raise ServingError(
+                "chat completion returned no content; if the endpoint reports reasoning tokens, "
+                "it is ignoring chat_template_kwargs - set ServingConfig.thinking_switch"
+            )
         if "<think>" in content:
             raise ServingError(
                 "thinking-mode output detected ('<think>' in the completion); disable it via "
@@ -115,7 +164,7 @@ class LLMClient:
         *,
         max_tokens: int | None = None,
     ) -> dict[str, Any]:
-        """Return a JSON object constrained to ``schema`` via vLLM guided decoding."""
+        """Return a JSON object constrained to ``schema`` by the endpoint's guided decoding."""
         try:
             response = self._client.chat.completions.create(
                 model=self._config.model,
@@ -123,11 +172,7 @@ class LLMClient:
                 temperature=self._config.temperature,
                 seed=self._config.seed,
                 max_tokens=max_tokens or self._config.max_tokens,
-                extra_body={
-                    "guided_json": schema,
-                    "guided_decoding_backend": self._config.guided_decoding_backend,
-                    **self._template_kwargs(),
-                },
+                **self._structured_kwargs(schema),
             )
         except openai.APIError as exc:
             raise ServingError(
@@ -145,10 +190,31 @@ class LLMClient:
         return cast("dict[str, Any]", parsed)
 
     def health_check(self) -> bool:
-        """Return True if ``/v1/models`` is reachable and a smoke completion succeeds."""
+        """Return True if the endpoint serves the configured model and a smoke completion succeeds.
+
+        Two pre-flight failures are caught here rather than mid-sweep. The ping asks for a few
+        tokens rather than one, because a runtime stuck in thinking mode returns an empty
+        completion. And the served ids are *compared* against ``config.model`` rather than merely
+        fetched: pointed at a leftover job serving a different tier, every call would succeed and
+        the manifest would record the tier that was configured instead of the one that answered.
+        A wrong recorded revision is worse than a missing one (DSE-002).
+        """
         try:
-            self._client.models.list()
-            self.chat([ChatMessage(role="user", content="ping")], max_tokens=1)
+            served = [model.id for model in self._client.models.list().data]
+            if self.config.model not in served:
+                logger.warning(
+                    "serving health check failed: %s serves %s, not the configured %r",
+                    self.config.base_url,
+                    served or "no model",
+                    self.config.model,
+                )
+                return False
+            self.chat(
+                [
+                    ChatMessage(role="user", content="Reply with the word pong."),
+                ],
+                max_tokens=16,
+            )
         except (openai.APIError, ServingError) as exc:
             logger.warning("serving health check failed: %s", exc)
             return False

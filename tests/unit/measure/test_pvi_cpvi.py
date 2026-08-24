@@ -11,9 +11,13 @@ from pydantic import ValidationError
 
 from preceptx.measure.pvi_cpvi import (
     ProbeConfig,
+    _cpvi_one,
     _make_splitter,
+    control_labels,
+    control_task_cpvi,
     cpvi,
     cpvi_continuous,
+    cpvi_with_sd,
     estimate,
     shuffled_message_cpvi,
 )
@@ -131,3 +135,81 @@ def test_mlp_probe_path_runs_and_is_finite() -> None:
 def test_n_splits_below_two_is_rejected() -> None:
     with pytest.raises(ValidationError, match="n_splits"):
         ProbeConfig(n_splits=1)
+
+
+# --- DSE-043: control tasks and probe selectivity ---------------------------------------------
+
+
+def test_control_task_cpvi_near_zero_and_selectivity_positive() -> None:
+    """A well-specified probe cannot manufacture information from random labels."""
+    e_s, e_m, y, g = make_binary("informative")
+    real = float(np.mean(cpvi(e_s, e_m, y, g, CFG)))
+    control = float(np.mean(control_task_cpvi(e_s, e_m, y, g, CFG)))
+    assert abs(control) < 0.06  # indistinguishable from zero at this capacity
+    assert real - control > 0.1  # selectivity: the real score is not probe artefact
+
+
+def test_over_capacity_probe_shows_control_cpvi_above_zero() -> None:
+    """The check detects what it is meant to detect: capacity manufacturing information.
+
+    An almost-unregularised probe on few samples at high dimension scores random labels well above
+    zero, which is exactly the reading PREREGISTRATION §5's capacity ladder fires on.
+    """
+    rng = np.random.default_rng(0)
+    n, d = 30, 64
+    e_s, e_m = rng.standard_normal((n, d)), rng.standard_normal((n, d))
+    y = rng.integers(0, 2, n)
+    g = np.repeat(np.arange(6), 5).astype(int)
+    over = ProbeConfig(n_splits=3, c=1e4)
+    assert float(np.mean(control_task_cpvi(e_s, e_m, y, g, over))) > 0.1
+
+
+def test_control_labels_are_seed_reproducible_and_match_the_base_rate() -> None:
+    y = np.array([0] * 30 + [1] * 70)
+    a, b = control_labels(y, 7), control_labels(y, 7)
+    assert np.array_equal(a, b)  # determinism
+    assert not np.array_equal(a, control_labels(y, 8))  # and the seed actually varies it
+    assert abs(float(a.mean()) - 0.7) < 0.15  # drawn at the observed base rate
+
+
+def test_estimate_reports_control_and_selectivity() -> None:
+    e_s, e_m, y, g = make_binary("informative")
+    res, _ = estimate(e_s, e_m, y, g, CFG)
+    assert res.control_mean_cpvi is not None
+    assert res.selectivity is not None
+    assert res.selectivity == pytest.approx(res.mean_cpvi - res.control_mean_cpvi)
+
+
+# --- DSE-044: repeated cross-fit stabilisation -------------------------------------------------
+
+
+def test_n_repeats_one_reproduces_the_unrepeated_estimator() -> None:
+    """Repeat 0 is the canonical fold assignment, so the default cannot shift any recorded score."""
+    e_s, e_m, y, g = make_binary("informative")
+    mean, sd = cpvi_with_sd(e_s, e_m, y, g, ProbeConfig(n_splits=5, n_repeats=1))
+    assert np.array_equal(mean, cpvi(e_s, e_m, y, g, ProbeConfig(n_splits=5)))
+    assert np.all(sd == 0.0)  # one repeat has no spread
+
+
+def test_repeated_cross_fits_reduce_fold_noise() -> None:
+    """Averaging over fold assignments damps the per-handoff noise a single cross-fit carries.
+
+    Each draw uses a disjoint set of fold seeds, so the comparison is one cross-fit against the
+    mean of five - the estimator DSE-044 actually swaps in, not a reseeding of the same folds.
+    """
+    e_s, e_m, y, g = make_binary("noise")  # no real signal: what moves is the fold assignment
+    cfg = ProbeConfig(n_splits=5)
+    singles = [_cpvi_one(e_s, e_m, y, g, cfg, s) for s in (1, 2, 3)]
+    fives = [
+        np.mean([_cpvi_one(e_s, e_m, y, g, cfg, f) for f in block], axis=0)
+        for block in ((10, 11, 12, 13, 14), (20, 21, 22, 23, 24), (30, 31, 32, 33, 34))
+    ]
+    assert np.std(fives, axis=0).mean() < np.std(singles, axis=0).mean()
+
+
+def test_repeat_spread_is_reported_per_handoff() -> None:
+    e_s, e_m, y, g = make_binary("informative")
+    mean, sd = cpvi_with_sd(e_s, e_m, y, g, ProbeConfig(n_splits=5, n_repeats=4))
+    assert len(sd) == len(mean) == len(y)
+    assert sd.mean() > 0.0  # distinct fold assignments really do disagree
+    assert np.all(np.isfinite(sd))

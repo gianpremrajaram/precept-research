@@ -18,10 +18,10 @@ import respx
 from numpy.typing import NDArray
 
 from preceptx.config import ModelConfig
-from preceptx.data.writer import dataset_hash, load_records
+from preceptx.data.writer import load_records
 from preceptx.experiments.pilot import run_pilot, write_pilot_report
 from preceptx.experiments.runner import run_grid
-from preceptx.experiments.sweep import SweepConfig, sweep_hash
+from preceptx.experiments.sweep import SweepConfig, dataset_hash_for
 from preceptx.measure.featuriser import EncoderConfig, Featuriser
 from preceptx.serving.client import LLMClient, ServingConfig
 
@@ -81,7 +81,7 @@ def test_pilot_runs_on_a_small_sweep_and_writes_report(tmp_path: Path) -> None:
     run_grid(
         sweep, LLMClient(ServingConfig(model="m", base_url=BASE_URL, max_retries=0)), root=tmp_path
     )
-    d_hash = dataset_hash(sweep_hash(sweep))
+    d_hash = dataset_hash_for(sweep)
     records = load_records(d_hash, root=tmp_path)
 
     feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "embed"), encoder=_StubEncoder())

@@ -23,10 +23,11 @@ import numpy as np
 from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field
 
+from preceptx.analysis.stats import AnalysisProvenance, build_provenance
 from preceptx.config import ConfigError
 from preceptx.data.schema import Condition, HandoffRecord
 from preceptx.measure.featuriser import Featuriser
-from preceptx.measure.pvi_cpvi import ProbeConfig, cpvi
+from preceptx.measure.pvi_cpvi import ProbeConfig, control_task_cpvi, cpvi
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,9 @@ class PilotConfig(BaseModel):
     g3_abs_tol: float = Field(default=0.5, gt=0)  # a message number within this of a true one ...
     g3_rel_tol: float = Field(default=0.05, ge=0)  # ... or this fraction of it, is grounded
     min_seeds_for_proceed: int = Field(default=3, ge=1)  # proceed needs >= this many seeds
-    cpvi_probe: ProbeConfig = Field(default_factory=ProbeConfig)
+    # R = 5 repeated cross-fits, the pre-registered value (PREREGISTRATION §5): a single
+    # cross-fit carries fold noise that can flip an individual handoff's sign.
+    cpvi_probe: ProbeConfig = Field(default_factory=lambda: ProbeConfig(n_repeats=5))
 
 
 class GateResult(BaseModel):
@@ -74,6 +77,10 @@ class GateResult(BaseModel):
     threshold: float
     detail: dict[str, float] = Field(default_factory=dict)
     note: str = ""
+    # A gate is *unassessable* when the cell it ran on cannot move its quantity - distinct from a
+    # gate the data failed. An unassessable gate never yields "proceed" and never escalates to the
+    # fallback ladder, because a cell that cannot move the quantity yields no evidence (E3-local).
+    assessable: bool = True
 
 
 class PilotReport(BaseModel):
@@ -85,6 +92,9 @@ class PilotReport(BaseModel):
     n_episodes: int
     n_seeds: int
     attempt: int
+    # Encoder + probe + code identity behind the G2 CPVI number (P1-8). The re-gate verdict is a
+    # result of record, and a result with an unrecorded revision is not a result (CLAUDE.md).
+    provenance: AnalysisProvenance | None = None
     gates: list[GateResult]
     recommendation: Recommendation
     recommendation_note: str = ""  # why a verdict was held back (e.g. too few seeds to proceed)
@@ -137,23 +147,32 @@ def _progress_per_handoff(records: list[HandoffRecord]) -> NDArray[np.int_]:
 
 
 def g1_capability(records: list[HandoffRecord], cfg: PilotConfig) -> GateResult:
-    """G1: the C0 self-play episode success rate must clear ``g1_success_floor``."""
+    """G1: the **easy** C0 self-play episode success rate must clear ``g1_success_floor``.
+
+    Easy only, as pre-registered ("C0 self-play episode success >= 0.5 at easy difficulty"). G1 asks
+    a single question - can the pair coordinate at all on a clean channel - and the hard geometry is
+    *designed* to be hard, so averaging it in conflates that question with the difficulty gradient
+    G2 exists to measure. On the pilot cell (C0/C1/C4 x easy/hard) the mixed average would sit at
+    0.5 for a pair that solves every easy episode and no hard one: a pass on the floor by accident.
+    """
     _require_labelled(records)
     success = _episode_success(records)
-    condition = _episode_condition(records)
-    c0 = [ep for ep, c in condition.items() if c == "C0"]
-    if not c0:
-        raise ConfigError("G1 needs C0 episodes; none present in the dataset")
-    rate = float(np.mean([success[ep] for ep in c0]))
+    c0_easy = sorted(
+        {r.episode_id for r in records if r.condition == "C0" and r.difficulty == "easy"}
+    )
+    if not c0_easy:
+        raise ConfigError("G1 needs easy C0 episodes; none present in the dataset")
+    rate = float(np.mean([success[ep] for ep in c0_easy]))
     return GateResult(
         name="G1 capability",
         passed=rate >= cfg.g1_success_floor,
         value=rate,
         threshold=cfg.g1_success_floor,
         detail={
-            "n_c0_episodes": float(len(c0)),
-            "n_c0_success": float(sum(success[e] for e in c0)),
+            "n_easy_c0_episodes": float(len(c0_easy)),
+            "n_easy_c0_success": float(sum(success[e] for e in c0_easy)),
         },
+        note="easy C0 only; the hard cell is G2's business, not G1's",
     )
 
 
@@ -175,21 +194,35 @@ def g2_signal(records: list[HandoffRecord], featuriser: Featuriser, cfg: PilotCo
     hard_rate = float(np.mean([success[e] for e in hard_eps]))
     success_gap = c0_rate - hard_rate
 
-    subset = [r for r in records if r.condition in {"C0", hard}]
-    y = _progress_per_handoff(subset)
+    # The probe is fitted **once over the whole cell** and the contrast is taken between the
+    # resulting per-instance scores. Refitting on a C0+hard subset is a different estimator from the
+    # one the RQ1 analysis uses, throws away the other conditions' rows, and shifts the class
+    # balance the probe sees: on E3-local it read the C0-minus-C4 gap as +0.012 bits where the
+    # whole-cell fit read +0.211.
+    y = _progress_per_handoff(records)
     if len(np.unique(y)) < 2:
         return GateResult(
             name="G2 signal",
             passed=False,
+            assessable=False,  # not a failure: with one progress class CPVI has nothing to predict
             value=success_gap,
             threshold=cfg.g2_min_success_gap,
             detail={"c0_success": c0_rate, "hard_success": hard_rate, "success_gap": success_gap},
-            note=f"hard={hard}; CPVI gap unmeasurable (single progress class in C0+hard subset)",
+            note=(
+                f"UNASSESSABLE: hard={hard}; every handoff carries the same progress label, so "
+                "CPVI is undefined. Widen the cell or the horizon and re-gate."
+            ),
         )
-    e_s, e_m = featuriser.featurise(subset)
-    scores = cpvi(e_s, e_m, y, _groups(subset), cfg.cpvi_probe)
-    c0_mask = np.array([r.condition == "C0" for r in subset])
-    cpvi_gap = float(np.mean(scores[c0_mask]) - np.mean(scores[~c0_mask]))
+    e_s, e_m = featuriser.featurise(records)
+    groups = _groups(records)
+    scores = cpvi(e_s, e_m, y, groups, cfg.cpvi_probe)
+    # The capacity rule (PREREGISTRATION §5) fires off this number, and the re-gate report is where
+    # it is read, so G2 carries it rather than leaving it to the RQ1 analysis.
+    control = float(np.mean(control_task_cpvi(e_s, e_m, y, groups, cfg.cpvi_probe)))
+    cond = np.array([r.condition for r in records])
+    c0_mask = cond == "C0"
+    hard_mask = cond == hard
+    cpvi_gap = float(np.mean(scores[c0_mask]) - np.mean(scores[hard_mask]))
 
     passed = success_gap >= cfg.g2_min_success_gap and cpvi_gap >= cfg.g2_min_cpvi_gap
     return GateResult(
@@ -203,8 +236,10 @@ def g2_signal(records: list[HandoffRecord], featuriser: Featuriser, cfg: PilotCo
             "success_gap": success_gap,
             "cpvi_gap": cpvi_gap,
             "c0_mean_cpvi": float(np.mean(scores[c0_mask])),
-            "hard_mean_cpvi": float(np.mean(scores[~c0_mask])),
+            "hard_mean_cpvi": float(np.mean(scores[hard_mask])),
             "min_cpvi_gap": cfg.g2_min_cpvi_gap,
+            "control_mean_cpvi": control,
+            "selectivity": float(np.mean(scores)) - control,
         },
         note=f"hard={hard}; gate requires both the success gap and the CPVI gap to clear",
     )
@@ -224,14 +259,20 @@ def _numeric_leaves(obj: object) -> list[float]:
 
 
 def _record_grounding(rec: HandoffRecord, cfg: PilotConfig) -> float:
-    """Fraction of the message's numbers that match a true state number within tolerance.
+    """Fraction of the message's numbers that match a number the sender was shown, within tolerance.
 
     1.0 when the message cites no numbers (it claims no geometry, so it cannot hallucinate any).
+
+    The truth set is the sender's *whole* view - the numeric leaves of ``state`` plus every number
+    in ``state_str`` - not ``state`` alone. ``state`` carries only the load's body state, so scoring
+    against it penalised a sender for correctly citing the wall abscissae and the slit interval that
+    the serialiser itself printed: G3 read 0.720 on a run whose messages fabricated nothing. Taking
+    the truth from what the sender was shown also cannot rot when the serialiser gains a key.
     """
     mentioned = [float(m) for m in _NUM.findall(rec.message_delivered)]
     if not mentioned:
         return 1.0
-    truth = _numeric_leaves(rec.state)
+    truth = _numeric_leaves(rec.state) + [float(m) for m in _NUM.findall(rec.state_str)]
     grounded = sum(
         any(abs(m - t) <= max(cfg.g3_abs_tol, cfg.g3_rel_tol * abs(t)) for t in truth)
         for m in mentioned
@@ -262,6 +303,14 @@ def _recommendation(
     gates: list[GateResult], attempt: int, n_seeds: int, cfg: PilotConfig
 ) -> tuple[Recommendation, str]:
     """Verdict plus the reason it was held back, if any. Gates first, then the seed-count floor."""
+    blocked = [g for g in gates if not g.assessable]
+    if blocked:
+        return "retune_once", (
+            f"{', '.join(g.name for g in blocked)} could not be assessed on this cell, so no "
+            "verdict is available: an unassessable gate is not a failed one and does not spend the "
+            "retune or invoke the fallback. Fix the cell and re-gate. "
+            + " ".join(g.note for g in blocked if g.note)
+        )
     if not all(g.passed for g in gates):
         return ("retune_once" if attempt <= 1 else "fallback"), ""  # one retune allowed, then pivot
     if n_seeds < cfg.min_seeds_for_proceed:
@@ -297,6 +346,7 @@ def run_pilot(
         n_episodes=len(_episode_success(records)),
         n_seeds=n_seeds,
         attempt=attempt,
+        provenance=build_provenance(featuriser.cfg, cfg.cpvi_probe),
         gates=gates,
         recommendation=recommendation,
         recommendation_note=note,
@@ -319,6 +369,16 @@ def render_report(report: PilotReport) -> str:
         "",
         f"- dataset: `{report.dataset_hash or '(unnamed)'}`",
         f"- episodes: {report.n_episodes} | seeds: {report.n_seeds} | attempt: {report.attempt}",
+        *(
+            []
+            if report.provenance is None
+            else [
+                f"- encoder: `{report.provenance.encoder_name}"
+                f"@{report.provenance.encoder_revision}` | probe: "
+                f"{report.provenance.probe.probe} (C={report.provenance.probe.c}, "
+                f"R={report.provenance.probe.n_repeats})"
+            ]
+        ),
         f"- **recommendation: {_ACTION_TEXT[report.recommendation]}**",
         *([f"- _{report.recommendation_note}_"] if report.recommendation_note else []),
         "",
@@ -326,7 +386,8 @@ def render_report(report: PilotReport) -> str:
         "| --- | --- | --- | --- |",
     ]
     lines += [
-        f"| {g.name} | {'PASS' if g.passed else 'FAIL'} | {g.value:.3f} | {g.threshold:.3f} |"
+        f"| {g.name} | {('PASS' if g.passed else 'FAIL') if g.assessable else 'UNASSESSABLE'} "
+        f"| {g.value:.3f} | {g.threshold:.3f} |"
         for g in report.gates
     ]
     lines.append("")

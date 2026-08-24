@@ -29,6 +29,11 @@ dependencies = [
   "opentelemetry-sdk>=1.25,<2",
 ]
 
+# The console entry points (DSE-031): `uv run preceptx-pilot --dry-run` from a clean checkout.
+[project.scripts]
+preceptx-pilot = "preceptx.experiments.cli:pilot"
+preceptx-rq1 = "preceptx.experiments.cli:rq1"
+
 [project.optional-dependencies]
 # vLLM serving (Myriad GPU nodes only); not needed by the analysis code.
 serving = ["vllm>=0.6,<1"]

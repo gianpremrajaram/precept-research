@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from hydra import compose, initialize_config_dir
 from hypothesis import given
 from hypothesis import strategies as st
@@ -86,3 +88,19 @@ def test_valid_combinations_always_load(
     )
     assert config.condition == condition
     assert config.seed == seed
+
+
+@pytest.mark.parametrize("tier_file", sorted((CONFIGS_DIR / "model").glob("*.yaml")))
+def test_tier_config_pins_a_full_commit_sha(tier_file: Path) -> None:
+    """The Myriad jobscripts read `name` and `revision` straight out of these files.
+
+    Since DSE-050 the served identity is derived from the tier config rather than passed on the
+    qsub line, precisely so it cannot disagree with what the manifest records. That makes the
+    shape of these files a contract the shell depends on: a missing key breaks the launch, and a
+    short or branch-name revision serves a moving target under a manifest claiming a pin.
+    """
+    model = yaml.safe_load(tier_file.read_text())["model"]
+    assert model["name"], f"{tier_file.name} has no model.name"
+    assert re.fullmatch(r"[0-9a-f]{40}", str(model["revision"])), (
+        f"{tier_file.name} revision {model['revision']!r} is not a full 40-char commit SHA"
+    )

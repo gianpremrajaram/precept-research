@@ -15,6 +15,958 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
+## 2026-08-24 — The second length control, and why it is a sensitivity analysis rather than an adjusted effect
+
+- **Area:** RQ1 analysis — the pre-registered controls for the length/condition confound (H1, H2).
+- **Status:** pre-freeze, no bf16 data. The matching rule is fixed here, before the run of record,
+  which is the only point at which choosing it is not a researcher degree of freedom.
+
+### Trigger
+
+PREREGISTRATION §5 pre-registers **two** length controls and states that both are reported. Only
+one existed. Length enters the outcome model as a covariate (`path_b_length_controlled`) and is
+partialled out of the CPVI-progress correlation (`partial_spearman_length`); the promised
+**length-matched subsample comparison** had no implementation and no ticket.
+
+### Finding
+
+C1 caps message length, so length is confounded with condition *by construction* — this is not an
+incidental nuisance covariate but a direct consequence of the manipulation. A covariate adjustment
+handles that only under a functional-form assumption: it extrapolates a fitted length effect into
+regions where one arm supplies no episodes at all. With C1 shifting the whole length distribution
+down, that extrapolation is doing real work in the estimate, and nothing in the reported numbers
+would show how much.
+
+### Impact
+
+"CPVI is just message length" is the first sceptical question this design invites, and C1 is the
+condition that makes it sharpest. A single model-based adjustment is a weaker answer than the
+pre-registration promises, and the shortfall would only have surfaced at examination.
+
+### Risk reduced
+
+An H1/H2 result whose only defence against the length confound rests on an extrapolation the
+reported numbers do not expose.
+
+### The fix
+
+`overlap_restricted_contrast` in `analysis/stats.py`, wired into `RQ1Result.length_matched` as a
+per-condition Ck-vs-C0 contrast on **both** success and CPVI. Episodes are stratified into
+equal-count quantile bins of episode-mean delivered-message tokens; differences are taken only
+inside bins holding at least `min_per_cell` episodes of *both* conditions, then size-weighted
+across bins. Defaults: 3 bins, floor of 2.
+
+Quantile strata rather than nearest-neighbour caliper matching, deliberately. At the E3 cell's six
+episodes per condition a caliper has too little support and can silently collapse the comparison to
+one or two idiosyncratic pairs. Coarse strata fail *visibly* instead: `n_bins` falls, `n_kept`
+falls, and where the distributions do not meet at all the result returns `interpretable=False` and
+a NaN delta rather than a confident number. `delta_unrestricted` is reported alongside every
+restricted delta so the restriction's effect is always legible.
+
+### Result of the fix
+
+Five unit tests pin the behaviour, including the load-bearing known-answer case: when the outcome is
+a deterministic function of length alone and the arms differ only in their length distributions, the
+restricted delta is 0.0 while the unrestricted delta is not.
+
+### So what
+
+**This is reported as an overlap-restricted, length-adjusted sensitivity analysis — never as a
+clean estimate of the channel effect with length removed.** The restriction is what makes it
+informative and equally what makes it partial: the retained episodes are a non-random subset of both
+arms, so the contrast generalises only to the lengths both arms actually reach. That framing is
+carried in the model docstring, in `ANALYSIS_PROTOCOL["length_control"]`, and in PREREGISTRATION §5,
+so it cannot be quietly upgraded to a causal claim in the write-up.
+
+The general lesson: where a manipulation *creates* a confound rather than merely admitting one,
+model-based adjustment and overlap restriction answer different questions, and reporting only the
+first flatters the result.
+
+---
+
+## 2026-08-24 — The served revision has to come from the file the manifest reads
+
+- **Area:** provenance — what a recorded model revision can be trusted to mean.
+- **Status:** pre-freeze, closed before the run of record.
+
+### Trigger
+
+Reading the Myriad jobscripts end to end before the first cluster session. Both took `REVISION` on
+the `qsub` line, copied by hand from `configs/model/<tier>.yaml`. The manifest records the revision
+from that config file. Nothing compared them.
+
+### Finding
+
+A typo, a stale copy-paste, or a `TIER` change without a matching `REVISION` change would serve one
+checkpoint while the manifest recorded another — and **no check in the repo could detect it.** The
+client's health check compares the served *model id*, which was enough to catch a wrong tier, but
+`/v1/models` carries no revision at all. Every artefact would have been well-formed and the run
+would have looked clean.
+
+### Impact
+
+CLAUDE.md's rule is that a result with an unrecorded revision is not a result. A *wrongly* recorded
+one is worse: it survives audit. The bf16 re-gate is the verdict of record for the Y/V freeze, so
+this is the run where provenance matters most.
+
+### Risk reduced
+
+A frozen result attributing episodes to a checkpoint that did not produce them.
+
+### The fix
+
+`scripts/myriad/_common.sh:resolve_tier` reads `name` and `revision` from `configs/model/<TIER>.yaml`
+— the same file the manifest records them from — so the two cannot disagree. `MODEL`/`REVISION`
+survive as overrides for the 70B-AWQ tier, which has no config file until DSE-005 pins its repo id,
+and an override contradicting the config prints a warning naming both values, because in a job log a
+deliberate override and a typo are otherwise indistinguishable. A unit test asserts every tier config
+carries a full 40-character SHA, the invariant the shell now depends on.
+
+### Result of the fix
+
+`REVISION=` disappears from the runbook: `qsub -P <project> scripts/myriad/pilot.sh` is the whole
+command, and `-v TIER=qwen8b` the whole fallback.
+
+### So what
+
+Two values that must agree should have one source, not a convention for keeping them in step. The
+tell was that the *only* thing standing between correct and silently-wrong provenance was a human
+copying a 40-character hex string correctly, under queue pressure, at the start of a session.
+
+---
+
+## 2026-08-24 — The gate's retry has to say something new: a versioned feedback template, and why not temperature
+
+- **Area:** RQ3b gate design — the retry path of the causal arm (H6), and what the four arms are
+  allowed to differ in.
+- **Status:** pre-freeze, no data. This is a design decision recorded *before* any gate result
+  exists, which is the only time it can be made honestly.
+
+### Trigger
+
+DSE-018 (runtime gate integration) was written as: score the handoff, block it if the statistic
+falls below the calibrated threshold, re-prompt A, retry up to a bound. Reading it against the
+serving configuration — greedy decoding, `temperature=0`, fixed seed, pinned revision — the retry
+step is a **fixed point**. The same prompt yields the same message, therefore the same statistic,
+therefore the same block, for every one of the bounded retries.
+
+### Finding
+
+The arm would have passed its own unit tests. A test that mocks the client and asserts "blocked
+handoffs are retried and recorded" passes whether or not the retry changes anything, because the
+mock returns what it is told to. Live, the gate would have blocked, retried N times to no effect,
+and then either forced the original message through or spent the step — and the causal contrast
+would have measured the cost of *stalling*, not the value of *blocking low-information handoffs*.
+That is not a null result; it is a result about the wrong quantity, and it would have been very hard
+to detect after the fact because every artefact would have looked well-formed.
+
+### Impact
+
+H6 is one of the two hypotheses that make the gate more than a measurement exercise. RQ3b is one of
+the two pre-planned arms (with RQ3a) that carry the dissertation if RQ1's gradient is weak. A
+vacuous retry does not merely weaken H6, it silently redefines it.
+
+### Risk reduced
+
+A treatment that appears implemented, passes CI, and measures something other than what its
+hypothesis names.
+
+### Correction path
+
+The retry prompt must differ in **content**. Two ways to achieve that:
+
+1. **Raise the temperature on the retry.** Escapes the fixed point with a one-line change.
+2. **Append a feedback template**, telling A what a usable instruction has to contain.
+
+Option 1 is **rejected, and the rejection is recorded here and in PREREGISTRATION §6 before any gate
+data exists**, on two grounds. First, it breaks the determinism story mid-episode: the run would be
+greedy everywhere *except* at exactly the handoffs the gate touched, so the arm that gets the
+treatment is also the only arm with sampling noise, and the repo's "seed-pinned, revision-pinned"
+claim would need a carve-out precisely where the causal claim lives. Second, and worse, it confounds
+the treatment: a post-retry improvement could be the feedback, or it could be the plain fact of
+having sampled twice. H6's four arms (gate on / random-rate-matched / always-retry / off) are built
+to differ in one thing at a time, and the `always-retry` arm exists specifically to price the
+"retried at all" effect — which only works if retrying does not also change the decoding regime.
+
+### The fix
+
+`GATE_FEEDBACK` in `agents/prompts.py`, appended to A's user turn on a blocked retry and nowhere
+else. It instructs A to state, from the numbers in front of it, the push direction, whether the load
+must rotate first and which way, and the direction of the goal — the three things the task's own
+failure analysis (design log, the v4 prompt bump) showed A omitting when its messages went generic.
+
+Three properties make it auditable rather than an implementation detail:
+
+- **Versioned separately from `PROMPT_VERSION`.** `GATE_FEEDBACK_VERSION` is its own constant
+  because the template is part of the *treatment*, not the base task: it reaches a model only on a
+  blocked retry, so a wording change re-shapes the RQ3b arm while leaving every ungated dataset
+  byte-identical. One version bumping the other would be wrong in both directions.
+- **Recorded in every run manifest**, beside `PROMPT_VERSION`.
+- **Deliberately absent from `dataset_hash_for`.** The gate is unbuilt (DSE-018), so today the
+  template reaches no model; folding it into the hash would re-key every existing dataset over a
+  string nothing reads. It must join the dataset hash when DSE-018 makes retries live — recorded
+  here and in the code comment so that step is not forgotten rather than merely deferred.
+
+### Result
+
+`prompt_a(state, gate_feedback=False)` is byte-identical to the previous `prompt_a(state)`, pinned
+by a test, so no existing dataset shifts. A blocked retry issues a demonstrably different user turn,
+also pinned by a test — which is the assertion that would have caught the vacuous version.
+
+### So-what
+
+The general shape is worth naming: **a treatment whose mechanism depends on the decoding regime has
+to be checked against that regime, not only against its own tests.** Greedy decoding is chosen here
+for reproducibility, and reproducibility is exactly what made the retry inert. The tests that would
+have passed were not bad tests; they tested the plumbing, and the defect was in the physics. Where a
+hypothesis says "intervening changes the outcome", at least one test has to assert that the
+intervention changes the *input to the model*, not merely that the code path ran.
+
+---
+
+## 2026-08-24 — Freezing the probe: a control task, repeated cross-fits, and a wider re-gate cell
+
+- **Area:** probe family *V* and its audit (control-task selectivity), per-handoff score stability
+  (repeated cross-fits), the message-length confound, and the size of the E3 re-gate cell.
+- **Status:** pre-freeze. Every number below comes from re-scoring the E3-local v4 dataset
+  (`c0bd4d7499f01d97`, 599 handoffs, 24 episodes) with **no new model calls**
+  (`runs/local/c0bd4d7499f01d97-report/rescore_frozen_estimator.json`).
+
+### Trigger
+
+The two remaining tickets that block the Y/V freeze — DSE-043 (control tasks) and DSE-044 (repeated
+cross-fits and length control) — were scheduled after the Myriad bf16 re-gate on the grounds that
+they block F0 and not the gate. That ordering is wrong. The re-gate is the **verdict of record**; if
+the estimator gains selectivity and per-handoff stability afterwards, the recorded verdict was
+produced by a different estimator from the one the thesis freezes, and the choice is then between
+paying a second GPU hour and explaining a mismatch in the methods chapter. Both tickets are pure CPU
+work with no allocation and no queue. They were built first.
+
+### Finding
+
+**1. The probe family had no selectivity evidence.** Probe accuracy alone cannot distinguish "the
+representation encodes this" from "the probe learned the task" (Hewitt & Liang, EMNLP 2019). At
+1,536-dimensional concatenated features on 599 handoffs that is a live objection, and the held-out
+AUROC monitor does not answer it: AUROC says the probe generalises on *these* labels, not that it
+would fail on labels carrying no signal. Measured with random labels at the observed base rate,
+through the same splitter and probe family: **control CPVI = −0.006 bits** pooled, every condition
+between −0.011 and −0.003. Negative, as the pre-registered directional prediction said it must be —
+`g_cond` carries twice the features, so against noise it overfits harder and scores *worse* held
+out. Selectivity is therefore essentially the whole score: **+0.072 bits** pooled, **+0.187** in C0.
+The check is not inert: an almost-unregularised probe at n = 30, d = 128 reads **+0.93**, and an
+over-capacity MLP **+1.39**, so the capacity ladder has something to fire on when it should.
+
+**2. A single cross-fit carries more per-handoff noise than the smallest effect being claimed.**
+Averaging over five fold assignments, the mean across-repeat SD per handoff is **0.042 bits**. C3's
+entire mean CPVI is **+0.058**. Those per-instance scores are not decorative — they are the mediator
+in H2 and the input to all of RQ2, and an instance whose score moves ±0.042 by fold assignment can
+change sign between analyses. Pooled mean CPVI itself moves from +0.078 (canonical assignment) to
+**+0.066** (five-assignment mean): fold choice was worth **16%** of the pooled score.
+
+**3. Message length does not explain CPVI.** "CPVI is just message length" is the first sceptical
+question the design invites, and C1 manipulates length directly, so the answer belongs in the
+protocol rather than in a rebuttal. Spearman(CPVI, delivered token count) = **−0.085** — no monotone
+relationship in either direction. The partial Spearman of CPVI with progress given length is −0.006.
+
+**4. G1 rests on three episodes.** The re-gate cell was seeds 0–2, so G1 — the gate that has already
+failed once, and the only one bf16 can plausibly flip — is a three-episode read. A design whose true
+easy-C0 success rate is 0.67 fails a ≥ 0.5 threshold on three episodes about a third of the time.
+
+### Impact
+
+Without (1) the freeze would have covered a probe family with no evidence that it cannot manufacture
+information; the objection is standard and would have been raised at viva with no answer in the
+artefact. Without (2) every per-handoff score in the mediation and in RQ2 would carry fold noise of
+the same order as the effects being reported. Without (4) the re-gate risks spending its one retune
+on sampling noise.
+
+### Risk reduced
+
+R6-adjacent (measurement validity): the probe family now carries a falsifiable selectivity audit
+with a numeric firing rule and a pre-specified remedy ladder, and the per-handoff scores carry a
+reported stability. The estimator that produces the re-gate verdict is the estimator that gets
+frozen at F0 — no post-hoc substitution.
+
+### Correction path
+
+Written in this order, deliberately: the **rules first**, before any control score existed.
+PREREGISTRATION §5 gained the operational firing rule (`mean_control_cpvi > 0.02` bits, or its
+episode-cluster interval excluding zero from above) and the capacity ladder that fires on it
+(tighten ℓ₂ to `C = 0.1` → within-fold PCA to 128 components → the smaller encoder, applied to
+*both* probes, never to `g_cond` alone). The 0.02 threshold is fixed as under 10% of the smallest
+CPVI difference the design must resolve — the G2 gap, whose cluster interval starts at +0.060. §5
+also pinned the repeat semantics and §8 gained the selectivity and length-control reporting. Only
+then were the estimators implemented and the data re-scored.
+
+### The fix
+
+`control_labels` + `control_task_cpvi`; `ProbeConfig.n_repeats` with `cpvi_with_sd` returning
+per-instance mean and across-repeat SD; `partial_spearman`; `path_b_length_controlled` on the
+mediation; `cpvi_sd` and `msg_tokens` persisted in the scores table. R = 5 wired into the pilot and
+RQ1 configs, matching what §5 already pre-registered. Repeat 0 is the canonical fold assignment, so
+`n_repeats = 1` still reproduces the unrepeated estimator exactly — no recorded score is disturbed
+by the mechanism itself. The E3 cell was widened to seeds 0–4 (40 episodes) with the amendment dated
+in §6, pre-freeze and pre-run.
+
+### Result of the fix
+
+The frozen estimator on the same data: C0 **+0.181** [+0.050, +0.302], C1 +0.050 [−0.250, +0.317],
+C3 **+0.058** [+0.013, +0.108], C4 −0.031 [−0.084, +0.020]. The C0−C4 gap is **+0.212** against
++0.211 under the recorded estimator — the headline is invariant to the change. The permutation test
+still passes at R = 5 (real +0.066 against a null of +0.033 ± 0.006, max +0.046, p = 1/21), and the
+null's height falls with repeats, as a fold-noise component should. The pilot verdict is unchanged:
+`retune_once`, G1 0.000, G3 0.977. The recorded v4 table is **not** overwritten — it stands as the
+dated reading of the estimator of the day, with the frozen-estimator reading reported alongside it.
+
+### So what
+
+Two takeaways. First, the ordering rule this closes: *build the estimator that will be frozen before
+spending the compute whose verdict it produces.* A measurement change is cheap before the run and
+expensive after it, and "it doesn't block the gate" is a dependency fact, not a scheduling argument.
+Second, the control task is what lets the thesis say the CPVI numbers are a property of the
+messages rather than of the probe — and it says so with a number (+0.072 selectivity against a
+−0.006 control) rather than an argument. Combined with the permutation test, the two audits now
+bracket the estimator from both sides: permutation asks whether *this* message mattered, the control
+task asks whether *any* probe of this capacity could have manufactured the answer.
+
+---
+
+## 2026-08-24 — Last pass before Myriad: cluster-honest intervals, and a permutation null with a structural floor
+
+- **Area:** uncertainty reporting for per-handoff CPVI summaries; the pre-registered
+  shuffled-message negative control; dataset identity under resume; provenance on the pilot report.
+- **Status:** pre-freeze, zero headline episodes. Every number below is from re-analysis of the
+  E3-local v4 dataset (`c0bd4d7499f01d97`, 599 handoffs) with **no new model calls**
+  (`runs/local/c0bd4d7499f01d97-report/reanalysis.json`).
+
+### Trigger
+
+A full-stack review before the Myriad re-gate: estimator, gates, runner, serving path, statistics
+and documents re-read against standard V-information practice, and the E3-local dataset re-scored
+to check what the recorded numbers rest on. Re-scoring reproduced every recorded point estimate to
+the digit (grouped folds and the probe fits are deterministic given record order), and the probe
+overfit monitor is healthy — held-out AUROC 0.727 for `g_cond` against 0.566 for `g_base` and 0.807
+in-sample, so cross-fitting holds at dim 1536 on n = 599. Two findings did not survive the audit.
+
+### Finding
+
+**1. The per-condition CPVI intervals resampled handoffs as if independent.** Handoffs within an
+episode share a start pose, a trajectory and overlapping next-k label windows; the episode is the
+sampling unit. The H1 mixed model already treats it as one — the descriptive intervals did not. At
+six episodes per condition the iid handoff bootstrap read roughly **half the honest width**: C0
+[+0.141, +0.243] handoff-level against [+0.059, +0.307] episode-cluster. What survives the honest
+interval is exactly what the E3 entry led with: C0's CPVI excludes zero, and the C0−C4 gap
+(+0.211 bits) holds a cluster interval of [+0.060, +0.349]. What does not: C1's interval
+([−0.197, +0.320]) is uninformative at pilot scale, and C3's only just clears zero
+([+0.002, +0.103]).
+
+**2. The pre-registered shuffled-message null cannot reach zero on this design — and the
+pre-registration demanded that it does.** §8 said shuffling "must collapse CPVI". Measured: real
+pooled mean +0.078 bits; null +0.043 ± 0.006 (max +0.057 over 20 within-condition permutations).
+The floor is structural, not an estimator defect: permuting within condition preserves every
+condition-level signature the message *style* carries — an 8-token C1 message is recognisably C1, a
+dropout-riddled C4 message recognisably C4 — and per-handoff progress base rates differ strongly by
+condition (C0 0.255, C1 0.735, C3 0.379, C4 0.575), so a permuted message still tells the probe
+which condition its handoff is in, and condition predicts progress. Left frozen as written, a
+*valid* estimator would have failed its own manipulation check on the main sweep.
+
+### Impact / risk reduced
+
+Both were interpretation traps armed for the Myriad stage. The interval defect overstated pilot
+precision exactly where the thesis quotes intervals; the null criterion would have converted a
+structural property of the design into an apparent estimator failure *after* the freeze, when the
+only available responses would have been a logged deviation or a false alarm.
+
+### The fix
+
+`analysis/stats.py` gains `cluster_bootstrap_ci` (episodes resampled with replacement, handoffs
+pooled; percentile) and `rq1.py`'s per-condition CPVI/PVI intervals use it; the E3 entry's table is
+corrected in place with the change named. PREREGISTRATION §8's criterion becomes the permutation
+test — the real pooled mean must exceed every permutation — with the null's height read as the
+*identity* component of CPVI and the real-minus-null excess as per-handoff message content, the
+correction dated and made pre-freeze. Alongside, three smaller closures from the same review:
+`sweep_hash` no longer hashes `concurrency` (an execution knob; changing worker count on a resumed
+run would have re-keyed the dataset and orphaned every completed episode), `PilotReport` embeds
+`AnalysisProvenance` (the re-gate verdict is a result of record and must carry its revisions), and
+the last carriers of the falsified "near zero by construction" claim (the CLI cell comment,
+RESEARCH_ROADMAP §2.3, methodology §8.3's sender-conditioning overstatement) are corrected.
+
+### Result
+
+Suite green with the new tests (cluster CI degenerate cases, hash invariance under concurrency,
+provenance presence). The corrected E3 numbers stand as re-published in `docs/EXPERIMENTS.md` §7;
+no verdict changes — `retune_once` on both local runs, the ledger still closed.
+
+### So what
+
+- The pilot's headline observation — a positive, zero-excluding C0 CPVI and a +0.211-bit C0−C4 gap
+  — **survives the honest interval**. The full ordering C0 > C1 > C3 > C4 remains a point-estimate
+  observation at six episodes per condition; the bf16 re-gate sizes against it.
+- The RD-15 audit is stronger after the correction, not weaker: "real exceeds every permutation" is
+  a test that can actually fail, and the null's height becomes an interpretable quantity — how much
+  of CPVI rides on *which condition you are in* rather than *what this message says*.
+- The lesson generalises D20: claims of the form "this quantity is zero (or cannot be zero) by
+  construction" about a probe-relative measure keep being wrong in both directions. The last pass
+  hunted down the remaining instances before they could shape a Myriad-stage reading.
+
+## 2026-08-24 — Four defects in the pilot gate, and the information gradient they were hiding
+
+- **Area:** the pilot gate — how G2 estimates CPVI, what population G1 scores, what G3 counts as
+  ground truth, and whether C3's receiver restriction still restricts anything.
+- **Status:** found by two E3 runs, on the **interim local substrate**, at **zero headline episodes**.
+  No result is re-frozen; the one-retune ledger remains closed.
+- **A correction is recorded inside this entry.** The first reading of the first run was that CPVI is
+  near zero *by construction* wherever the receiver already sees the sender's state. That reading is
+  **wrong**, it was written into these documents, and the second run falsified it. It is corrected in
+  place below rather than deleted, because the mistake is instructive: it is exactly the error the
+  V-information framing exists to prevent.
+
+### Trigger
+
+E3-local: C0/C1/C4 × easy/hard × seeds 0–2, 18 episodes and 445 handoffs against
+`mlx-community/Qwen3-8B-4bit`. The verdict came back `retune_once` with G1 and G2 failing, and the
+G2 numbers were odd enough to audit rather than accept: a **negative** success gap (C4 outscored C0)
+and a CPVI gap of +0.007 bits between two quantities that were themselves ≈ 0.03 bits. The audit
+found four defects, and the second run — 24 episodes, 599 handoffs, with C3 added — showed that with
+all four corrected the same data carry a CPVI gradient of **+0.211 bits**.
+
+### Finding
+
+Four things, in descending order of consequence.
+
+**1. G2 refitted its probe on a two-condition subset, and that is not the estimator the study uses.**
+`g2_signal` selected the C0-plus-hardest rows, featurised *those*, and fitted the CPVI probe on them.
+Pointwise V-usable information is defined as per-instance scores from **one** fitted probe; refitting
+per contrast discards the other conditions' rows and shifts the class balance the probe sees. On the
+same 24-episode data the subset fit read the C0-minus-C4 CPVI gap as **+0.012 bits** and the
+whole-cell fit reads **+0.211 bits** (C0 +0.192 [+0.141, +0.243], C4 −0.018 [−0.065, +0.028]). The
+gate was not measuring a weak gradient; it was measuring a strong one badly.
+
+**The correction, stated plainly.** The first reading of this run — written into the changelog, the
+methodology's deviation register, the pre-registration and this log before the second run — was that
+`observation` being byte-identical to `state_str` in 445 of 445 records makes CPVI "near zero by
+construction", so the C0/C1/C4 cell could never have passed G2. **That is wrong.** CPVI is
+*V-usable* information: it asks what a message adds to what a **bounded probe family** can extract
+from the receiver's state, not what it adds to what the receiver formally holds. A logistic probe on
+a frozen sentence embedding of `load=(2.63, 2.03, -0.70) …` cannot compute the geodesic; a message
+that says "push north, you are below the slit" states the answer. So a message can carry real usable
+information even when the receiver holds the identical bytes — and it does: **C0 CPVI is +0.192 bits
+with an interval excluding zero, in the condition where the receiver sees everything.** The error was
+to reason about Shannon-style redundancy in a place the design deliberately uses a model-relative
+measure, which is the precise confusion V-information was introduced to resolve.
+
+What survives from the first reading, and what the PVI − CPVI gap actually said: the gap on the v3
+run was **+0.0000 bits [−0.0005, +0.0005]**, which says the *state-only baseline extracted nothing*
+about next-*k* progress from these embeddings, so conditioning subtracted nothing. That is a fact
+about the baseline probe's power, not about the receiver's knowledge, and on the corrected v4 run the
+gap is small but structured (C0 −0.036, C1 +0.051, C3 +0.037, C4 +0.012) — i.e. conditioning
+*raises* the C0 score and lowers the others.
+
+**2. G1 was scored on the wrong population.** The pre-registration says "C0 self-play episode success
+≥ 0.5 **at easy difficulty**"; the implementation averaged C0 across *both* difficulties. On the E3
+cell that mixes a solvable geometry with one designed to be hard, so a pair that solved every easy
+episode and no hard one would score exactly **0.5** — passing the capability floor by arithmetic
+accident, on a task it had half failed.
+
+**3. G3 scored a sender as hallucinating geometry it had been shown.** `_record_grounding` drew its
+truth set from `rec.state`, which carries the **load body only**. From v3 the serialiser also printed
+the wall abscissae and the slit interval, and from v4 the load's dimensions, so a message correctly
+citing "the slit runs 2.1 to 3.9" was counted as fabricating both numbers. G3 read **0.720** on the
+v4 run — a FAIL — for messages that fabricated essentially nothing; with the truth set taken from
+what the sender was actually shown it reads **0.977**, and the v3 run reads **0.999** rather than
+0.811. This is the same rot as defect 4 below, with the same cure: derive the truth from the state,
+never from a hand-maintained list of keys.
+
+**4. C3's numeric restriction had rotted against the v3 prompt surface.** `_restrict` blacklisted the
+`goal=` line. v3 added `walls_x=` and `slit_y=`, and the blacklist kept delivering both, so C3's
+receiver still held the full arena layout and the asymmetry the condition exists to create was
+nominal. The docstring claimed "the goal and global layout must come from A's message"; only the
+goal did.
+
+### Impact (had it not been caught)
+
+Compounding, and in the direction that produces a confident wrong answer rather than a crash. The
+common shape is that **every one of the four made the study look worse than it is**, so each failure
+would have been read as evidence about the design rather than about the instrument.
+
+- **RQ1's headline number would have been understated seventeen-fold.** The subset refit reports
+  +0.012 bits where the whole-cell fit reports +0.211 on the identical data. A gradient that clears
+  any reasonable floor would have been reported as noise.
+- **G2 would have been reported as a failed signal gate.** Under the fallback ladder a failing G2
+  that survives one retune sends RQ1 to a documented negative and elevates RQ3a to the headline. The
+  project would have abandoned its primary research question on an estimator artefact — and, worse,
+  the abandonment would have looked principled, because the pre-registration commits to reporting a
+  null rather than chasing a positive.
+- **G3 would have failed the pilot on honest messages.** 0.720 against a 0.8 floor, for messages that
+  fabricated nothing; the sender was penalised for citing geometry the serialiser had printed for it.
+- **G1 would have passed the wrong pairs.** The 0.5 floor against a 50/50 easy/hard mix converts the
+  capability gate into a difficulty gate at exactly the boundary value.
+- **C3 would have been an inert arm** in the one condition carrying a genuine observation asymmetry —
+  the same defect class as the sender-conditioning error of §8.3 (D1), recurring because a blacklist
+  was left to track a serialiser that changed.
+
+### Risk reduced
+
+Two, and the second is the one that matters. The first is ordinary: three gates now measure what they
+are documented to measure. The second is that **an instrument artefact was one run away from being
+reported as a research finding.** This project's pre-registration explicitly commits to publishing a
+null — which is a virtue, and also a hazard, because a design prepared to accept a negative result
+will accept one that its own estimator manufactured. The defence is not scepticism about nulls; it is
+that every gate value gets audited against the raw data *before* the verdict is acted on, which is
+what happened here.
+
+### Correction path
+
+- **G2** fits the CPVI probe **once over the whole cell** and contrasts the resulting per-instance
+  scores, which is the estimator the RQ1 analysis uses. No per-contrast refit.
+- **G3** takes its truth set from what the sender was shown — the numeric leaves of `state` *plus*
+  every number in `state_str` — so it cannot rot when the serialiser gains a key.
+- **G1** now scores easy C0 only, and raises `ConfigError` when no easy C0 episodes are present rather
+  than silently averaging whatever is there.
+- **C3** now *whitelists* B's own state keys (`load=`, `contact=`) instead of blacklisting global ones,
+  so a serialiser that gains a key fails closed rather than leaking it.
+- **The E3 cell and the serialisation surface** are design decisions, not defects, and were held open
+  for an explicit call rather than changed in passing. Both were recorded here *before* either was
+  taken, and both were then taken on 24 August 2026:
+  - **C3 joins the pilot cell** (C0/C1/C3/C4 × easy/hard × seeds 0–2, 24 episodes). The reason given
+    when the decision was taken — that C3 is the only condition where CPVI can be non-zero — was the
+    mistaken one corrected above. The decision survives its own bad argument: C3 is the only
+    condition carrying a real observation asymmetry, it is in the headline design, and a pilot that
+    never exercises it certifies an instrument the main sweep will not use. Its measured CPVI is
+    **+0.051 [+0.026, +0.075] bits** — positive, tightly bounded, and *lower* than C0's, which §8.3's
+    "most room to be positive" did not predict and which is flagged for the bf16 re-gate rather than
+    explained at six episodes per condition.
+  - **G2 gained a third verdict state**, `assessable=False`, pointed at the case that genuinely
+    admits no verdict: a cell in which every handoff carries the same progress label, so CPVI has
+    nothing to predict. An unassessable gate never yields `proceed` and never spends the retune or
+    invokes the fallback. (It was first pointed at the shared-observation case, on the mistaken
+    premise above; that trigger is removed.)
+  - **The numeric form names the load's own dimensions** (`load_size=(1.4000, 1.3000)`), and A's
+    system prompt states that the whole load must fit the slit rather than its centre. Prompt
+    surface **v4**, bump two of the three budgeted before E3, with one remaining.
+  - The alternative of printing the *derived threading band* (`pass_band_y=(2.75, 3.25)`) was
+    considered and rejected: it performs the geometric inference on the agents' behalf and would
+    weaken what a C0 success demonstrates about coordination. So was reporting the load's *current
+    rotated* y-extent, which is a stronger cue than a constant and is held in reserve as the third
+    bump if the re-run shows the alignment error surviving.
+
+### The fix
+
+Four code changes on `infra/DSE-031-033+049-first-run-unblock`, each with a test that fails against
+the old behaviour: `g2_signal` featurises and fits over all records rather than the C0-plus-hardest
+subset; `_record_grounding` unions `state_str`'s numbers into the truth set; `g1_capability` filters
+to `difficulty == "easy"`; `_restrict` uses `_C3_NUMERIC_KEEP = ("load=", "contact=")`. Plus the two
+design decisions above: C3 in the pilot cell, and prompt surface v4.
+
+### Result of the fix
+
+Both datasets re-gated with the corrected code (v3: 18 episodes / 445 handoffs; v4: 24 episodes /
+599 handoffs, C3 included):
+
+| | v3 cell, corrected gates | v4 cell, corrected gates |
+|---|---|---|
+| G1 capability (easy C0) | **FAIL** 0.000 (0/3) | **FAIL** 0.000 (0/3) |
+| G2 success gap (C0 − C4) | **FAIL** −0.167 | **FAIL** −0.333 |
+| G2 **CPVI gap** (C0 − C4) | +0.012 bits | **+0.211 bits** |
+| G3 groundedness | **PASS** 0.999 (was 0.811) | **PASS** 0.977 (was 0.720) |
+| Verdict | `retune_once` | `retune_once` |
+
+CPVI by condition on the v4 cell, one probe fitted over all 599 handoffs, *Y* = `y_binary_progress`,
+2 000-resample percentile intervals:
+
+| | C0 | C1 | C3 | C4 |
+|---|---|---|---|---|
+| CPVI | **+0.192** [+0.141, +0.243] | +0.084 [−0.032, +0.194] | +0.051 [+0.026, +0.075] | −0.018 [−0.065, +0.028] |
+| PVI | +0.157 [+0.115, +0.198] | +0.135 [+0.003, +0.264] | +0.088 [+0.034, +0.136] | −0.007 [−0.047, +0.035] |
+| PVI − CPVI | −0.036 | +0.051 | +0.037 | +0.012 |
+
+**The gradient is monotone in the channel and in the predicted direction: C0 > C1 > C3 > C4, with C4
+at zero.** That is H1's shape, at 6 episodes per condition, on a 4-bit model that cannot complete the
+task. It is not a result — it is the first evidence that the instrument is capable of producing one,
+which is exactly what a pilot is for. The verdict remains `retune_once`, and per the pre-registration
+a 4-bit local G1 failure is indicative and does **not** spend the retune; the ledger opens at the
+Myriad bf16 re-gate.
+
+**The outcome half went the other way and this is not glossed.** Episode success was C0 0/6, C1 1/6,
+C3 0/6, C4 2/6 (3 of 24 overall) — the clean channel came last, and G2 fails on its success half in both runs. With G1
+at zero there is no headroom for success to fall, so the outcome contrast has nothing to measure
+until a tier that can do the task is in the loop. The honest statement is that the information half
+of H1 and the outcome half of H1 cannot both be assessed at this tier, and only the second is
+blocked.
+
+### The alignment error, recorded before it was decided
+
+The failure mode inside the easy episodes is legible and is not a coordination breakdown. All three
+easy C0 episodes reached chamber three (final `com_x` 8.44 / 8.91 / 9.17, goal at x = 10, r = 0.8) and
+ran out of the 18-step budget short of the goal, having spent steps on one repeated error (this is the
+observation the v4 bump above answers): the model
+declares the load "aligned with the slit" when `com_y` is *outside* the printed slit range — 2.0074
+called within (2.1, 3.9) — and then pushes east into the wall. Part of that is a 4-bit model doing an
+interval comparison badly. Part of it is ours: the state names the **gap's** extent and never the
+**load's**, so the band of `com_y` that can actually thread the slit (±0.25 about the centre for the
+easy 1.8 gap against a 1.3-tall load, not the full ±0.9) is not derivable from the prompt without a
+constant the prompt never supplies. That is the same defect family as the v3 entry above — the state
+describing the obstacle but not the thing being manoeuvred — and it is logged here before any decision
+is taken, because changing the serialisation after seeing which cells failed is exactly the move the
+freeze exists to police.
+
+**What v4 bought, measured.** A now makes the comparison correctly — "The load's center is at y=2.03,
+which is below the slit's lower bound of 2.1" is the first message of the v4 run, against v3's
+"currently aligned with the slit … since its y-position (2.0074) is within the slit's y-range". The
+description is fixed and the **outcome is not**: easy C0 remained 0/3. So the alignment error was a
+real defect in the prompt surface and *not* the cause of the G1 failure, which is a capability limit
+of the 4-bit tier. That is worth knowing before the bf16 re-gate, and it is why the third prompt bump
+stays unspent.
+
+### So what
+
+- **An estimator is part of a gate's definition, not an implementation detail.** G2's threshold was
+  right and its arithmetic was right; it fitted the probe on the wrong rows, and reported a strong
+  gradient as noise. "Fit once on frozen embeddings" is a reproducibility rule in `CLAUDE.md`; it is
+  also, it turns out, a correctness rule.
+- **V-usable information is not Shannon redundancy, and the difference is easy to lose.** The
+  mistaken reading corrected in this entry — that a receiver holding the state makes CPVI zero — is
+  the exact confusion the V-information framing exists to dissolve, and it survived three documents
+  before data contradicted it. The measure is defined relative to a bounded probe family; "the
+  receiver already has it" is not an argument unless the probe can use it.
+- **Blacklists rot; whitelists fail closed.** C3 leaked because the v3 serialiser gained two keys and
+  nothing forced the channel to notice; G3 mis-scored for the same reason from the other side. Every
+  place the design says "B must not see X", or "X is the truth", is now derived from the state.
+- **Audit the gate value against the raw data before acting on the verdict.** Every one of the four
+  defects made the study look worse than it is, and the design is pre-registered to accept a null.
+  A study willing to report a negative needs its instruments checked hardest, not least.
+- **The register keeps its clock property.** All four findings predate any headline episode; none is
+  contingent on an outcome, because no outcome of record exists.
+
+---
+
+## 2026-08-24 — The numeric serialisation named no obstacle: prompt surface bumped to v3, and the serialisation axis de-confounded
+
+- **Area:** the prompt surface — what the state serialisers expose, what the two system prompts ask for, and what dataset identity covers.
+- **Status:** decided during S1 from the first transcript read (E1), at **zero headline episodes**. One of the three budgeted pre-E3 prompt bumps. Nothing is re-frozen.
+
+### Trigger
+
+The E1 transcript read — the deliberately human step — on the first five real episodes
+(C0, numeric, easy, seeds 0-4, local 4-bit tier). 40% episode success, which on its own looks like a
+weak-but-alive baseline.
+
+### Finding
+
+The success rate was not the finding. The transcript was.
+
+- **A emitted 7 distinct messages across 75 handoffs**, all variants of "Push the load rightward to
+  align it with the slit. Rotate it counterclockwise if needed…" — no coordinate, no offset, no
+  reference to anything that changes between steps.
+- **B chose `E` 75 times out of 75.** A constant policy: it was not conditioning on the message, and
+  barely on the state.
+- Tracing why A had nothing to say produced the real defect: **the `numeric` serialisation contained
+  no wall or slit geometry at all** — only the load pose, a contact flag and the goal. A could not
+  say "you are 1.0 below the slit" because the slit's position was not in A's input.
+
+That last point contradicted the serialiser module's own stated invariant, that the three forms are
+*isomorphic in information* and differ only in surface form. The grid **draws** the walls and slits;
+the NL form **names** the nearest slit centre and distance; numeric named neither. The serialisation
+factor was therefore not a representation A/B — it was partly an information A/B.
+
+### Impact (had it not been caught)
+
+Three compounding failures, and the first is the one that would have ended the project quietly.
+
+- **CPVI would have been ≈0 by construction, in every condition.** Seven near-identical messages
+  carry almost no information about anything, so `g_cond` could not beat `g_base` no matter how the
+  channel was degraded. RQ1's information gradient would have been flat — and flat *because of the
+  prompt*, not because of the channel. That reads exactly like "G2 fails: no measurable signal",
+  whose documented response is the one allowed retune and then the fallback ladder.
+- **G3 would have been vacuous rather than failed.** Groundedness is scored as the fraction of
+  numeric mentions in a message that match the true geometry. Messages containing no numbers have no
+  mentions to check, so the gate would have returned a degenerate pass on an empty denominator.
+- **The serialisation robustness arm would have measured the wrong thing.** A numeric-vs-grid
+  difference would have been reported as a representation effect when part of it was the grid simply
+  containing information the numeric form withheld.
+
+### Risk reduced
+
+The class here is **a degenerate channel that still produces a complete, well-formed dataset**. Every
+manifest would have been valid, every episode labelled, every gate computed — and the headline
+finding would have been an artefact of a missing line in a serialiser.
+
+### Correction path
+
+Considered and rejected: (a) prompt A harder without changing the serialiser — it cannot cite what it
+cannot see, so this would have taught it to invent coordinates, which is worse than saying nothing
+and would have corrupted G3; (b) switch the headline serialisation to `grid` — that abandons the axis
+rather than fixing it, and picks the winner before the experiment; (c) accept the confound and note
+it — the serialisation arm is one of the robustness cells the thesis reports, so a known confound in
+it is not something to write around.
+
+### The fix
+
+**PROMPT_VERSION v2 → v3**, covering three changes that are one change in effect:
+
+- `_numeric` gains `walls_x=(4.0000, 8.0000)` and `slit_y=(lo, hi)` with the width in the comment.
+  The three forms now expose the same information, and the isomorphism claim in the module docstring
+  is true rather than aspirational.
+- **A's system prompt** states the convention (+x toward the goal, +y north), states that passage
+  depends on the load's y matching the slit's y-range, and asks for the load's position *relative to
+  the next slit* plus the next move, using the numbers in front of it rather than generic advice.
+- **B's system prompt** now says A sees more of the scene, and to follow A's instruction unless its
+  own observation plainly contradicts it. The action hint spells out the axis meanings, closing E1's
+  third check ("does 'north' mean what the arena means by it?").
+
+**Dataset identity moved with it.** `sweep_hash` covers the sweep config, which carries no prompt
+version, so a bump would have resumed into the previous prompt's dataset and pooled two prompt
+surfaces into one set of episodes. `experiments.sweep.dataset_hash_for` now folds `PROMPT_VERSION`
+into the dataset hash and is the single derivation every reader uses.
+
+### Result of the fix
+
+Re-run of the same five episodes under v3 (see the E1 entry in `docs/EXPERIMENTS.md` §7 for the
+numbers). The check that matters is not the success rate but message variety and action variety:
+a message that changes with the state is the precondition for any CPVI at all.
+
+### So what / takeaways
+
+**A serialiser is part of the prompt, and an information-isomorphism claim is a testable one.** The
+invariant was written down in the module docstring and was false in one of three branches. Nothing
+tested it, because the tests checked that each form *round-trips the load pose* — not that the forms
+expose the *same* information. The claim the experiment depends on and the property the tests check
+were different properties.
+
+**A flat gradient is the most dangerous possible result**, because it is indistinguishable from the
+honest negative the design is prepared to report. Everything upstream of the measurement that could
+flatten it — an empty message, a constant message, a constant action — has to be checked before the
+gradient is believed. E1 exists for precisely this, and it earned its place twice in one session.
+
+**Read the transcript, not the score.** 40% success on C0/easy looked like a live baseline worth
+proceeding on. The same run, read line by line, showed one action repeated 75 times. The score was
+not wrong; it was answering a different question from the one that mattered.
+
+## 2026-08-24 — Local pilot substrate: the same non-thinking regime as the cluster, and an empty message that would have looked like success
+
+- **Area:** the pre-cluster pilot substrate — how the local runtime is made comparable to the cluster, and what the runner does when a message never arrives.
+- **Status:** decided during S1, at **zero recorded episodes**. Nothing is re-run and no result is re-frozen.
+
+### Trigger
+
+The first live model call of the project. LM Studio serving `mlx-community/Qwen3-8B-4bit` at
+`localhost:1234/v1`; a two-line probe issuing one `chat` and one `structured` call through the real
+client, before any episode was attempted.
+
+### Finding
+
+Two things, one expected and one not.
+
+- **The runtime ignores `chat_template_kwargs`.** The repo disables Qwen3's hybrid thinking per
+  request via `chat_template_kwargs={"enable_thinking": False}`, which vLLM honours. LM Studio's MLX
+  runtime silently drops it, and so does `reasoning_effort`. Qwen3 therefore reasons, and LM Studio
+  routes the reasoning into a **non-standard `reasoning_content` field** rather than into `content`.
+- **The failure mode is silent.** With the reasoning in its own field, `content` came back as the
+  empty string with HTTP 200. The client's existing guard only rejected `None` and a literal
+  `<think>` block, so an empty A-message passed straight through into the handoff record.
+
+Qwen3's in-band `/no_think` switch selects the same non-thinking branch the cluster selects via the
+template kwarg, and it works on this runtime: content returns, `reasoning_content` empties.
+
+### Impact (had it not been caught)
+
+An empty A-message is not a degraded message — it is **no channel at all**. Every condition C0-C4
+would have delivered the same thing (nothing, or nothing-truncated, or nothing-dropped), so the
+information gradient RQ1 exists to measure would have been flattened to zero *by the serving
+substrate*, not by the channel. The runs would have completed, written valid manifests, and produced
+a clean, publishable-looking null. Under the pilot gates that null reads as "G2 fails, the task
+carries no signal" — and the documented response to a G2 failure is to spend the one allowed retune
+and then invoke the fallback ladder. The project could have abandoned its headline research question
+on the strength of a serialisation bug in a laptop runtime.
+
+The second-order cost is comparability: had thinking simply been left on, the local pilot would have
+been iterating prompts against a *different generation regime* from the one the cluster runs, so
+every prompt fix validated locally would have been unvalidated where it mattered.
+
+### Risk reduced
+
+The class of failure this closes is **fail-open serving**: an endpoint that returns success while
+returning nothing usable. That is the single most dangerous failure shape in this repository,
+because its output is indistinguishable from a real negative result.
+
+### Correction path
+
+Considered and rejected: (a) leave thinking on and raise `max_tokens` — burns the budget, and
+measures a regime the cluster does not run; (b) switch the local tier to a non-thinking instruct
+variant — changes the model rather than the mode, and breaks the local-to-cluster correspondence
+this stage depends on; (c) edit the model's chat template on disk — undocumented, unauditable, and
+invisible in the manifest.
+
+### The fix
+
+- `ServingConfig.thinking_switch`, empty by default so the cluster path is untouched, appended to the
+  **final user turn only**. Both substrates now select the same non-thinking template branch by the
+  mechanism each supports, and which mechanism was used is recorded per run.
+- `LLMClient.chat` raises on empty or whitespace-only content, not merely on `None`.
+- `health_check` asks its ping for 16 tokens rather than 1, so a runtime stuck in thinking mode fails
+  **before** a sweep starts rather than at handoff one.
+
+### Result of the fix
+
+The local endpoint returns grounded prose for A and schema-valid actions for B; the E1 smoke runs the
+loop end to end. A misconfigured endpoint now fails at the health check with a message naming the
+cause.
+
+### So what / takeaways
+
+Two, both about where defects are found rather than what they were.
+
+**The defect was invisible to review and obvious to one live call.** It is not a logic error — the
+code does what it says — it is a disagreement between two runtimes about where generated text goes.
+No amount of reading finds that. This is the concrete argument for S1 existing at all: the free local
+pilot is not a rehearsal for the cluster run, it is the stage that catches the class of defect that
+only appears when a real model answers.
+
+**Guard the empty case, not just the absent one.** `None` was already rejected; `""` was not, and
+`""` is what a 200 response carries when a runtime writes its output somewhere unexpected. In a
+fail-loud repository the invariant to encode is *usable output*, not *present output* — the same
+reasoning that already forbids catching a `ServingError` around agent B's action.
+
+## 2026-08-23 — RQ3a re-founded: substrate migrated, and Y on logs defined by intervention
+
+- **Area:** external validity — the RQ3a substrate, the conditioning state on real logs, and the definition of the outcome variable Y outside the simulator.
+- **Status:** decided pre-build. DSE-023 superseded by DSE-041; DSE-024 rescoped; DSE-042 created. No RQ3a code exists yet, so nothing is re-run and no result is re-frozen.
+
+### Trigger
+
+Cross-referencing the August architecture review against the roadmap and the methodology text, while writing the Y-on-logs design note that DSE-023 had been blocked on since July. The note could not be written, and the reason it could not be written turned out to be the finding.
+
+### Finding
+
+Three distinct problems with Who&When as the primary RQ3a substrate, which the methodology text had been treating as one.
+
+- **The conditioning state is not in the data.** CPVI is the log-loss reduction of a probe on state-plus-message over a probe on state alone, and the pre-registered semantics fix that state as *the state observable to the receiver*. Who&When records agent **outputs**. It does not record the input context each agent received — the system-constructed prompt, the retrieved documents, the orchestrator's framing. Reconstructing it by concatenating preceding outputs yields a different quantity from what the receiver actually saw, and the entire conditional construct rests on that quantity being right. TraceElephant's authors demonstrate the gap directly by re-running a Who&When failure to restore the missing inputs, and report large attribution-accuracy degradation when inputs are removed.
+- **The outcome is single-class.** All 184 Who&When instances are failures. A probe cannot be fitted against a constant label, so the "refit probes on a held-out portion of the logs" arm was not merely difficult, it was **undefined as written**. This is a property of the corpus, not of the method.
+- **Using the annotation as Y is circular.** The obvious per-step label — "is this the decisive error step, per the human annotation" — trains the probe on the very label the localisation claim is evaluated against.
+
+Separately, a benchmark now exists that fixes the first two: TraceElephant (ACL 2026, CC-BY-4.0) records `input_context` **and** `output_content` per step, ships roughly 380 executions of which about 220 are annotated failures, and includes runnable environments.
+
+### Impact (had it not been caught)
+
+RQ3a is the pre-planned fallback that can carry the dissertation alone if the pilot gates fail. Built as specified, it would have produced a CPVI computed against an approximated conditioning state, with a refit arm that could not be fitted at all, tested against a circular label. A null would have been uninterpretable — bad construct, or genuine absence of signal, with no way to tell. That is the worst possible state for a fallback, because it is the one that looks like a result.
+
+### Risk reduced
+
+The fallback is now verifiable rather than assumed, and the failure mode it was exposed to — an uninterpretable null on the arm that has to carry the dissertation if the headline fails — is closed before any loader was written. Maps to roadmap risks R1 (capability floor, whose branch is elevating RQ3a) and the new R9 (replay non-determinism).
+
+### Correction path
+
+Read the conditional construct back against what each corpus actually records → separate the three problems → evaluate four substrate strategies and four candidate definitions of Y on cost and on the probability each yields an *interpretable* rather than merely *reportable* result → adopt, and schedule a counts spike ahead of any chapter text.
+
+### The fix
+
+- **Substrate.** TraceElephant becomes primary. Who&When is retained as a **transfer-only comparability anchor** so the familiar published numbers appear in the same table, with every row it emits carrying an explicit `reconstructed_observation` flag so approximated and true conditioning state can never be silently pooled. MAST-Data stays as a cheap trace-level secondary; it cannot test step localisation.
+- **Outcome.** Y is defined by **counterfactual replay** — re-run from step *t* with the step's output substituted, and record whether the outcome changes — with majority vote over *n* replays, a reported agreement rate, an agreement floor, stratified step sampling recorded in the manifest, a hard spend cap and a dry-run projection. Trace success is computed for every trace regardless, so the refit arm survives if replay is cut. The annotation is named in the methodology as *considered and rejected*, because that sentence does real work at viva.
+- **Schema.** A separate `LogHandoffRecord` with its own version and **absent, not nullable** physics fields. `HandoffRecord` is the stable simulator contract and is not widened; a log record is a different contract. The cross-fit group key becomes `trace_id`, the exact analogue of `episode_id` — the leakage discipline is unchanged and only the name of the group changes.
+
+### Result of the fix
+
+The construct and its substrate now agree: the only corpus that records what the measure conditions on is the one the measure is estimated on. Defining Y by intervention also makes the external-validity claim and the causal claim rest on **one epistemology instead of two** — the whole thesis argues, after Lowe et al., that correlation between a message statistic and an outcome is not evidence the message mattered and that only intervention settles it, and replay applies that same intervention to the label rather than to the gate. The technique is precedented at scale (AgenTracer built a 2,000-trace corpus this way; Causal Agent Replay formalises step-level intervention as a structural causal model; Jaques et al. established the counterfactual logic for influence in MARL in 2019). What is novel is its use to define the *target of an information-theoretic boundary measure*.
+
+### So what / takeaways
+
+The substrate switch reads as a retreat only if it is presented as one. Presented correctly it is an argument in this dissertation's favour: it is the only work in this space that *requires* full observability, because it is the only one conditioning on it. Two honest caveats are carried forward and must be closed by the counts spike before either number reaches the thesis: the claim that MAST-Data contains a usable non-failure class rests on all-zero annotation rows in a dataset preview rather than a count, and the AgenTracer accuracies quoted in the review come from secondary summaries rather than the paper's own result table.
+
+---
+
+## 2026-08-23 — Probe validity hardened before the freeze: control tasks, repeated cross-fits, length control
+
+- **Area:** the measurement construct — what the probe family is permitted to claim, and what gets frozen at the Phase-2 gate.
+- **Status:** decided pre-freeze. DSE-043 and DSE-044 created and marked as blocking the Y/V freeze. No probe result exists yet, so nothing is re-run.
+
+### Trigger
+
+Auditing the estimator's existing checks against the standard objections in the probing literature, while deciding what the pre-registration document has to enumerate.
+
+### Finding
+
+The design carried exactly one null — the shuffled-message audit, which permutes messages within condition and tests whether the message carries signal. That answers one objection and was being treated as though it answered three.
+
+- **It does not answer the capacity objection.** Hewitt and Liang (EMNLP 2019) show that probe accuracy cannot distinguish "the representation encodes this" from "the probe learned the task", and that the remedy is a **control task** whose labels are random by construction, with a reported **selectivity** gap. With 1,536-dimensional concatenated features against a few hundred pilot handoffs, a probe manufacturing apparent information from its own capacity is a live risk, and `auroc_train_cond` does not settle it — a probe can generalise and still be reading its capacity rather than the message.
+- **It does not address per-instance noise.** A single cross-fit gives each handoff its score from exactly one fitted model, and at pilot N the *sign* of an individual score can flip under nothing more than probe reseeding. Those per-handoff scores are the mediator in H2 and the ground truth in all of RQ2, so that noise propagates into two of the four research questions unquantified.
+- **It does not pre-empt the length confound.** "CPVI is just a fancy word count" is the first sceptical question the construct will attract, and C1 makes it *structural* rather than incidental, because C1 manipulates message length directly.
+
+### Impact (had it not been caught)
+
+All three would have surfaced after the freeze, when the honest responses are expensive. A control-task check added post hoc invites the question of why it was added; a capacity reduction chosen after seeing results is a researcher degree of freedom whatever its merits; and answering the length objection at viva rather than in the pre-registration converts a designed dissociation into a defensive rebuttal.
+
+### Risk reduced
+
+Closes new risks R8 (probe selectivity) and R5 (length confound), and quantifies the measurement error on the scores feeding H2 and RQ2. All three are cheap now and forbidden later — which is precisely the category of change the freeze exists to force forward.
+
+### Correction path
+
+Enumerate the objections separately rather than as one → map each to the null that actually answers it → confirm none of the three is already covered → ticket each as blocking the freeze rather than as a nice-to-have.
+
+### The fix
+
+- **Control task and selectivity (DSE-043).** Refit both probes against random labels stratified to the observed base rate; report `control_mean_cpvi` and `selectivity = mean_cpvi − control_mean_cpvi` alongside **every** CPVI figure, captions included. The pre-registered expectation is that control CPVI is approximately zero. Critically, the **capacity-reduction rule fires from a schedule written down before any pilot data is inspected**, so that the answer to "how did you choose the regularisation?" is something other than "it worked".
+- **Repeated cross-fits (DSE-044).** Average per-instance scores over *R* cross-fits with different fold seeds and persist the across-repeat standard deviation per handoff as that score's measurement error. Logistic refits are milliseconds at this scale, so the repetition is nearly free; *R* is pre-registered.
+- **Length control (DSE-044).** Pre-register a partial Spearman of CPVI with outcome given message token length, and length as a covariate on the mediation's second path, both reported alongside their uncontrolled versions.
+
+### Result of the fix
+
+Three objections, three distinct nulls, each stated in the methodology with its pre-registered expectation. The estimator now reports what it can and cannot claim rather than only what it found.
+
+### So what / takeaways
+
+The length control is the one that pays a dividend beyond defence. If CPVI were a proxy for length, then within C1 — where length is clamped to a narrow band — it would have little variance and no relationship to the outcome. If it continues to discriminate outcomes among messages of near-identical length, the construct and the confound have **dissociated**, and C1 flips from the cell that threatens the measure to the cell that demonstrates it. That inversion is only available if the analysis is pre-registered; run afterwards it is indistinguishable from a search for a favourable framing.
+
+---
+
+## 2026-08-23 — Contribution re-framed against a field that moved, and one arm cut on evidence
+
+- **Area:** positioning and scope — what the dissertation claims relative to the current state of failure attribution, and which optional arm survives.
+- **Status:** decided. DSE-047 created (docs); DSE-027 cut; DSE-046 created as its replacement.
+
+### Trigger
+
+Verifying the architecture review's citations before adopting them, and sweeping the same searches for anything the July literature review missed.
+
+### Finding
+
+Two things, one anticipated and one not.
+
+**Anticipated: the headroom argument is stale.** The review positioned H5 against Who&When's 53.5% agent and 14.2% step accuracy. Both have been beaten — AgenTracer-8B reports roughly an 18% relative margin over frontier reasoning models, and TraceElephant's own agentic methods reach 66.7% agent and 33.3% step on full traces. The general claim that survives is narrower: *generic* frontier reasoning models remain below roughly 10% on step attribution.
+
+**Not anticipated: the prospective framing is now contested.** The architecture review's proposed reframing was that CPVI is prospective where "every method above is a retrospective analysis of a completed failed trace with the outcome already known". That is no longer true as stated. **AgentForesight** (arXiv:2605.08715) reframes attribution as *online auditing*: at each step of an unfolding trajectory an auditor sees only the prefix and must continue or alarm at the earliest decisive error, explicitly to recover the intervention window that post-hoc attribution forfeits. It predates the July review and was missed by it. **Causal Agent Replay** (arXiv:2606.08275) was also missed and formalises step-level counterfactual intervention as a structural causal model.
+
+Separately, the SocialJax arm was being carried on a scheduling justification that does not survive contact with the suite: SocialJax ships sequential social dilemmas in which agents interact through spatial actions and reward structure, and its shipped algorithms are not communication algorithms. **There is no message to score.**
+
+### Impact (had it not been caught)
+
+Writing the RQ3a chapter to 14.2% invites the single most predictable hostile viva question. Worse, claiming novelty on prospectivity alone would have been contestable by one citation, and contested at viva rather than in the text. And the SocialJax arm would have been cut late, on time grounds, producing a weak limitations paragraph in place of a strong one.
+
+### Risk reduced
+
+Closes R7 (stale baseline framing) and opens and immediately answers R10 (online-auditing adjacency) rather than leaving it for a reader to raise. Removes an arm that would have competed for the same GPU allocation as the headline sweep.
+
+### Correction path
+
+Verify each cited number and dataset independently rather than adopting the review wholesale → sweep for adjacent 2026 work in the same searches → where an adjacency exists, state it in the text on the axes where the contribution actually survives → re-derive the cut on the arm's own properties rather than on the calendar.
+
+### The fix
+
+- **Baselines re-anchored.** The 2025 figures are kept as a **dated floor**, with every method tabulated alongside its substrate and its date.
+- **Contribution restated on three axes rather than one.** Against AgentForesight specifically: this is a **measure with units, not a detector with a verdict** (a log-loss difference between two logistic probes, against a 7B RL-trained model); it scores a **single boundary**, not a trajectory prefix; and it **blocks and rewrites the message before the receiver acts, validated against a matched-firing-rate control**, which an alarm does not do and which no online-auditing result has yet met. The comparison to report is the **operating characteristic** — localisation per unit of compute, and whether any is available before the outcome exists — not raw accuracy.
+- **SocialJax cut on evidence.** The sentence for the limitations chapter is that the learned-message setting is a *different measurement regime*, not a harder version of the same one: IMAC and the emergent-communication line optimise a message encoder end to end and presuppose gradient access, whereas this dissertation scores arbitrary frozen natural language at inference with no access to the sender. A comparison between them would confound the training regime with the message space.
+- **Replacement (DSE-046).** The Eccles et al. absent-versus-unused decomposition on RQ1's own handoffs: a two-by-two on CPVI against realised progress, split within condition, reporting the absent-signal and unused-signal rates with intervals.
+
+### Result of the fix
+
+Causal Agent Replay turns out to *strengthen* the position rather than threaten it — it makes replay-defined Y a well-precedented choice rather than an idiosyncratic one, and it does not do information theory, so the specific novelty (replay used to define the target of an information-theoretic boundary measure) is intact. The SocialJax replacement costs a day of analysis and no new compute, engages the same literature, and converts a possible RQ1 null into a reportable finding about which half of the channel failed.
+
+### So what / takeaways
+
+Adopting a research review without verifying it is the same error as trusting an experiment without a control. Two of the three most consequential findings here came from checking the review's own citations rather than from the review, and one of them changes a novelty claim. The general rule to carry forward: any positioning claim of the form "nobody does X" has a shelf life measured in weeks in this field, so it should be written on the axis that is *structurally* hard to occupy — here, intervention with matched controls — rather than on the axis that is merely currently unoccupied.
+
+---
+
 ## 2026-07-25 — Difficulty ladder was partly infeasible; retuned pre-freeze
 
 - **Area:** task geometry — difficulty ladder (slit widths) and the rotation action.

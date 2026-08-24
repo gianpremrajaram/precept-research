@@ -1,8 +1,22 @@
 # Precept Dissertation: End-to-End Research Roadmap
 
-**Prepared for:** Gian Prem Rajaram (UCL MSc CS) | **Supervisor:** Prof. Jun Wang (+ Prof. Philip Treleaven) | **Window:** mid-June 2026 to dissertation submission (target late August, deliberately early of the hard deadline to absorb slippage) | **Paper:** workshop/preprint submission 21 September 2026 | **Status:** execution plan built on Research Design v3 and the literature-review chapter. Companion: `ISSUES.md` (the same work as Claude-Code-pointable tickets).
+**Prepared for:** Gian Prem Rajaram (UCL MSc CS) | **Supervisor:** Prof. Philip Treleaven, advised by Prof. Jun Wang | **Window:** mid-June 2026 to dissertation submission, September 2026 | **Paper:** workshop/preprint submission thereafter | **Status:** execution plan built on Research Design v3 and the literature-review chapter, revised 23 August 2026 against the architecture-decisions review and the approved compute allocation. Companion: `ISSUES.md` (the same work as Claude-Code-pointable tickets).
 
-**How to use this.** This is the execution spine, not a restatement of the design. It fixes the architecture, the code, the experiment programme with alternatives, and the research milestone at each phase. Where a decision is still open (chiefly compute), it is isolated in §0 so the rest of the plan does not depend on it. Formatting follows the agreed conventions: BLUF, UK spelling, tables for multi-option comparisons, prose over bullet-spam.
+**How to use this.** This is the execution spine, not a restatement of the design. It fixes the architecture, the code, the experiment programme with alternatives, and the research milestone at each phase. Formatting follows the agreed conventions: BLUF, UK spelling, tables for multi-option comparisons, prose over bullet-spam.
+
+**The document set, and which one answers your question.**
+
+| You want | Read |
+|---|---|
+| The strategic spine: architecture, phases, gates | **this file** |
+| The picture, and what changed when | `docs/ROADMAP_VISUAL.md` |
+| The thesis text: why the measure is defensible, the full design | `docs/methodology.md` |
+| What is actually run: commands, artefacts, how results get written down | `docs/EXPERIMENTS.md` |
+| Why a design decision changed, dated and evidenced | `docs/experiment_design_log.md` |
+| What the code now does | `CHANGELOG.md` |
+| The backlog | GitHub Issues; `ISSUES.md` mirrors it offline |
+
+**Revision note (23 August 2026).** Six things changed since the 25 July draft: compute is resolved and approved; RQ3a's primary substrate moved to TraceElephant; *Y* on real logs is now defined by counterfactual replay; the probe methodology gained control-task selectivity, repeated cross-fits and pre-registered length controls; the SocialJax arm is cut on evidence and replaced by the absent-versus-unused decomposition; and the RQ3a baselines are re-anchored with the contribution reframed onto the prospective-versus-retrospective and cost axes. `docs/ROADMAP_VISUAL.md` §1 tabulates all six with their reasons. **One correction of record:** the pilot has not run, no episodes are recorded, and every result to date is against stub models — the engineering is built and the science has not started.
 
 **Abbreviations.** CPVI = conditional pointwise V-usable information; PVI = pointwise V-usable information; IB = information bottleneck; MI = mutual information; JSD = Jensen-Shannon divergence; Y = the physics outcome variable a probe predicts; V = the probe model family; LLM = large language model; vLLM = the high-throughput inference server; SGE = Sun Grid Engine (Myriad's scheduler); AWQ = activation-aware weight quantisation (4-bit); TP = tensor parallelism; AUROC = area under the ROC curve; ECE = expected calibration error; FA = failure attribution; COM = centre of mass; DoD = definition of done; G1/G2/G3 = the three pilot gates (capability, signal, groundedness).
 
@@ -14,13 +28,25 @@ The dissertation stands or falls on one measurement applied in one place: condit
 
 ---
 
-## 0. Constraints and the one open decision (compute and models)
+## 0. Compute: resolved
 
-This section isolates the only material unknown so the rest of the roadmap is decision-independent. Everything here can be frontloaded: secure compute, stand up serving, and lock the model ladder in Phase 0 before the science starts.
+**This section previously isolated the project's only material unknown. It is now closed.** A UCL Myriad allocation for *Conditional Usable Information at LLM Agent Boundaries* was submitted and approved on **23 August 2026**, sponsored by Prof. Philip Treleaven. The rest of this roadmap is therefore execution-bound rather than decision-bound.
 
-Signals: Myriad is single-node, high-throughput, SGE-scheduled, up to 4 GPUs and 36 cores per job, drawing on Free or three-monthly priority allocation. The GPU envelope spans V100-16GB (E/F nodes), P100 (J), A100-40GB (L), A100-80GB (U/V) and L40S-48GB. The open decision is which allocation you actually get, which sets the model-size ceiling and the seed budget. The plan therefore specifies a model ladder that degrades gracefully across the whole envelope, so any allocation yields a viable headline plus a robustness tier.
+**What was approved.** One GPU per job with at least 40 GB of memory for the bf16 14B workhorse (roughly 28–30 GB in use); the 8B pilot tier at ~16–18 GB fits any GPU class. Single node only — no multi-node and no multi-GPU serving is required. Jobs are scripted at 8 hours wall time, 8 cores, 32 GB host RAM, 1 GPU. Model weights are cached on scratch with `HF_HOME` pointed there, roughly 45 GB across the two sizes. The GPU job runs vLLM as an OpenAI-compatible server for the life of the job and the experiment client connects over localhost on the same node. Declared scale is on the order of 250 episodes and 6,000–12,000 model calls — single-digit GPU-hours — with all analysis CPU-side and needing no cluster resource.
 
-**Open decision (resolve in Phase 0, track as ticket DSE-014).** Confirm (a) Free vs priority Myriad allocation, which sets realistic queue latency and how many seeds and conditions are affordable, and (b) the largest GPU you can reliably get (40GB vs 80GB A100, or L40S), which sets whether the strong tier runs unquantised or 4-bit. Until resolved, default to the 14B workhorse path, which fits every Myriad GPU.
+**Practical consequences for the jobscript. Items 1-2 are closed (24 August 2026); 3 stands; 4-5 were found closing them.**
+
+1. ~~`scripts/myriad/serve.sh` carries `-l gpu=1` but does not constrain the node class; an A100 node is requested on Myriad with an `-ac allow=` directive, and the project code (`-P`) is still a placeholder now that the allocation exists.~~ **Closed:** the jobscripts carry `#$ -ac allow=L` (the 40 GB A100s the bf16 14B needs), and `-P` is passed on the qsub line by design — an SGE directive cannot read the environment, so there is no usable default to hard-code.
+2. ~~`HF_HOME` is not set in the jobscript, so a first run would download ~45 GB into the home quota rather than scratch.~~ **Closed:** `HF_HOME` points at Scratch, and so do `XDG_CACHE_HOME`, `VLLM_CACHE_ROOT` and `TRITON_CACHE_DIR` — the torch/triton/vLLM caches default into `$HOME` too and count against the same 1 TB quota.
+3. The allocation form's dependency list names Python 3.12 in one field while the text pins 3.11 throughout. 3.11 is correct and is what `pyproject.toml` enforces; the form field is a typo with no consequence beyond a possible support conversation.
+4. **Found and closed while writing `docs/myriad.md`:** the jobscript's `-pe smp 8 -l mem=32G` was a request for **256 GB**, because UCL SGE's `-l mem` is *per slot*. That exceeds an L node's 160 GB usable, and SGE does not reject an unsatisfiable request — the job queues forever. Now `-l mem=4G` (= 32 GB total). Nothing in the repository or CI could have caught this; it is only visible against the cluster's own documentation.
+5. **Found and closed at the same time:** `CUDA_MODULE` defaulted to `cuda/12.4`, which is not a Myriad module name (UCL's are versioned like `cuda/12.2.2/gnu-10.2.0`, and the GPU-node driver is on the 12.2 branch). Under `set -e` a failed `module load` kills the job before vLLM starts. The default is corrected and `CUDA_MODULE=none` skips the load — vLLM's wheels bundle their own CUDA runtime through torch, so the module is a convenience rather than a requirement.
+
+The full cluster runbook — access, node classes, resource-request rules, the first-session order, and what remains unverified on the box — is **`docs/myriad.md`**.
+
+**No HPC experience is declared**, so the first cluster session should be treated as an onboarding task in its own right — SGE submission conventions, queue selection, scratch and quota management, the module system — and not as part of a science run. This is precisely why the free local pilot in §3.1 exists: every integration defect it catches is one not being debugged inside a queue.
+
+**Interim and local runs are permanently distinguishable.** The sweep manifest records the serving substrate and endpoint and deliberately excludes both from the configuration hash, since the substrate is an environment property rather than experiment identity. Standing policy: local and interim data inform decisions — the pilot gate verdicts, the one allowed retune, the label horizon, prompt wording, budgets — and headline data is regenerated on Myriad.
 
 The model ladder below is the recommendation. Licences favour reproducibility: Qwen3 is Apache 2.0 and has the most stable tool calling and JSON adherence in mid-2026; Llama is research-permissive; Gemma and Mistral Small are clean enough for academic use. Table abbreviations: bf16 = 16-bit weights; ctx = context length used; node = the Myriad node type that fits it.
 
@@ -59,11 +85,13 @@ Signals: the four RQs map one-to-one onto the unoccupied cell identified in the 
 
 2. **RQ2 - measurement primitive.** Do a retrospective CPVI (scored after the outcome) and a prospective twin (scored from the handoff and shared state before the outcome) agree, and does a cheap runtime proxy track the offline CPVI ground truth? H3: the twins correlate strongly; H4: the proxy (a target-free statistic) tracks CPVI closely enough to gate on. The conditioning is the Hewitt et al. (2021) move; the divergence analysis (JSD over probe predictions, plus embedding cosine) is the cheap-proxy bridge.
 
-3. **RQ3a - external validity.** On real MAS failure logs (Who&When primary; MAST-Data secondary), does boundary CPVI localise the responsible step or trace better than schema validity or mean embedding cosine? H5: low-CPVI handoffs coincide with the annotated decisive error step or inter-agent-misalignment trace label, beating the weak published attribution baselines. This is the bridge from a synthetic task to the field, and the headroom is real (best Who&When baseline is 53.5% agent / 14.2% step).
+3. **RQ3a - external validity.** On real MAS failure logs (**TraceElephant primary**; Who&When as a transfer-only comparability anchor; MAST-Data secondary), does boundary CPVI localise the responsible step or trace better than schema validity or mean embedding cosine? H5: low-CPVI handoffs coincide with steps whose substitution changes the outcome under counterfactual replay. Two changes from the earlier statement. The substrate moved because Who&When records agent *outputs* only and cannot supply the receiver's input context the conditional construct requires, and because all 184 of its instances are failures, which makes the refit arm undefined rather than merely hard; TraceElephant records `input_context` per step and ships non-failing executions too. And the target moved: *Y* is defined by counterfactual replay rather than by the decisive-step annotation, because training the probe on the annotation the localisation claim is evaluated against is circular. The framing changed with them — the 53.5% / 14.2% figures are a dated floor, not live headroom, and the claim is made on the prospective-versus-retrospective and cost axes rather than on raw localisation accuracy against a purpose-trained tracer.
 
 4. **RQ3b - causal gate.** Does blocking low-CPVI handoffs at runtime improve outcomes, and does the improvement survive a matched-firing-rate control (block the same number of random handoffs) and a random-trigger control? H6: gating improves success/efficiency over both controls. This is precisely the intervention Lowe et al. (2019) demand; correlation between CPVI and outcomes is not enough.
 
-Optional. **C5 principal-agent supervisor arm** tests the buried assumption in Rauba et al. (2026) that aligned-incentive asymmetry is benign, by routing handoffs through a supervisor and measuring residual agency loss. **SocialJax MARL comparison** runs the information-gradient idea in a learned-message setting for contrast. Both are first to cut.
+Optional. **C5 principal-agent supervisor arm** tests the buried assumption in Rauba et al. (2026) that aligned-incentive asymmetry is benign, by routing handoffs through a supervisor and measuring residual agency loss. It is deferred rather than cut, and deferred for a structural reason: a third agent creates a second boundary per turn, so the unit of measurement has to be respecified rather than merely re-run.
+
+**The SocialJax MARL comparison is cut, on evidence rather than schedule** (see §3.6), and replaced by the **absent-versus-unused decomposition** — an Eccles et al. (2019) split of the RQ1 handoffs on CPVI against realised progress, which delivers the same contrast on data the main sweep already produces, costs no new compute, and converts a possible RQ1 null into a reportable finding about which half of the channel failed.
 
 ---
 
@@ -183,7 +211,7 @@ Signals: a single degradation ladder applied only to the A-to-B channel, so any 
 | C4 | Lexical/semantic noise (token dropout or paraphrase corruption) | Robustness of usable information to corruption |
 | C5 (optional) | Supervisor relay (principal-agent) intermediates the handoff | Residual agency loss under aligned incentives |
 
-C3 is the structural guard against the floor effect: it forces the message to carry information the shared state does not, so CPVI cannot be near-zero by construction.
+C3 is the one condition whose receiver observation is genuinely restricted, so the conditioning set varies across the design and the message is the only route for goal/global information. (An earlier version of this line called C3 "the structural guard against the floor effect" on the theory that CPVI is near-zero by construction elsewhere; the pilot falsified that — C0 measures +0.19 bits with the receiver holding the full state, because usable information is probe-relative. See docs/experiment_design_log.md 2026-08-24 and methodology §9.2.)
 
 ### 2.4 Measurement stack (CPVI): outcome variable, probe family, estimator
 
@@ -242,7 +270,9 @@ Calibration: choose the gate operating point by validating each statistic agains
 
 Signals: one pilot with hard gates, four core experiments in priority order, two optional arms with cut-lines, and a single statistical plan. Approaches that are alternatives (self-play vs heterogeneous, serialisation modes) are run as designed cells, not afterthoughts.
 
-### 3.1 Pilot (Phase 1, 1-2 weeks): de-risk before committing
+### 3.1 Pilot (Phase 1): de-risk before committing
+
+**The pilot runs locally and free before it runs anywhere else.** The entire stack — simulator, channel, agent graph, estimator, statistics, calibration, pilot harness, RQ1 driver — has been built and tested against *stub* models and has never seen a real one. Discovering the resulting integration defects inside an SGE queue would waste the allocation on debugging. The first model calls therefore happen on the development machine against a local OpenAI-compatible server running the 8B pilot tier at 4-bit, at zero cost and with no cluster dependency, which exercises the client, guided JSON decoding, the prompts and the transcript end to end. The pilot grid is then re-run on Myriad to confirm the gate verdicts hold on the hardware that will produce the headline results — about an hour, and it pre-empts the obvious question of whether the pilot ran somewhere else. `docs/EXPERIMENTS.md` §2 carries the stage-by-stage detail.
 
 Three gates decide whether the headline task is viable; failing a gate triggers the fallback ladder, not a scramble.
 1. **G1 capability** - on C0 (full channel), do self-play agents solve the task above a floor success rate (e.g. >= 60% within budget on easy slit widths)? If not, the models cannot do the task and the headline pivots to RQ3a.
@@ -263,17 +293,33 @@ Metrics: success rate, steps-to-goal, collisions, mean and distribution of per-h
 
 Design: on the RQ1 episodes, compute the retrospective CPVI and the prospective twin per handoff, plus the three runtime statistics. Tests: H3 retrospective-prospective agreement (correlation, Bland-Altman); H4 proxy-vs-CPVI tracking (rank correlation, AUROC of each statistic for predicting low-CPVI and for predicting failure); the divergence analysis (JSD over probe predictive distributions and embedding cosine as the cheap bridge). Output: the calibrated operating point used by RQ3b, and the encoder-sensitivity check.
 
-### 3.4 RQ3a - external validity (Who&When primary, MAST secondary, TRAIL fallback)
+### 3.4 RQ3a - external validity (TraceElephant primary, Who&When anchor, MAST secondary)
 
-Design: extract agent-to-agent handoffs and the surrounding state from real failure logs, compute CPVI per handoff (re-fitting probes on a held-out portion of the logs, or transferring the simulator-trained probe and reporting both), and test whether low CPVI localises the annotated decisive error step (Who&When) or the inter-agent-misalignment trace label (MAST). Baselines to beat: schema validity, mean embedding cosine, and the published Who&When attribution methods (all-at-once, binary search, step-by-step). Labelling per the decision in Q8: use the released MAST LLM-as-judge annotator and the Who&When annotations as ground truth, with a small human-agreement audit on a sample (report kappa); avoid full manual annotation. This is the bridge that turns a synthetic finding into a field claim, and the weak published baselines give real headroom.
+Design: extract inter-agent handoffs and the receiver's surrounding context from real failure logs, compute CPVI per handoff under two regimes reported separately and never pooled — *transfer* (apply the simulator-fitted probe directly) and *refit* (fit on held-out logs, grouped on trace id) — and test whether low CPVI localises the steps that matter.
+
+Three decisions define this arm and each is a change from the earlier plan.
+
+**Substrate.** TraceElephant (ACL 2026, CC-BY-4.0) is primary because it records `input_context` as well as `output_content` per step, which maps onto the receiver's observation and the message with no approximation; 380 executions of which 220 are annotated failures, so trace-level outcome is genuinely two-class; and it ships runnable environments, which is what makes replay and live interception possible at all. Who&When is retained as a transfer-only comparability anchor so the familiar published numbers sit in the same table, with every row it emits carrying an explicit reconstructed-observation flag so approximated and true conditioning state can never be silently mixed. MAST-Data is a cheap secondary for the coarse trace-level question only; its annotations are trace-level and cannot test step localisation.
+
+**Outcome.** *Y* is defined by **counterfactual replay** — re-run from step *t* with the step's output substituted, and record whether the outcome changed — with majority vote over *n* replays, the replay agreement rate reported as a data-quality statistic, a hard spend cap, a dry-run cost projection, stratified step sampling recorded in the manifest, and the cheap trace-success label computed for every trace regardless so the refit arm survives if replay has to be cut. The decisive-step annotation is explicitly *considered and rejected* as *Y*, because training the probe on the label the localisation claim is evaluated against is circularity with extra steps. Replay makes the external-validity and causal claims rest on one epistemology rather than two, and it is precedented: AgenTracer built a 2,000-trace corpus this way, Causal Agent Replay formalises it, and Jaques et al. (2019) established the same logic for influence in MARL.
+
+**Framing.** Baselines are schema validity and mean embedding cosine, with the published attribution methods tabulated at their reported numbers *and their dates*. Do not claim CPVI beats a purpose-trained failure tracer at localisation; it probably will not and that is not what a measure is for. The comparison is on the operating characteristic — what localisation is obtained per unit of compute, and whether any of it exists before the outcome does — which is both more honest and the axis that connects RQ3a to RQ3b, where a retrospective tracer is useless by construction.
+
+**Verify before writing.** The corpus spike (counts, schema mapping, ten parsed traces per corpus) has no dependency beyond network access and runs first. RQ3a is the pre-planned fallback that can carry the dissertation alone, and a fallback that has not been verified is not a fallback.
 
 ### 3.5 RQ3b - causal gate
 
 Design: re-run a subset of RQ1 conditions with the runtime gate active, blocking handoffs whose runtime statistic falls below the RQ2-calibrated threshold and re-prompting, against the matched-firing-rate and random-trigger controls. Test H6 (gating beats both controls on success/efficiency). This is the interventional answer to the Lowe et al. (2019) critique and the demonstration of the active-control-layer contribution.
 
-### 3.6 Optional arms with cut-lines
+### 3.6 Optional arms: one cut, one deferred, one stretch
 
-C5 supervisor (principal-agent): route the handoff through a supervisor relay and measure residual agency loss under aligned incentives, testing the Rauba et al. (2026) assumption. Cut if Phase 1-4 run late. SocialJax MARL comparison: run the information-gradient idea with learned messages for contrast. Cut first; it is a "nice contrast", not load-bearing.
+**SocialJax MARL comparison — cut, on evidence.** The scheduling argument was the weak version; the real one is that the suite has no communication channel to score. SocialJax (ICLR 2026, Apache-2.0) ships gridworld sequential social dilemmas derived from Melting Pot 2.0 in which agents interact through spatial actions and reward structure, and its shipped algorithms (IPPO, MAPPO, VDN, and the reward-shaping variants) are not communication algorithms. Running the arm would mean adding a channel to an environment whose social-dilemma property is validated without one, porting a comm-capable algorithm into the JAX stack, training it to convergence against the same GPU allocation the main sweep needs, and redefining CPVI over learned continuous vectors. The last is the killer: the resulting comparison sets frozen natural-language messages scored at inference against learned vector messages trained end to end, confounding the training regime, the message space and the task in one contrast. The correct sentence for the limitations chapter is that the learned-message setting is a *different measurement regime*, not a harder version of the same one — which is a stronger limitation than "we ran out of time", and true.
+
+**Replacement, at a fraction of the cost.** Run the Eccles et al. (2019) absent-versus-unused decomposition on RQ1's own data: a handoff carrying low CPVI is an absent signal; one carrying high CPVI whose receiver still acts badly is an unused signal. Splitting the C0–C4 handoffs on that two-by-two costs a day of analysis, needs no new compute, cites the literature the SocialJax arm was meant to engage, and converts a possible RQ1 null into a reportable finding about which half of the channel failed. Pre-register it before the main sweep, with the median split taken within condition so the split is not itself a restatement of the condition effect.
+
+**C5 supervisor (principal-agent) — deferred, not cut.** Routing the handoff through a supervisor relay and measuring residual agency loss under aligned incentives is the direct empirical test of the Rauba et al. (2026) assumption and remains the most valuable single extension. It is deferred because a third agent creates a second boundary per turn, so the unit of measurement must be respecified rather than merely re-run. Decide after RQ1 freezes.
+
+**Stretch: the gate against a real multi-agent system.** TraceElephant ships a non-intrusive LLM API middleware that intercepts and can modify requests and responses without changing the original agent code, plus runnable agent systems. That is exactly the seam `RuntimeGate` needs, and taking it would move RQ3b's causal claim from a 2D simulator onto a real system — a materially stronger result. Do not attempt it before RQ1 and RQ2 are frozen; it competes directly with write-up time, and the threshold would have to be recalibrated on that domain, since transporting the simulator's operating point is not defensible.
 
 Statistical plan. Pre-register the primary hypotheses and the analysis. Power: pilot estimates the effect size for the C0-to-hard gap; size the seed count to detect it at 80% power; a practical default is tens of episodes per cell across multiple seeds, scaled by the compute decision in §0. Control the family-wise error across the condition contrasts (Holm or Benjamini-Hochberg). Report effect sizes and uncertainty intervals, not just significance, and report seed sensitivity given LLM non-determinism.
 
@@ -281,21 +327,23 @@ Statistical plan. Pre-register the primary hypotheses and the analysis. Power: p
 
 ## 4. Phase-by-phase plan with research milestones
 
-Signals: roughly ten to eleven weeks from mid-June to a late-August dissertation, then about three weeks to the 21 September paper. Each phase has a research milestone (what must be true scientifically) and an engineering deliverable (what must exist in the repo). The pilot gates front-load the central risk. Table abbreviations: R-milestone = the research claim/decision the phase must produce; gate = the go/no-go.
+Each phase has a research milestone (what must be true scientifically) and an engineering deliverable (what must exist in the repo). The pilot gates front-load the central risk. Table abbreviations: R-milestone = the research claim/decision the phase must produce; gate = the go/no-go. `docs/ROADMAP_VISUAL.md` §3 renders the same plan against the calendar; ordering is the load-bearing part and the dates are indicative.
 
-| Phase | Weeks (indicative) | Research milestone (R) | Engineering deliverable | Gate / decision |
+| Phase | Research milestone (R) | Engineering deliverable | Gate / decision | Status |
 |---|---|---|---|---|
-| 0. Foundation | wk 1 | Compute and model ladder fixed; reproducibility baseline | Experiments repo, env, vLLM serving on Myriad, CI, data versioning, reproducibility gaps closed | DSE-014 compute decision resolved |
-| 1. Pilot | wk 2-3 | Task viability and presence of an information gradient established | Simulator, agent loop, conditions C0-C4, episode runner, logging | G1/G2/G3 pass, or invoke fallback ladder |
-| 2. Measurement stack | wk 3-4 | Y definition and probe family locked; CPVI estimator validated on pilot data | Featuriser, PVI/CPVI estimator, probe training, divergence proxy, runtime statistics | Y and V frozen; encoder chosen |
-| 3. RQ1 main runs | wk 4-6 | H1/H2 result: gradient measured, CPVI tracks it | Full factorial sweep executed and logged; self-play + heterogeneous + serialisation cells | RQ1 result frozen for write-up |
-| 4. RQ2 + gate calibration | wk 6-7 | H3/H4 result: twins agree, proxy tracks CPVI; gate operating point chosen | Twin and proxy analysis; calibrated gate threshold | Gate ready for RQ3b |
-| 5. RQ3b causal arm | wk 7-8 | H6 result: gating beats both controls (or a clean null) | Gate-active runs + controls executed | Causal claim frozen |
-| 6. RQ3a external validity | wk 7-9 (parallel) | H5 result: CPVI localises real failures vs baselines | Who&When/MAST extraction, CPVI on logs, baseline comparison, human-agreement audit | External-validity claim frozen |
-| 7. Dissertation assembly | wk 9-11 | Coherent distinction-grade narrative across all frozen results | Full draft, figures, reproducibility appendix, examiner-runnable artefact | Submit (late August) |
-| 8. Paper | post-submission to 21 Sep | RQ1+RQ2 (and gate if ready) packaged | arXiv preprint / workshop submission | Submit 21 September |
+| 0. Foundation | Compute and model ladder fixed; reproducibility baseline | Repo, env, CI, config/manifest/determinism, data versioning | Compute decision resolved | **Done** — allocation approved 23 Aug 2026 (§0) |
+| 1. Pilot | Task viability and presence of an information gradient established | Simulator, agent loop, conditions C0-C4, episode runner, logging | G1/G2/G3 pass, or invoke fallback ladder | **Built, not run.** Blocked on a driver entry point and a local structured-output adapter |
+| 2. Measurement stack | Y definition and probe family locked; CPVI estimator validated on pilot data | Featuriser, PVI/CPVI estimator, probe training, divergence proxy, runtime statistics | **Y and V frozen; encoder pinned; selectivity and repeat count set** | **Built, not frozen.** Encoder revision still unpinned; DSE-043/044 must land before the freeze |
+| 3. RQ1 main runs | H1/H2 result: gradient measured, CPVI tracks it | Full factorial sweep executed and logged; self-play + heterogeneous + serialisation cells | RQ1 result frozen for write-up | Drivers built; sweep not run |
+| 4. RQ2 + gate calibration | H3/H4 result: twins agree, proxy tracks CPVI; gate operating point chosen | Twin and proxy analysis; calibrated gate threshold | Gate ready for RQ3b | Estimator and calibration built; analysis driver (DSE-022) not built |
+| 5. RQ3b causal arm | H6 result: gating beats both controls, or a clean null | Gate integration, retry feedback template, gate-active runs + both controls | Causal claim frozen | Not built (DSE-018, DSE-045, DSE-025) |
+| 6. RQ3a external validity (parallel) | H5 result: CPVI localises real failures on the operating-characteristic axis | TraceElephant loader, replay labeller, localisation analysis under both regimes | External-validity claim frozen | Not built (DSE-041, DSE-042, DSE-024 rescoped) |
+| 7. Dissertation assembly | Coherent distinction-grade narrative across all frozen results | Full draft, figures, reproducibility appendix, examiner-runnable artefact | Submit | Method and design chapters drafted in `docs/methodology.md` |
+| 8. Paper | RQ1+RQ2, and the gate if ready, packaged | arXiv preprint / workshop submission | Submit | Follows submission |
 
-Narrative on sequencing. Phases 5 (RQ3b) and 6 (RQ3a) run partly in parallel because RQ3a depends only on the measurement stack (Phase 2), not on the gate; this is the slack that protects the late-August target. If Phase 1 fails its gates, Phase 6 becomes the headline and the simulator phases shrink to a documented negative result, which the schedule absorbs because RQ3a was always a parallel track.
+Narrative on sequencing. Phases 5 and 6 run partly in parallel because RQ3a depends only on the measurement stack, not on the gate; that parallelism is the slack that protects the schedule. If Phase 1 fails its gates, Phase 6 becomes the headline and the simulator phases shrink to a documented negative result, which the plan absorbs because RQ3a was always a parallel track — provided the corpus spike has actually been run, which is why it is scheduled first and not last.
+
+**The honest read on where the project sits.** The engineering is substantially done and the science has not started: the spine from arena to gate calibration is built and tested, and zero episodes are recorded. The constraint was never Myriad access — it is that the pilot has never run, and that three small pieces of code stand between the repository and its first result. The compression is real, because the code for Phases 1 to 4 exists; the risk is that the pilot slips behind another week of building. The engineering has stopped being the constraint, and the plan should stop treating it as one.
 
 ---
 
@@ -305,9 +353,13 @@ Signals: the live risks are the lit-review red-team's plus execution risk; each 
 1. **Models cannot ground 2D geometry (R1).** Most likely failure. Mitigated by the Phase 1 gates, the serialisation A/B, the discrete macro-action interface, and the RQ3a fallback headline. Managed, not eliminated; the thesis states this honestly.
 2. **Probe circularity against CPVI.** Mitigated by validating runtime statistics against realised outcomes and by reporting the probe-independent s_cos.
 3. **Floor effect (CPVI near zero).** Mitigated structurally by C3 asymmetric visibility and by reporting the PVI-minus-CPVI gap as a finding.
-4. **Compute scarcity / queue latency.** Mitigated by the 14B workhorse default, frontloading the model ladder in Phase 0, and sizing seeds to the resolved allocation.
-5. **Frontier closes before submission.** Mitigated by finishing RQ1+RQ2 first and shipping the September paper; the conditional construct and the gate demonstration are the durable claim.
-6. **Scope creep / late phases.** Mitigated by the explicit cut-lines on C5 and SocialJax and the parallel RQ3a track.
+4. **Compute scarcity / queue latency.** Largely closed: the allocation is approved (§0). Residual risk is queue latency and first-time SGE friction, mitigated by the 14B workhorse default, by treating the first cluster session as onboarding rather than science, and by running the pilot locally and free so the window is spent on sweeps rather than debugging.
+5. **Frontier closes before submission.** Mitigated by finishing RQ1+RQ2 first and shipping the paper; the conditional construct and the gate demonstration are the durable claim.
+6. **Scope creep / late phases.** Mitigated by the evidenced SocialJax cut, the deferral of C5, and the parallel RQ3a track.
+7. **Stale baseline framing (R7).** Trigger: a reader cites a current failure tracer and asks why the headroom argument uses 2025 numbers. Response: already re-anchored — the 53.5% / 14.2% figures are a dated floor, and the contribution is framed on the prospective-versus-retrospective and cost axes. Ticket DSE-047.
+8. **Probe selectivity (R8).** Trigger: high training AUROC, moderate held-out AUROC, and a control-task CPVI that is not near zero — a live risk at 1,536-dimensional concatenated features against a few hundred pilot handoffs, which the existing overfit monitor does not settle. Response: report selectivity alongside every CPVI figure; if control CPVI is materially above zero, apply the pre-registered capacity-reduction rule *before* the freeze and report the rule and its outcome. Ticket DSE-043.
+9. **Replay non-determinism (R9).** Trigger: the same counterfactual replay yields different outcomes across runs, so *Y* on logs is unstable. Response: majority vote over *n* replays, agreement rate reported as a data-quality statistic, steps below the floor flagged rather than dropped, with *n* and the floor pre-registered. Ticket DSE-042.
+10. **Online-auditing adjacency (R10).** Trigger: a reader observes that pre-outcome failure detection now exists — AgentForesight reframes attribution as online auditing over trajectory prefixes — and asks what remains of the prospective claim. Response: the claim was never prospectivity alone. The distinctions are that this is a *measure* with units rather than a trained detector emitting a verdict, that it scores a *single boundary* rather than a prefix, and that it *intervenes* and is validated against a matched-firing-rate control, which no online-auditing result has done. Argued in `docs/methodology.md` §7.
 
 ---
 

@@ -8,6 +8,145 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
 ## [Unreleased]
 
 ### Added
+- **DSE-044 — The second pre-registered length control** (`analysis/stats.py`,
+  `experiments/rq1.py`). PREREGISTRATION §5 pre-registers *two* controls for the length/condition
+  confound and states that both are reported; only the covariate one existed.
+  - `overlap_restricted_contrast(value, covariate, treated, n_bins=3, min_per_cell=2)` stratifies
+    episodes into equal-count quantile bins of the covariate and differences the two groups **only
+    inside bins holding at least `min_per_cell` of each**, size-weighting across the retained bins.
+    Returns `OverlapRestrictedContrast`: the delta, the unrestricted delta beside it, `n_bins` /
+    `n_kept` / `n_total` (bookkeeping is part of the result — a delta read without them is
+    unreadable), an `interpretable` flag, and a note.
+  - **Quantile strata, not a nearest-neighbour caliper.** At the E3 cell's six episodes per
+    condition a caliper has too little support and can collapse the comparison to one or two
+    idiosyncratic pairs; coarse strata degrade visibly instead (`n_bins` falls). Where the two
+    length distributions do not meet at all, the result is `interpretable=False` with a NaN delta
+    rather than an extrapolated number.
+  - Heavy ties collapse quantile bins by construction, so `n_bins` reports strata **retained**, not
+    strata requested — pinned by a test.
+  - `RQ1Result.length_matched` carries one `LengthMatchedContrast` per Ck, holding the restricted
+    contrast on **both** success and CPVI. Both share one stratification (bins depend only on length
+    and condition), so their `n_kept`/`n_bins` always agree. `RQ1Config` gains `length_bins=3` and
+    `length_min_per_cell=2`. Persisted automatically via `write_rq1`'s `rq1.json`.
+  - **Framed as an overlap-restricted, length-adjusted *sensitivity analysis*, never as a clean
+    estimate of the channel effect with length removed** — the overlap region is a non-random subset
+    of both arms. Carried in the docstring, `ANALYSIS_PROTOCOL["length_control"]` and
+    PREREGISTRATION §5 so it cannot be quietly upgraded to a causal claim.
+- **`scripts/myriad/prefetch.sh` — login-node pre-pull** (new script). `docs/myriad.md` §9 flags
+  "compute nodes may have no outbound internet" as the single unknown that can write off a whole
+  session; a GPU job that downloads is then not slow but dead, after the queue wait.
+  - Pulls the tier's weights **and** the embedding encoder (`EncoderConfig`'s pinned default, so it
+    cannot drift from what the analysis loads) into the Scratch caches a job reads.
+  - Runs `gquota` first: the failure this guards against is a download that fills the quota and
+    leaves the *next* job unable to write its own `.o`/`.e` files, which reads as a scheduler fault.
+- **`scripts/myriad/_common.sh` — shared jobscript helpers** (new file). `resolve_tier` and
+  `cache_to_scratch`, sourced by `serve.sh`, `pilot.sh` and `prefetch.sh`, so the prefetch cannot
+  populate a cache the server does not read.
+- **DSE-050 — `scripts/myriad/pilot.sh`, a single job that serves and drives** (new script). Nothing
+  in the repo could run an experiment on the cluster: `serve.sh` starts vLLM on a compute node, and
+  a login node running `preceptx-pilot --base-url localhost:8000` resolves `localhost` to the login
+  node and finds nothing.
+  - **One job, not two**, because co-locating serve and drive makes the endpoint a loopback address
+    again — which is what `LLMClient` already assumes. Splitting them would require discovering the
+    compute node's hostname, holding a port open between nodes, and waiting in the queue twice.
+  - **`serve.sh` stays the single launch path.** `pilot.sh` runs it as a background child rather
+    than duplicating the vLLM command line; because `serve.sh` `exec`s vllm, `$!` *is* the server,
+    so one `trap ... EXIT` tears it down on success, failure and the scheduler's wallclock SIGTERM
+    alike.
+  - **Readiness wait with a liveness check**: polls `/v1/models` to a `SERVE_TIMEOUT` (default
+    1800 s, sized for a cold weights cache downloading ~28 GB) but aborts immediately if the server
+    process is gone, so a bad revision or an OOM fails in seconds rather than burning the timeout.
+  - **The embedding encoder is warmed before any GPU time is spent.** `Featuriser` loads its encoder
+    lazily, i.e. at *analysis* time — after every episode has run. On a node with no outbound
+    network that failure would land at the end of a full GPU hour with the dataset already paid for.
+  - **`PRECEPTX_SERVING_SUBSTRATE` is derived from `nvidia-smi`**, so the manifest records the card
+    that actually served rather than the node class that was requested.
+  - Grid axes are **not** named in the jobscript: they come from the CLI defaults, which are the
+    pre-registered E3 cell, so the two cannot drift apart silently.
+- **`docs/myriad.md` — cluster runbook and findings** (new doc). Access via the SSH gateway (keys
+  mandatory from outside UCL since 23 March 2026) with a `ProxyJump` stanza; the node-class table
+  (L = 4×A100-40 GB, U/V = 4×A100-80 GB, E/F = 2×V100, D = CPU) mapped to our tiers; the per-slot
+  `mem` rule; wallclock caps by core count; the 1 TB shared home/Scratch quota; the uv + Python 3.11
+  bootstrap; an ordered first-session runbook that does the **first vLLM launch interactively under
+  `qrsh`**, not through the batch queue; and a §9 checklist of what is documented but **not yet
+  verified on the cluster** — the exact CUDA module name, whether compute nodes have outbound
+  internet, `allow=L` queue latency, and the wallclock the 40-episode E3 cell actually needs.
+  - Records why **Kathleen is not usable** for this project (no GPUs, diskless, built for multi-node
+    MPI), so it is not re-evaluated later.
+- **DSE-045 — Gate retry-feedback template** (`agents/prompts.py`, `experiments/sweep.py`). Under
+  greedy decoding a re-prompt is a fixed point: same prompt, same message, same statistic, same
+  block, for every bounded retry. DSE-018 as written would have passed its unit tests and been
+  vacuous live, measuring the cost of stalling rather than the value of blocking.
+  - `GATE_FEEDBACK` instructs A to state the push direction, whether the load must rotate first and
+    which way, and the goal direction — appended to A's user turn on a blocked retry and nowhere
+    else. `prompt_a(state, gate_feedback=False)` is byte-identical to the previous `prompt_a(state)`
+    (pinned by a test), so no existing dataset shifts.
+  - `GATE_FEEDBACK_VERSION` is versioned **separately from `PROMPT_VERSION`** — the template is part
+    of the RQ3b *treatment*, not the base task, so a wording change re-shapes the causal arm while
+    leaving every ungated dataset untouched.
+  - Recorded in `SweepManifest` but **deliberately not folded into `dataset_hash_for`**: the gate is
+    unbuilt, so the template reaches no model today and hashing it would re-key every existing
+    dataset over a string nothing reads. It must join the dataset hash when DSE-018 makes retries
+    live — noted in the code and the design log so the step is deferred, not lost.
+  - **Nonzero temperature on retry is rejected** (recorded in PREREGISTRATION §6 before any gate data
+    exists): it breaks the determinism story mid-episode and confounds the gate's effect with an
+    increase in sampling entropy, when H6's four arms are built to differ in one thing at a time.
+- **`shellcheck` pre-commit hook** (`shellcheck-py`, the pip wrapper — no Docker, so it works in CI
+  and a bare `pre-commit install`). Both jobscripts now carry real control flow and only ever run on
+  the cluster, where a typo costs a queue slot rather than a test run. Both pass clean.
+- **DSE-043 — Control tasks and probe selectivity** (`measure/pvi_cpvi.py`, `experiments/rq1.py`,
+  `experiments/pilot.py`). Probe accuracy alone cannot separate "the representation encodes this"
+  from "the probe learned the task" (Hewitt & Liang, EMNLP 2019), and at 1,536-dimensional
+  concatenated features on pilot-scale N that is live — the held-out AUROC monitor does not address
+  it.
+  - `control_labels(y, seed)` draws i.i.d. random labels at `y`'s observed base rate,
+    seed-reproducible; `control_task_cpvi(...)` re-estimates CPVI against them through the **same
+    splitter and the same probe family**, so the comparison is like for like.
+  - `CpviResult` gains `control_mean_cpvi` and `selectivity` (`mean_cpvi − control_mean_cpvi`);
+    `ConditionSummary` gains `mean_control_cpvi` and `selectivity`; `RQ1Result` gains the pooled
+    pair; G2's detail block carries both, because the pre-registered capacity rule is read off the
+    re-gate report.
+  - The CPVI figure caption carries pooled selectivity.
+  - **Directional expectation, pre-registered before measurement:** control CPVI is `≤ 0` — against
+    random labels neither probe generalises out of fold and `g_cond` carries twice the features, so
+    it overfits the noise harder. Measured on E3-local v4: **−0.006 bits** pooled (every condition
+    between −0.011 and −0.003), so the capacity ladder does not fire. The diagnostic is not inert:
+    an almost-unregularised probe at n=30, d=128 reads **+0.93**, and an over-capacity MLP **+1.39**.
+- **DSE-044 — Repeated cross-fit stabilisation and length control** (`measure/pvi_cpvi.py`,
+  `analysis/stats.py`, `experiments/rq1.py`).
+  - `ProbeConfig.n_repeats` (default **1**) and `cpvi_with_sd(...)` returning per-instance
+    `(mean, across-repeat SD)`. **Repeat 0 is the canonical fold assignment** and repeats 1…R−1
+    reshuffle the grouped folds under distinct seeds, so `n_repeats=1` reproduces the unrepeated
+    estimator bit for bit — pinned by a test. `_make_splitter` gained the `fold_seed` knob that
+    makes this possible: `StratifiedGroupKFold` was previously unshuffled, so naive repeats would
+    have been identical copies.
+  - `cpvi_sd` and `msg_tokens` are persisted in `scores.parquet`. On E3-local v4 the mean
+    per-handoff across-repeat SD is **0.042 bits** — comparable to C3's whole mean CPVI (+0.058),
+    which is precisely why a single cross-fit is not enough for scores that feed H2 and RQ2.
+  - `analysis/stats.py::partial_spearman(x, y, control)`: first-order partial rank correlation by
+    residualising ranks. A control that fully explains a rank leaves floating-point dust rather than
+    exact zeros, so the degenerate guard compares residual spread **relative to** the pre-residual
+    spread — an absolute `== 0` check reported a spurious ±1.
+  - `analyse_rq1` reports `partial_spearman_length` (CPVI vs progress, delivered-message token
+    length partialled out) and `MixedModelSummary.path_b_length_controlled` (path *b* refit with
+    episode-mean message length as a covariate), reported alongside the uncontrolled path. Length is
+    counted in **whitespace tokens of the delivered message** — the same unit the C1 cap operates
+    in, so the covariate measures exactly what the channel manipulates. Undefined (NaN) rather than
+    fitted when every episode's mean length is identical.
+  - **The pre-registered R = 5 is wired into `PilotConfig.cpvi_probe` and `RQ1Config.probe`;**
+    `ProbeConfig`'s own default stays 1.
+- **Last pass before Myriad — `analysis/stats.py::cluster_bootstrap_ci`**: percentile bootstrap for
+  the mean of a per-handoff quantity that resamples whole **episodes** and pools their handoffs.
+  Handoffs within an episode share a start pose, a trajectory and overlapping next-k label windows,
+  so the iid handoff resample understates uncertainty — on the E3-local v4 dataset it read roughly
+  **half the honest width** (C0 CPVI [+0.141, +0.243] handoff-level vs [+0.059, +0.307] cluster).
+  Percentile rather than BCa: the draw space is too discrete for the jackknife acceleration at
+  pilot cluster counts. Degenerate cases pinned by tests (single cluster collapses to the point;
+  misaligned inputs raise).
+- **`PilotReport.provenance` (`AnalysisProvenance`)**: the pilot report embeds the encoder name +
+  revision, probe config and git SHA behind its G2 CPVI number, and `pilot.md` renders them — the
+  Myriad re-gate verdict is a result of record, and a result with an unrecorded revision is not a
+  result. `None` only on artefacts written before this change.
 - **DSE-001** — Repository scaffolding: PEP 621 `pyproject.toml` (uv-managed, pip-installable),
   `src/preceptx/` package layout with typed subpackages (`sim`, `agents`, `serving`, `data`,
   `measure`, `gate`, `experiments`, `analysis`), floor-and-ceiling pinned dependencies with
@@ -387,7 +526,219 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
     correction never increases significance, seed-sensitivity aggregation, the nullable-`failure`
     loader, and the figure no-op-vs-render branches.
 
+- **Documentation re-centralisation (23 Aug 2026)** — three new documents consolidating direction that
+  had been spread across five files inside and outside the repository. No code change; this entry
+  records what now exists and what each is authoritative for.
+  - `docs/methodology.md` — the working source of truth for the dissertation's literature-review,
+    methodology and experimental-design chapters, moved into the repository so that the method text
+    and the code implementing it can be diffed against each other. Supersedes the standalone
+    `Precept Literature review 25 July LitReview_Methodology_ExperimentalDesign.md`, which is retained
+    outside the repo as a dated snapshot. Sections 1-7 carried forward with the failure-attribution
+    baselines re-anchored; sections 8-10 rewritten against the shipped implementation, roughly tripling
+    the methodology half. Load-bearing additions: §8.3 states the **receiver-conditioning** decision and
+    why sender-conditioning makes C3 arithmetically inert; §8.4 states the **grouped cross-fit** leakage
+    argument and why a random handoff split inflates the reported quantity; §8.5 separates the three
+    nulls (shuffled-message, control-task selectivity, train-vs-held-out AUROC) that answer three
+    different objections; §8.6 pre-registers the **length controls** and shows how C1 inverts the
+    confound into a dissociation; §8.7 states that the prospective twin is a **KL divergence and
+    therefore non-negative where CPVI is signed**, and treats that one-sidedness as a finding;
+    §10.5 is an **18-row deviation register** mapping every departure from the design as first
+    specified to its evidence.
+  - `docs/EXPERIMENTS.md` — the operational run ledger: eleven experiments E0-E11 with their
+    preconditions, exact commands, emitted artefacts, pre-registered analyses and null readings;
+    seven execution stages S0-S6; a table of what must exist in code before each stage; a fixed
+    **result-recording template** so results chapters are assembled from entries written the day a run
+    completes rather than reconstructed in September; and a five-row freeze register (F0-F4).
+    Opens by stating that **zero episodes have been recorded** and everything to date ran against stubs.
+  - `docs/ROADMAP_VISUAL.md` — the visual roadmap and running change record. A six-row "what changed
+    since 25 July" table; a section recording two 2026 papers found during the cross-reference and
+    absent from all prior planning docs (**AgentForesight**, arXiv:2605.08715, which occupies the
+    pre-outcome setting and forces the contribution onto three axes rather than prospectivity alone;
+    and **Causal Agent Replay**, arXiv:2606.08275, which strengthens the replay-defined outcome rather
+    than threatening it); and four Mermaid diagrams — programme map with gates, calendar, critical path
+    with the new tickets, and the measurement architecture annotated with its three invariants.
+- **Eleven new tickets in `ISSUES.md`** (GitHub Issues remains the backlog source of truth).
+  - **DSE-031/032/033** — the three unticketed blockers between the repository and its first result:
+    driver entry points (`run_grid`/`run_pilot`/`run_rq1` are library functions and `pyproject`
+    declares no `[project.scripts]`); a structured-output mode for non-vLLM endpoints (the client sends
+    vLLM's `guided_json` in `extra_body`, an OpenAI-compatible local server expects
+    `response_format.json_schema`); and pinning the encoder revision, which currently defaults to an
+    unpinned sentinel and only warns.
+  - **DSE-041/042** — TraceElephant loader with a separate `LogHandoffRecord` (physics fields **absent,
+    not nullable**; `trace_id` as the cross-fit group key) and the counterfactual-replay outcome
+    labeller (majority vote over n replays, reported agreement rate, agreement floor, stratified
+    sampling recorded in the manifest, hard spend cap, dry-run projection, and a signature test proving
+    the labeller cannot read the annotations).
+  - **DSE-043/044** — control-task selectivity and repeated cross-fits plus length control. Both are
+    marked **blocking the Y/V freeze**, because each changes what the freeze covers.
+  - **DSE-045** — the gate retry-feedback template, which exists because under greedy decoding an
+    unchanged re-prompt is a fixed point: DSE-018 as previously written would pass its unit tests and
+    be vacuous in a live run. Marked **blocking DSE-018**.
+  - **DSE-046/047/048** — the absent-versus-unused decomposition (replacing the cut SocialJax arm),
+    the baselines re-anchoring and framing ticket, and the stretch gate-against-a-real-MAS adapter.
+- **DSE-049** — per-role clients on the episode runner (`client_a`, optional `client_b`; omitted
+  `client_b` means self-play, identical to today's single-client path). Ticketed from the ground-up
+  status review's flag that the heterogeneous cell (DSE-021) was blocked on an unticketed refactor;
+  batched with DSE-031–033 because it is cheaper before call sites accrete.
+- **DSE-032** — second wire format for schema-constrained decoding, so the pre-cluster pilot can run
+  free on a local OpenAI-compatible endpoint:
+  - `ServingConfig.structured_mode: Literal["guided_json", "response_format"]`, defaulting to
+    `guided_json` so every existing vLLM path is byte-for-byte unchanged. `response_format` emits the
+    OpenAI-standard `response_format.json_schema` block (`name="action"`, `strict=true`) and sends
+    **none** of the vLLM-only keys — a local runtime rejects `guided_json`/`guided_decoding_backend`.
+  - **The schema object is passed through untouched in both branches** (asserted by a unit test and a
+    hypothesis round-trip), so the constraint the two backends enforce is identical; only the request
+    shape and the engine enforcing it (xgrammar vs llama.cpp grammars / Outlines) differ. That engine
+    difference is exactly why schema-adherence rate is a *reported* DSE-005 row, not an assumption.
+  - The mode is recorded in the sweep manifest (`structured_mode`), so a local-pilot dataset stays
+    permanently distinguishable from a Myriad one even at identical config hashes.
+  - `docs/serving.md` gains a local-pilot section: the vLLM-vs-LM-Studio table, the headless `lms`
+    commands (`brew install --cask lm-studio`, `lms get mlx-community/Qwen3-8B-4bit`,
+    `lms server start --port 1234`), the `PRECEPTX_SERVING_SUBSTRATE=local-lmstudio` label, and the
+    two identity caveats (the served id is the *quantised* repo; a 4-bit G1 verdict is indicative
+    only, the bf16 Myriad re-gate is the verdict of record).
+- **DSE-031** — `src/preceptx/experiments/cli.py` plus `[project.scripts]`: `preceptx-pilot` and
+  `preceptx-rq1` are now runnable from a shell (`uv run preceptx-pilot --dry-run` works from a clean
+  checkout). This was the literal blocker between a served model and a pilot verdict.
+  - **Hydra composes, Pydantic validates**: `_resolve_cell` composes `configs/experiment.yaml` with
+    `model=<group>` plus any `--overrides`, and the raw `DictConfig` never leaves that function — it
+    is validated into an `ExperimentConfig` before the sweep is built. Grid axes come from
+    comma-separated flags (`--conditions C0,C4`), each validated by `SweepConfig`.
+  - `--dry-run` prints cells, an **upper-bound** model-call count (2 calls per step × the certified
+    per-difficulty budget; early success shortens episodes), the sweep hash, the dataset hash and the
+    per-role model identities — and constructs no client, so it issues no calls at all.
+  - Defaults are the documented E3 cell, not invented ones: pilot runs C0/C1/C4 × easy/hard × seeds
+    0-2; rq1 runs C0-C4 × hard × seeds 0-4.
+  - **Fail loud at start-up**: an unset `PRECEPTX_SERVING_SUBSTRATE` raises `ConfigError` before any
+    episode runs (an unlabelled dataset cannot be told apart from a Myriad one afterwards), and a
+    failed `health_check` raises `ServingError` rather than recording a run of degraded WAITs.
+  - The entry point owns `logging.basicConfig`; library code still attaches no handlers.
+- **DSE-033** — encoder revisions pinned to resolved commit SHAs, verified against the HuggingFace
+  API on 24 Aug 2026: `BAAI/bge-base-en-v1.5` → `a5beb1e3e68b9ab74eb54cfd186867f64f240e1a`, and the
+  new `EncoderConfig.second_encoder_revision` for `all-mpnet-base-v2` →
+  `e8c3b32edf5434bc2275fc9bab85f82640a19130`.
+  - The real load path now **raises `ConfigError` instead of warning** when the revision is not a
+    40-character commit SHA, so a branch name cannot reach a recorded run. A branch/tag is rejected
+    by shape, not by name, so `v1.5` and `refs/heads/x` fail the same way `main` does.
+  - `AnalysisProvenance` carries both encoder identities, so a DSE-022 sensitivity re-run is
+    distinguishable from the primary fit by the artefact alone. Stub-backed tests are untouched (the
+    check lives on the real load path only), so unit tests still run with no torch installed.
+- **DSE-005** — model-ladder benchmark harness: `src/preceptx/serving/benchmark.py` (typed, tested)
+  plus the `scripts/benchmark_models.py` wrapper, and a `docs/serving.md` section.
+  - Five numbers per tier: throughput (tok/s over bounded completions), time to first token, peak GPU
+    memory, JSON-schema adherence over N constrained calls, and a ten-episode C0/easy capability
+    smoke **driven through the real loop** (`run_grid`), not a scripted stub.
+  - **Append-then-render**: one model is served per GPU job, so each invocation appends a row to
+    `tiers.jsonl` and rewrites `ladder.md`, `ladder.csv`, `ladder.json` and `recommendation.md` from
+    every row collected so far. That is what lets one table span substrates measured weeks apart.
+  - Honest absences: peak memory is `None`/`n/a` where there is no `nvidia-smi` (a laptop), never a
+    fabricated zero; schema misses are **not retried**, because a retried rate would flatter the tier;
+    `ttft_s` is documented as a one-token-round-trip proxy, not a streamed first-chunk timestamp.
+  - `recommend()` names the fastest tier clearing both floors (smoke >= 0.5, schema >= 0.95) or
+    **refuses to pick one**, and always repeats that an unmeasured tier is a placeholder and that a
+    local 4-bit row cannot carry a capability claim.
+- **`PREREGISTRATION.md` v0** (draft, not frozen) at the repository root — the F0 artefact named by
+  `docs/EXPERIMENTS.md` §6, drafted at **zero recorded episodes** so no choice in it can be
+  outcome-contingent. Fixes H1-H6; the task geometry, budgets and jitter; the C0-C4 parameters; the
+  four Y labels with `k = 3` and the receiver-conditioning semantics; the probe family with `R = 5`
+  repeated cross-fits, the control-task expectation and the two length controls; both pinned encoder
+  revisions; the G1/G2/G3 thresholds and the runtime-gate calibration rule; the sweep scale and its
+  power basis; and the analysis protocol. Records **one anticipated v0 → v1 change** — G2's CPVI half
+  is directional until the pilot reveals the bit-scale — and opens a prospective deviation log that
+  takes over from `docs/methodology.md` §10.5 at the freeze.
+
 ### Fixed
+- **`scripts/myriad/serve.sh` requested 256 GB and could never have been scheduled** (DSE-002).
+  UCL SGE's `-l mem` is **per slot**, not per job, so `-pe smp 8 -l mem=32G` asked for 8 × 32 = 256 GB
+  against an `-ac allow=L` node's 160 GB usable. SGE does not reject an unsatisfiable request — the
+  job queues forever. Now `-l mem=4G` (= 32 GB total), with the arithmetic in a comment in both
+  jobscripts. Found by review against the UCL documentation before the first submission; nothing in
+  the repo or CI could have caught it.
+- **`serve.sh` named a CUDA module Myriad does not have.** The default was `cuda/12.4`; UCL's
+  modules are versioned like `cuda/12.2.2/gnu-10.2.0`, and the GPU-node driver is on the 12.2
+  branch, so a mismatched toolkit is a real runtime-error source. `module load` failing under
+  `set -e` kills the job before vLLM starts. The default is corrected, the failure now prints the
+  fix (`module avail cuda`), and `CUDA_MODULE=none` skips the load entirely — vLLM's wheels bundle
+  their own CUDA runtime through torch, so the module is a convenience rather than a requirement.
+- **`serve.sh` left torch, triton and vLLM caches in `$HOME`.** `HF_HOME` was already on Scratch, but
+  the others default into the home directory and count against the same 1 TB quota the ~45 GB of
+  weights do. A full quota does not fail cleanly: the job dies creating its `.o`/`.e` files, which
+  reads as a scheduler fault. `XDG_CACHE_HOME`, `VLLM_CACHE_ROOT` and `TRITON_CACHE_DIR` now point
+  at Scratch.
+- **`LLMClient.health_check` fetched the served model list and discarded it** (DSE-002 acceptance
+  criterion). Pointed at a leftover job serving a different tier, every call would have succeeded
+  and the manifest would have recorded the tier that was *configured* rather than the one that
+  *answered* — a wrong recorded revision, which is worse than a missing one. The served ids are now
+  compared against `ServingConfig.model` and the mismatch is rejected before the smoke completion is
+  even attempted.
+- **The pre-commit hooks could not pass, and had not been passing on `main`.** Found while adding
+  the shellcheck hook; verified against a clean checkout of `d31f159`, which fails identically.
+  Two independent causes, both "the hook runs a different tool than the project does":
+  - The **mypy** hook's isolated env listed only `pydantic` and `openai`, so `numpy` was absent and
+    `FloatArray = NDArray[np.float64]` degraded to a plain variable — **187 `not valid as a type`
+    errors across 8 files**, against a tree that `mypy --strict src/` passes clean. Added `numpy`
+    and `pandas-stubs`.
+  - The **ruff** hook was pinned at `v0.6.9` while the venv resolves `0.15.20`; `UP038` was dropped
+    from ruff's defaults in between, so the hook flagged `pilot.py` code that `ruff check .`
+    accepts. Bumped the rev to match, and moved to the current `ruff-check` hook id.
+  - CI was unaffected — it runs `uv run mypy --strict src/preceptx` in the real venv — so the gate
+    that mattered was green throughout and no result is implicated. The practical effect was local:
+    the hooks could only be satisfied with `--no-verify`, which CLAUDE.md forbids.
+- **The pilot CLI's default seed axis contradicted the pre-registration.** `_PILOT_SEEDS` was
+  `[0, 1, 2]` while PREREGISTRATION §6 was amended (2026-08-24, before the bf16 re-gate and before
+  F0) to seeds 0–4 / 40 episodes, because at 24 episodes a single flipped easy-C0 episode moves G1
+  across its 0.5 threshold about a third of the time. A bare `preceptx-pilot` would have run a cell
+  the analysis plan does not describe. Now `[0, 1, 2, 3, 4]`; the E3 cell is 20 cells per the
+  dry-run plan.
+- **The last carriers of the falsified "CPVI is near zero by construction" claim** (review pass;
+  docs/comments only, no behaviour change): the `_PILOT_CONDITIONS` comment in `experiments/cli.py`
+  and `RESEARCH_ROADMAP.md` §2.3's C3 line now state the corrected rationale (C3 varies the
+  conditioning set; E3-local measured +0.19 bits in C0 with the receiver holding the full state);
+  methodology §8.3's sender-conditioning argument is softened to the question-selection claim it
+  actually is; the `y_discrete_config` "zero by construction" phrasing in `sim/outcomes.py` and
+  `PREREGISTRATION.md` §4 is weakened to "collapses toward zero" for the same probe-relative
+  reason.
+- **G2 refitted its CPVI probe on a two-condition subset** (`experiments/pilot.py`;
+  result-affecting). `g2_signal` selected the C0-plus-hardest rows, featurised those and fitted the
+  probe on them. Pointwise V-usable information is per-instance scores from **one** fitted probe;
+  refitting per contrast discards the other conditions' rows and shifts the class balance the probe
+  sees — and it is not the estimator the RQ1 analysis uses. On the same 24-episode data the subset
+  fit read the C0−C4 CPVI gap as **+0.012 bits** and the whole-cell fit reads **+0.211**. G2 now
+  featurises and fits over all records and contrasts the resulting per-instance scores. The gate was
+  not measuring a weak gradient; it was measuring a strong one badly.
+- **G3 scored a sender as hallucinating geometry it had been shown** (`experiments/pilot.py`;
+  result-affecting). `_record_grounding` drew its truth set from `rec.state`, which carries the load
+  body only, while the serialiser prints the wall abscissae and slit interval (v3) and the load
+  dimensions (v4). A message correctly citing "the slit runs 2.1 to 3.9" was counted as fabricating
+  both numbers, and G3 **failed the v4 pilot at 0.720** on messages that invented essentially
+  nothing. Truth is now the union of `state`'s numeric leaves and every number in `state_str` —
+  what the sender was actually shown — which reads **0.977** on that run and **0.999** on the v3 run
+  (was 0.811), and cannot rot when the serialiser gains a key.
+- **G1 scored the wrong population** (`experiments/pilot.py`) — `g1_capability` averaged C0 episode
+  success across *every* difficulty present, while the pre-registration and the roadmap both scope the
+  capability floor to **easy**. On the E3 cell (C0/C1/C4 × easy/hard) that mixes a solvable geometry
+  with one designed to be hard: a pair solving every easy episode and no hard one scored exactly 0.5
+  and **passed the 0.5 floor by arithmetic accident**. Now filters to `difficulty == "easy"`, raises
+  `ConfigError` when the dataset has no easy C0 episodes rather than averaging whatever is present,
+  and reports `n_easy_c0_episodes` / `n_easy_c0_success` in the gate detail. Re-gating E3-local left
+  the verdict unchanged (0/3 easy versus 0/6 mixed, both 0.000).
+- **C3's numeric observation restriction had rotted against the v3 prompt surface**
+  (`agents/channel.py`) — `_restrict` blacklisted the `goal=` line, so the `walls_x=` and `slit_y=`
+  lines introduced by the v3 serialiser were still delivered to B and C3's receiver kept the full
+  arena layout; the asymmetry the condition exists to create was nominal, in the one condition the
+  design relies on to keep CPVI off the floor. Replaced with a **whitelist** of B's own state,
+  `_C3_NUMERIC_KEEP = ("load=", "contact=")`, so a serialiser that gains a key fails closed instead of
+  leaking it. The `nl` branch was checked and is unaffected (v3 touched `_numeric` only). No C0/C1/C4
+  record in any run to date is affected.
+- **`render_transcript` attributed a whole multi-episode dump to its first episode.** It emitted one
+  header and one table regardless of how many episodes the records spanned, so a five-episode E1
+  dump claimed "75 handoffs | terminal success: True" under episode s0's name. It now emits one
+  section per episode in first-appearance order; single-episode output is unchanged. This is the
+  function the E1 transcript read depends on, so a misleading header defeats the stage's purpose.
+- **The ladder benchmark's TTFT probe asked for one token**, which the new empty-content guard
+  rejects — a one-token completion is often whitespace, and is exactly empty from a runtime left in
+  thinking mode. It now times an 8-token completion off a prompt that guarantees a short answer, and
+  `docs/serving.md` states the proxy precisely.
 - **DSE-004** — `write_handoffs` now writes each Parquet part to a hidden temp (`.part-NNNNN.parquet.tmp`)
   and atomically renames it into place (`os.replace`, atomic within one directory). A crash mid-write
   previously left a truncated `part-*.parquet` that poisoned every subsequent whole-dir read
@@ -564,7 +915,226 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
     with the difficulty-ladder fix as its first entry. CLAUDE.md §7 (ticket workflow) and "always
     do" §8 now require an entry when a change alters the experiment/research design.
 
+- **Planning documents cross-referenced and brought current (23 Aug 2026).** All four planning documents
+  had drifted from the implementation and from each other; each is now corrected against the shipped
+  code and the August design decisions.
+  - `RESEARCH_ROADMAP.md` — §0 rewritten from "the one open decision" to **compute resolved**: the UCL
+    Myriad allocation was approved 23 Aug 2026 (1 GPU >=40GB, single node, 8h wall, 8 cores, 32GB RAM,
+    ~45GB weights on scratch, ~250 episodes / 6-12k calls / single-digit GPU-hours), with three
+    concrete jobscript gaps named — no node-class directive, no project code, and `HF_HOME` unset, which
+    would download ~45GB into the home quota. §1 and §3.4 rewritten for the TraceElephant substrate and
+    the replay-defined outcome. §3.1 now specifies the **free local pilot before the cluster**. §3.6
+    rewritten: SocialJax cut on evidence with the replacement named, C5 deferred with a structural
+    reason, and the middleware stretch documented. §4's phase table gains a status column stating
+    plainly which phases are built-but-not-run. §5 gains R7-R10. A document-set index and a revision
+    note were added at the top.
+  - `DEPENDENCIES.md` — §1 replaced with the current work order, leading with the three blockers. §2
+    gains the eleven new tickets and records that DSE-023 is superseded, DSE-024 rescoped and DSE-027
+    cut. §4's risk register **renumbered to mirror the roadmap**, resolving a pre-existing collision in
+    which both files used R1-R7 for different risks. §7 gains the real dataset identifiers and licences,
+    the local pilot runtime (explicitly not a Python dependency), and the replay budget. §8 records the
+    Phase-0 gate as passed and enumerates what the Y/V freeze actually covers.
+  - `ISSUES.md` — execution guide rewritten with the merged/not-built state, the immediate critical
+    path, and the two ordering constraints that are easy to violate (043+044 before the freeze; 045
+    before 018).
+  - `docs/experiment_design_log.md` — three dated entries for 23 Aug 2026: the RQ3a re-founding, the
+    probe-validity hardening, and the contribution re-framing. Each records trigger, finding, impact if
+    uncaught, risk reduced, correction path, fix, result and takeaway, per the log's template.
+  - **Supervisor attribution corrected** across the roadmap and methodology to Prof. Philip Treleaven
+    supervising, advised by Prof. Jun Wang, matching the approved research-computing record.
+
 ### Changed
+- **Myriad jobscripts derive the served identity from the tier config** (`scripts/myriad/*.sh`).
+  `serve.sh` and `pilot.sh` took `REVISION` on the `qsub` line while the manifest recorded the
+  revision from `configs/model/<tier>.yaml`, and **nothing compared them** — the health check
+  compares the served model *id*, but `/v1/models` carries no revision, so a typo or a stale
+  copy-paste would serve one checkpoint and record another with every artefact well-formed.
+  - `resolve_tier` now reads `name` and `revision` from the same file the manifest reads them from.
+    `qsub -P <project> scripts/myriad/pilot.sh` is the whole command; `-v TIER=qwen8b` the whole
+    fallback. `TIER` is also now **exported** to the child `serve.sh`, which it was not: `-v
+    TIER=qwen8b` alone previously drove an 8B pilot against a 14B server.
+  - `MODEL`/`REVISION` survive as overrides for the 70B-AWQ tier, which has no config file until
+    DSE-005 pins its repo id. An override contradicting the config prints a warning naming both
+    values, because in a job log a deliberate override and a typo look identical.
+  - A unit test asserts every `configs/model/*.yaml` carries a name and a full 40-character commit
+    SHA — the invariant the shell now depends on.
+- **The cluster environment installs from `uv.lock`, not from `pyproject.toml`.** `docs/myriad.md`
+  §6 said `uv pip install -e '.[serving,embed]'`, which re-resolves against whatever PyPI serves
+  that day; the cluster run is the run of record and is the last place to install off-lock. Now
+  `uv sync --extra serving --extra embed`, which also removes the separate `~/venvs/...` path: sync
+  populates the repo's `.venv`, which is what all three scripts now default `VENV` to. The lock
+  already carries vLLM's `manylinux_2_31_x86_64` wheel, so nothing compiles from source.
+- **`SweepManifest` gains `gate_feedback_version`** (DSE-045). The manifest schema is one of this
+  repo's two stable contracts, so this is a deliberate, recorded bump; it defaults to the live
+  `GATE_FEEDBACK_VERSION`, so existing readers are unaffected and no result re-freezes (the field
+  is not part of any dataset hash).
+- **Planning documents reconciled with the built state** — they had drifted into describing finished
+  work as pending, which is the failure mode that makes a planning doc worse than none.
+  - `ISSUES.md`: **DSE-050 added** as a proper ticket (it was built this session from a proposal
+    that existed only in conversation); the dated state snapshot corrected — it listed 031–033,
+    041, 043–046 and 049 as "not built" when all are built, and claimed **zero episodes recorded**
+    when E1 and E3-local v3/v4 exist at the local 4-bit tier; the immediate-critical-path paragraph
+    rewritten, because what now stands before the Y/V freeze is **a run, not a build**.
+  - `DEPENDENCIES.md`: DSE-050 added to the dependency table (**blocks every cluster run**);
+    DSE-045 marked built with the hash caveat; a new §1 item 6 naming the bf16 re-gate as the one
+    remaining pre-freeze step.
+  - `RESEARCH_ROADMAP.md`: the "three practical consequences not yet reflected in the jobscript"
+    block had two items that the jobscript now closes (node class + `-P`, and `HF_HOME`); both
+    struck through with what closed them, and the two defects found *while* closing them — the
+    256 GB memory request and the wrong CUDA module name — recorded as items 4 and 5.
+  - `docs/EXPERIMENTS.md`: E3 gains its execution path (`qsub ... scripts/myriad/pilot.sh`) and the
+    note that the grid axes come from the CLI defaults, not the jobscript, so the executed cell and
+    the pre-registered one cannot drift apart.
+  - `README.md`: `docs/myriad.md` and `docs/serving.md` added to the document index; the two
+    "serving runs on Myriad — see serving.md" pointers split, since serving.md is now the ladder and
+    wire format while myriad.md is the cluster.
+- **`docs/serving.md`** now points at `docs/myriad.md` for cluster mechanics and keeps only the
+  model ladder and the wire format; the node-class note is corrected from "edit the jobscript" to
+  the `-ac allow=` qsub override, and it carries the per-slot `mem` warning.
+- **`ShuffledMessageAudit` implements the corrected permutation-test criterion** (`experiments/rq1.py`).
+  The model gains `null_max_cpvi` and `p_value` = `(1 + #{null ≥ real}) / (n_perm + 1)`; its
+  docstring no longer claims the null "must collapse toward 0". The pre-registration was corrected
+  to the permutation test earlier in this cycle, but the code still computed only mean and spread,
+  so the criterion PREREGISTRATION §8 states had no implementation. E3-local v4 under the frozen
+  estimator: real **+0.066** against a null of **+0.033 ± 0.006**, max **+0.046**, **p = 1/21**.
+- **`qsub` examples repaired** (`scripts/myriad/serve.sh`, `docs/serving.md`). Making `REVISION`
+  mandatory earlier in this cycle invalidated every documented launch line; all now pass
+  `-P <project>` and `-v REVISION=<sha from configs/model/*.yaml>`, and `serving.md` no longer tells
+  the reader to uncomment a `#$ -P` directive that no longer exists.
+- **`PilotReport` provenance line carries the repeat count** (`R=5`), now that it is a
+  pre-registered, load-bearing part of the estimator rather than a default.
+- **RQ1 per-condition CPVI/PVI intervals are episode-cluster bootstrap** (`experiments/rq1.py`;
+  result-affecting for every reported interval on a per-handoff quantity). `_condition_summary` now
+  derives per-condition episode groups and calls `cluster_bootstrap_ci`; episode-level quantities
+  (success) keep the plain episode bootstrap. The E3 results table in `docs/EXPERIMENTS.md` §7 is
+  corrected in place with the method named — the two claims that survive the honest intervals are
+  the ones the entry leads with (C0's CPVI excludes zero; the C0−C4 gap +0.211 bits holds
+  [+0.060, +0.349]).
+- **`sweep_hash` excludes `concurrency`** (`experiments/sweep.py`; identity-affecting for future
+  datasets). Concurrency is an execution knob, and hashing it re-keyed the dataset whenever a
+  resumed run changed worker count — orphaning every completed episode under the old hash, the
+  expensive failure on an 8-hour Myriad wall clock. Recorded local dataset hashes in the docs
+  remain the correct identifiers of what was run under the old derivation.
+- **PREREGISTRATION §8's shuffled-message control is now a permutation test** (pre-freeze wording
+  correction, recorded there and in the design log). The old criterion — shuffling "must collapse
+  CPVI" — is structurally unattainable: within-condition permutation preserves the condition-level
+  signatures message *style* carries (an 8-token C1 message stays recognisably C1) and per-handoff
+  progress base rates differ by condition (E3-local: C0 0.255, C1 0.735, C3 0.379, C4 0.575), so a
+  permuted message still betrays its condition. New criterion: the real pooled mean CPVI must
+  exceed every permutation (E3-local: real +0.078 bits vs null +0.043 ± 0.006, max +0.057 — passes
+  at p ≈ 1/21); the null's height reads as the *identity* component of CPVI, the excess as
+  per-handoff message content.
+- **`scripts/myriad/serve.sh` hardened against the approved allocation** (infra): requests the A100
+  node class (`#$ -ac allow=L`; EF for the V100-fitting 8B tier and U/V for 32B bf16 documented in
+  place), **requires** a pinned `REVISION` (the `main` default is gone — same rule as the
+  featuriser's pin check), and exports `HF_HOME` to `~/Scratch/hf-home` so ~45 GB of weights land
+  on scratch rather than the home quota. `-P` stays a qsub-line argument: no usable default exists.
+- **E3 pilot cell now includes C3, and G2 gained a third verdict state** (`experiments/cli.py`,
+  `experiments/pilot.py`; result-affecting — it changes what the pilot can certify).
+  - `_PILOT_CONDITIONS` is `["C0", "C1", "C3", "C4"]` (24 episodes at three seeds, was 18). C3 is the
+    only condition carrying a genuine observation asymmetry and it is in the headline design; a pilot
+    that never exercises it certifies an instrument the main sweep will not use. Measured CPVI on the
+    v4 cell: **+0.051 bits** (episode-cluster interval [+0.002, +0.103]).
+  - `GateResult.assessable: bool = True`, for the case that genuinely admits no verdict: every
+    handoff carrying the same progress label, so CPVI has nothing to predict. `_recommendation` holds
+    an unassessable gate at `retune_once` **on any attempt** — it never yields `proceed` and never
+    escalates to the fallback ladder, because an absence of data is not evidence about the design.
+    `render_report` prints `UNASSESSABLE` rather than `FAIL`.
+- **Prompt surface v4** (`sim/serialise.py`, `agents/prompts.py`; result-affecting, bump **two of the
+  three** budgeted pre-E3 bumps).
+  - The numeric form gained `load_size=(1.4000, 1.3000)  # (bar length, height across bar+stem)`.
+    The state named the gap's extent and never the object's, so "aligned with the slit" was
+    underdetermined: the threading band for a 1.3-tall load in a 1.8 gap is ±0.25 about the centre,
+    not the full ±0.9, and that constant was not in the prompt. E3-local watched A call
+    `com_y = 2.0074` aligned with a `(2.1, 3.9)` gap and push east into the wall for the remaining
+    budget. The dimensions are **constants of the load, not a derived pass band** — the alternative
+    of printing the threading band was considered and rejected as performing the agents' inference.
+  - `_SYSTEM_A` now states that the **whole** load must fit the slit, its centre being inside the
+    range not being enough, and points at `load_size`.
+  - Dataset identity moves with it: the re-run writes to `c0bd4d7499f01d97` (sweep `c163d616d1608140`),
+    not the v3 dataset, so no v3 and v4 episodes can pool.
+- **Prompt surface bumped v2 → v3 (E1 transcript read).** The first five real episodes produced
+  **7 distinct A-messages across 75 handoffs** and action `E` **75 times out of 75**; the cause was
+  that the `numeric` serialisation carried **no wall or slit geometry at all**, so A had nothing
+  state-specific it could say. One of the three budgeted pre-E3 bumps. See
+  `docs/experiment_design_log.md` (2026-08-24) for why a flat gradient here would have been
+  indistinguishable from an honest null.
+  - `sim/serialise._numeric` gains `walls_x=(4.0000, 8.0000)` and `slit_y=(lo, hi)` with the slit
+    width in the trailing comment. This **de-confounds the serialisation axis**: the grid *drew* the
+    walls and slits and the NL form *named* the nearest slit centre, so the module's stated
+    information-isomorphism was false in exactly one of three branches, and a numeric-vs-grid
+    difference would have been partly an information difference reported as a representation effect.
+    The `load=` line stays first, so `_parse_numeric_load` is unaffected.
+  - **A's system prompt** now states the convention (+x toward the goal, +y north), states that
+    passage depends on the load's y matching the slit's y-range, and asks for the load's position
+    *relative to the next slit* plus the next move — "use the actual numbers in front of you; do not
+    give generic advice". The old double instruction to be brief is gone.
+  - **B's system prompt** now says A sees more of the scene and to follow A's instruction unless its
+    own observation plainly contradicts it; the action hint spells out the axis meanings
+    (`N` = +y, `E` = +x, …), closing E1's coordinate-convention check.
+- **The manifest now records how a run was decoded, not just where it was served.**
+  `SweepManifest.serving_a` / `serving_b` carry the resolved `ServingConfig` per role with the api
+  key replaced by `REDACTED`. Temperature, decoding seed, token budget, retry count and the thinking
+  switch all shape what the model emits and none of them live in `SweepConfig`, so two datasets
+  differing only in `max_tokens` were previously indistinguishable after the fact.
+- **Dataset identity now moves with the prompt version.** `data.writer.dataset_hash` takes an
+  optional `prompt_version` (empty default preserves every pre-v3 hash), and the new
+  `experiments.sweep.dataset_hash_for(sweep)` — the single derivation the runner, both drivers, the
+  CLI and the tests all use — folds `PROMPT_VERSION` in. `sweep_hash` covers the sweep config, which
+  carries no prompt version, so **without this a prompt bump resumed into the previous prompt's
+  dataset directory and silently pooled two prompt surfaces into one set of episodes**. A unit test
+  pins the guarantee.
+- **S1 substrate adapters — found on the first live local call, not in review.** LM Studio's MLX
+  runtime ignores `chat_template_kwargs`, so Qwen3 stayed in thinking mode: the reasoning went to a
+  non-standard `reasoning_content` field and `content` came back **empty with HTTP 200**.
+  - `ServingConfig.thinking_switch` (default `""`, leaving the vLLM path untouched) appends an
+    in-band switch — `/no_think` for Qwen3 — to the **final user turn only**; system turns are never
+    touched. Both routes select the same non-thinking template branch, so this is a substrate
+    adapter rather than a prompt change, and the difference is recorded per run.
+  - `LLMClient.chat` now **raises on empty or whitespace-only content**, not just on `None`. An
+    episode of empty A-messages would otherwise have looked like a completed run rather than a
+    failed one — the exact fail-open shape CLAUDE.md forbids. The error names the likely cause.
+  - `health_check`'s ping asks for 16 tokens instead of 1, so a runtime stuck in thinking mode fails
+    the check **before** a sweep starts rather than mid-episode.
+- **DSE-049 / DSE-032 — sweep schema and manifest surface** (result-affecting by CLAUDE.md's
+  reproducibility-contract rule; no results were frozen, zero episodes exist, so nothing re-freezes):
+  - `SweepConfig` gains `model_b: ModelConfig | None = None` (the optional second serving block) —
+    it is inside `sweep_hash`, so a heterogeneous-pair dataset can never collide with a self-play one.
+  - `SweepManifest` gains `model_b_name`, `model_b_revision`, `endpoint_base_url_b` and
+    `structured_mode`; all are outside the hash, matching the existing treatment of
+    `serving_substrate` (environment properties separate datasets by root, not by hash).
+  - `EpisodeRunner(client_a, client_b=None, ...)` and `run_grid(sweep, client_a, client_b=None, *,
+    root)`: agent A's message and agent B's structured action now go to their own clients. Omitting
+    `client_b` points both roles at one client and reproduces the previous path exactly (asserted by
+    a record-for-record equality test). `run_rq1` takes `client_b` as a keyword.
+  - `run_grid` **fails loud when `sweep.model_b` and `client_b` disagree**: a second endpoint with no
+    declared model identity would leave the manifest lying about what served role B.
+
+
+- **Review pass on the 23 Aug doc set (24 Aug 2026)** — surgical tightenings after cross-checking the
+  ground-up status PDF against the shipped docs; no design change.
+  - The pre-registration artefact is now **named**: `PREREGISTRATION.md` at the repo root, v0 drafted
+    during S1 while the system is fresh, v1 committed on a `proceed` verdict (EXPERIMENTS.md E3/§6,
+    methodology §9.10).
+  - Numeric gate defaults recorded in the run ledger, all frozen or re-set at F0 (E3: G1 success floor
+    0.5 on easy C0, G3 groundedness floor 0.8, G2 directional until the pilot fixes the bit-scale;
+    E7: firing-rate budget 0.2, ECE unreliable below N = 200).
+  - S1 names the local runtime: LM Studio driven headless via `lms`, substrate label `local-lmstudio`,
+    manifest model identity = the quantised repo + revision SHA, and the constrained-decoding engine
+    difference (Outlines/llama.cpp locally vs xgrammar under vLLM) as a second reason the local
+    schema-adherence rate is its own number.
+  - Methodology §10.5 preamble now states the freeze-clock bound: zero episodes recorded, so no
+    register entry can be outcome-contingent, and the register closes at F0 (later deviations go to
+    `PREREGISTRATION.md`'s own deviation log).
+  - Methodology synced to the v3 finding (24 Aug 2026): §9.3 records that the *numeric* form named
+    neither wall nor slit until the first transcript read — the matched-information claim was false
+    in the arm a reader would assume most complete — and the deviation register gains **D19** with
+    the before/after message counts. §9.6 now declares the non-thinking decoding regime (reasoning
+    mode switched off explicitly and recorded in the manifest) so the text scored at the boundary is
+    the text the receiver saw.
+  - Citations: Who&When corrected to Zhang et al. 2025**a** in §2; the three 2026 preprint
+    author-list placeholders resolved against arXiv (Ao, Gao and Simchi-Levi — reliability limits;
+    Zhang, B. et al. — AgentForesight; Shah — Causal Agent Replay) and the entries re-alphabetised.
 - **Difficulty ladder + rotation retuned pre-freeze (P1-4 finding; result-affecting).** The
   feasibility search showed the shipped ladder was partly infeasible: a rigid T (bar 1.4
   perpendicular to stem 1.0) cannot thread a thin-wall gap narrower than its **shorter member (the
