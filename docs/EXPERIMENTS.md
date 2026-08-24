@@ -39,8 +39,8 @@ verdict is indicative by pre-registration and the ledger starts at the Myriad bf
 | E6 | RQ2 measurement primitive (DSE-022) | S4 | E4 episodes (no new compute) | **Not run** |
 | E7 | Gate calibration (DSE-017 run) | S4 | E4 episodes | **Not run** |
 | E8 | RQ3b causal gate + controls (DSE-025) | S5 | E7 threshold; DSE-018, DSE-045 | **Not run** |
-| E9 | RQ3a corpus spike and counts (DSE-041) | S6, parallel | Nothing but network | **Not run** |
-| E10 | RQ3a replay labelling (DSE-042) | S6 | E9; a spend cap | **Not run** |
+| E9 | RQ3a corpus spike and counts (DSE-041) | S6, parallel | Nothing but network | **Run 24 Aug 2026.** Conditioning state confirmed (220 traces, 5,960 steps, 2,488 handoffs, recorded input contexts); **trace outcome falsified — 0 non-failures on the primary corpus**. Promotes DSE-042 to load-bearing |
+| E10 | RQ3a replay labelling (DSE-042) | S6 | E9; a spend cap | **Not run — now the only route to a two-class step-level *Y*** (E9) |
 | E11 | RQ3a localisation and baselines (DSE-024, rescoped) | S6 | E9, E10, E4 probes | **Not run** |
 
 ---
@@ -659,3 +659,56 @@ pooled point estimate moves 16% (+0.078 → +0.066) between one fold assignment 
 (iv) *CPVI is not message length:* Spearman(CPVI, delivered token count) = **−0.085**. The
 permutation test still passes at R = 5 (real +0.066 against a null of +0.033 ± 0.006, max +0.046,
 p = 1/21), and the pilot verdict is unchanged (`retune_once`; G1 0.000, G3 0.977).
+
+### E9 — RQ3a corpus spike — 2026-08-24
+
+- **Run id / manifest:** n/a — a corpus spike, no episodes and no model calls · counts reproduced by the command below
+- **Substrate:** none (CPU + network only) · **Model + revision:** none
+- **Encoder + revision:** none · **Prompt / gate-template version:** n/a
+- **Corpus revisions:** `TraceElephant/TraceElephant@a78a57cd`, `Kevin355/Who_and_When@59b9fcba`, `mcemri/MAST-Data@95118ac9`
+- **Command:** `scripts/fetch_rq3a.sh <root>` then `uv run python -m preceptx.experiments.rq3a_load --root <root>`
+
+**What was asked.** Does the primary RQ3a substrate exist in the form the design assumes — per-step
+receiver input context, and a two-class trace outcome?
+
+**What came back.** Half of it.
+
+| Corpus | Traces | Steps | Inter-agent handoffs | Failures | Non-failures | Observations |
+|---|---:|---:|---:|---:|---:|---|
+| TraceElephant | 220 | 5,960 | 2,488 | 220 | **0** | recorded |
+| Who&When | 184 | 4,092 | 3,505 | 184 | **0** | reconstructed |
+| MAST-Data | 1,642 | — | — | 1,237 | **405** (24.7%) | trace-level only |
+
+*Confirmed:* TraceElephant records the receiver's input context per step — as `input.messages`, an
+OpenAI-shape object, not the string `input_context` the roadmap named. 2,488 inter-agent handoffs
+across five run families and three multi-agent systems. This is the reason the substrate moved off
+Who&When and it holds.
+
+*Falsified:* the corpus is **220 traces, not 380**, and all 220 are annotated failures. Only the 44
+`swe-agent` traces carry an annotation-free outcome (`tests_status`); **0 of 44 pass every test**.
+The other 176 have no outcome field at all. Trace-level outcome on the primary corpus is
+single-class.
+
+*Counted, closing one of DSE-047's two unverified numbers:* MAST's non-failure class is **405 of
+1,642 (24.7%)** — the assumption holds — but it is severely unbalanced across systems (AG2 52.1%,
+OpenManus 3.3%), so a pooled MAST probe can score by recognising the system rather than by reading
+the message.
+
+**How it reads.** The conditioning state RQ3a needs is real and plentiful; the outcome is not. *Y1*
+(trace success) is degenerate on both step-level corpora, so **DSE-042's counterfactual replay moves
+from an upgrade path to the load-bearing route** to a two-class step-level *Y*. *Y2*
+(annotation-as-Y) stays forbidden — and this is exactly the pressure that makes it tempting, which
+is worth naming now rather than rationalising later. The transfer regime is unaffected: a
+simulator-fitted probe needs log labels only to evaluate, and `mistake_step` exists on all 220.
+
+**Seed sensitivity.** n/a — no stochastic component; the counts are exact at the pinned revisions.
+
+**Deviations.** None from the pre-registration, which does not yet cover RQ3a. Two roadmap §3.4
+claims are corrected in place with the correction named, and DSE-041's assumed field names
+(`input_context` / `output_content`) are corrected to `input` / `output`.
+
+**What it changes.** DSE-042 is promoted on the RQ3a critical path and its spend cap becomes a
+load-bearing control rather than hygiene. Any MAST arm must stratify by `system_name` or report the
+system-identity-only baseline beside it. Methodology §9.8's *Y* table needs the Y1 row marked
+unavailable at step level. Remaining before E10: the second DSE-047 number (AgenTracer accuracies)
+still rests on a secondary summary and needs checking against the paper's own result table.
