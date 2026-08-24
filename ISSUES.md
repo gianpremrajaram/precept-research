@@ -1010,11 +1010,403 @@ Scripts that export the final figures and tables for each RQ and auto-generate t
 
 ---
 
+## DSE-031: Experiment driver entry points
+
+**Epic:** E6 **Type:** infra **Priority:** P0 **Effort:** S (2-3h) **Phase:** 1 **Dependencies:** DSE-012, DSE-019, DSE-020
+
+### Context
+`run_grid`, `run_pilot` and `run_rq1` are library functions and `pyproject.toml` declares no `[project.scripts]`, so there is no way to run an experiment from a command line. This is the literal blocker between a served model and a pilot verdict, and it is roughly thirty lines. Everything else in the repository is downstream of it.
+
+### Acceptance Criteria
+- [ ] `src/preceptx/experiments/cli.py` exposing `pilot` and `rq1` entry points: build the `SweepConfig`, construct the `LLMClient` from resolved config, call `run_grid`, load records, construct the `Featuriser`, run the analysis, write the report
+- [ ] `[project.scripts]` entries in `pyproject.toml` so `uv run preceptx-pilot` and `uv run preceptx-rq1` work from a clean checkout
+- [ ] `--dry-run` prints the expanded cell count, the projected model-call count and the resolved config hash without issuing a single call
+- [ ] The run entry point owns `logging.config`; library code configures no handlers
+- [ ] `PRECEPTX_SERVING_SUBSTRATE` is read and reaches the manifest; the substrate is excluded from `sweep_hash`
+
+### Technical Notes
+- Hydra composes, Pydantic validates: the CLI resolves the config and validates into `ExperimentConfig` before anything else runs.
+- Fail loud. A missing endpoint, an unpinned revision or an unlabelled substrate is an exception, not a warning.
+
+### Testing Requirements
+- Unit: `--dry-run` emits the expected cell count and issues no calls; the substrate reaches the manifest
+- Integration: end-to-end pilot against a stub client on a two-cell grid produces a valid report
+
+### Out of Scope
+- The gate and RQ3 drivers
+
+### Definition of Done
+- Entry points merged with tests; `uv run preceptx-pilot --dry-run` works from a clean checkout
+
+---
+
+## DSE-032: Structured-output mode for non-vLLM OpenAI-compatible endpoints
+
+**Epic:** E2 **Type:** feat **Priority:** P0 **Effort:** S (2-3h) **Phase:** 1 **Dependencies:** DSE-002
+
+### Context
+`LLMClient.structured` sends vLLM's `guided_json` inside `extra_body`. A local OpenAI-compatible server used for the free pre-cluster pilot expects the OpenAI-standard `response_format.json_schema` instead. Without this the local pilot cannot produce a schema-valid action and the whole pre-Myriad plan stalls. Both backends constrain decoding against the same JSON schema — vLLM via xgrammar, local runtimes via llama.cpp grammars or Outlines — so this is a wire-format difference, not a semantic one, and that equivalence is worth stating in the methodology.
+
+### Acceptance Criteria
+- [ ] `ServingConfig` gains `structured_mode: Literal["guided_json", "response_format"]`, defaulting to `guided_json` so existing behaviour is unchanged
+- [ ] `structured()` branches on the mode; the schema passed is byte-identical in both paths
+- [ ] The mode is recorded in the run manifest alongside the serving substrate
+- [ ] `docs/serving.md` documents the local-pilot configuration end to end, including the base URL and the model identifier
+
+### Technical Notes
+- Do not add a runtime dependency. The local server is an external tool, not a Python package.
+- Schema-adherence rate is a reportable metric, not an assumption: a local 8B may fail the schema more often than a served 14B, and that number belongs in DSE-005's table.
+
+### Testing Requirements
+- Unit: each mode emits the expected request shape against a mocked endpoint; the schema is identical across modes; the mode reaches the manifest
+- Property: any valid schema round-trips through both paths unchanged
+
+### Out of Scope
+- Adapters for non-OpenAI-compatible APIs
+
+### Definition of Done
+- Merged with tests; one real structured call succeeds against a local endpoint and the transcript is recorded
+
+---
+
+## DSE-033: Pin the embedding encoder revision
+
+**Epic:** E4 **Type:** infra **Priority:** P0 **Effort:** S (1-2h) **Phase:** 2 **Dependencies:** DSE-013
+
+### Context
+`EncoderConfig.revision` defaults to an unpinned sentinel and only warns. The project's own rule is that a result with an unrecorded revision is not a result, and the encoder is upstream of every CPVI number in the dissertation. An unpinned encoder is a moving target underneath a manifest that claims to pin everything.
+
+### Acceptance Criteria
+- [ ] The default revision is a resolved commit SHA for `BAAI/bge-base-en-v1.5`, and the same for the second encoder used in the sensitivity check
+- [ ] Loading the real encoder with an unpinned revision raises rather than warns, so it cannot reach a recorded run
+- [ ] The stub-backed unit tests continue to run with no torch installed
+- [ ] Both revisions appear in the manifest
+
+### Technical Notes
+- The embedding cache is already keyed on encoder name and revision, so pinning does not invalidate any legitimate cached vector.
+
+### Testing Requirements
+- Unit: an unpinned revision raises on the real load path; the stub path is unaffected; both revisions reach the manifest
+- Determinism: identical text under the pinned revision yields identical cached vectors
+
+### Out of Scope
+- Choosing the second encoder; that is a pre-registration decision
+
+### Definition of Done
+- Merged with tests; the pinned SHAs recorded in the pre-registration
+
+---
+
+## DSE-041: RQ3a substrate migration — TraceElephant loader and schema mapping
+
+**Epic:** E7 **Type:** feat **Priority:** P0 **Effort:** L (8-10h) **Phase:** 6 **Dependencies:** DSE-004 · *supersedes DSE-023*
+
+### Context
+TraceElephant (ACL 2026, CC-BY-4.0) records each step as step id, agent id, agent name, `input_context`, `output_content` and tool logs, plus trace metadata, across roughly 380 executions of which about 220 are annotated failures. `input_context` is the receiver-observed state the conditional construct requires; Who&When records outputs only and therefore cannot supply it without reconstruction, and all 184 of its instances are failures, so the refit arm is undefined on it rather than merely difficult. This ticket makes TraceElephant the primary RQ3a substrate.
+
+### Acceptance Criteria
+- [ ] `src/preceptx/experiments/rq3a_load.py` loads TraceElephant from HuggingFace behind the existing `data` extra, normalising each step into a `LogHandoffRecord` with observation = `input_context`, message = `output_content`, and the native annotations attached but never usable as a feature
+- [ ] A `LogHandoffRecord` Pydantic model with `extra="forbid"` and its own `SCHEMA_VERSION`, separate from `HandoffRecord`. Physics fields are **absent, not nullable**
+- [ ] Inter-agent handoff extraction: identify consecutive step pairs where the acting component changes, and mark which steps are handoffs versus intra-agent tool turns
+- [ ] A Who&When loader retained behind the same interface, with an explicit `reconstructed_observation` flag on every row it emits, so downstream analysis can never silently mix approximated and true conditioning state
+- [ ] A MAST-Data loader for the trace-level secondary, reporting the counted non-failure proportion rather than an assumed one
+- [ ] `docs/rq3a_schema_mapping.md` documenting the field-by-field mapping for all three corpora and stating the observability caveat
+- [ ] Counts reported per corpus: traces, steps, extracted handoffs, failures, non-failures
+
+### Technical Notes
+- Do not widen `HandoffRecord`. The simulator schema is the stable reproducibility contract; a log record is a different contract and is versioned separately. Reusing `HandoffRecord` with nullable physics fields would weaken the type discipline that makes the simulator side auditable.
+- The grouping key for cross-fitting is `trace_id` on logs, the analogue of `episode_id`. The leakage discipline is identical; only the name of the group changes.
+- The featuriser needs no change: it already embeds the observation slot, and the content-addressed cache is keyed on encoder name, revision and text, so simulator and log embeddings share one cache safely. Do **not** add a domain field to the cache key — the vectors are genuinely the same function of text.
+- Run the counts spike first and report what is actually there. Two claims in the source review are explicitly unverified: MAST's usable non-failure class rests on all-zero annotation rows in a preview rather than a count, and the AgenTracer accuracies come from secondary summaries.
+
+### Testing Requirements
+- Unit: all three loaders parse committed fixture samples into valid rows; handoff extraction on a hand-built fixture yields the expected pairs; the `reconstructed_observation` flag is set only by the Who&When path
+- Property: every emitted row validates against `LogHandoffRecord`
+- The loaders must remain runnable offline against fixtures, with no network access in unit tests
+
+### Out of Scope
+- The localisation analysis (DSE-024, rescoped) and the replay labeller (DSE-042)
+
+### Definition of Done
+- Loaders merged with tests; counts table produced; schema mapping doc committed
+
+---
+
+## DSE-042: Counterfactual-replay outcome labeller for real logs
+
+**Epic:** E7 **Type:** research **Priority:** P0 **Effort:** L (10-12h) **Phase:** 6 **Dependencies:** DSE-041
+
+### Context
+CPVI needs a per-handoff outcome that is not the attribution annotation, or the localisation claim is circular. Counterfactual replay defines it interventionally: re-run the system from step *t* with the step's output substituted, and record whether the outcome changes. AgenTracer built a 2,000-trace corpus this way, Causal Agent Replay formalises step-level intervention as a structural causal model, and TraceElephant ships the runnable environments that make it possible. This is the methodological core of RQ3a, and it makes the external-validity and causal claims rest on one epistemology instead of two.
+
+### Acceptance Criteria
+- [ ] `src/preceptx/experiments/rq3a_replay.py` exposes `label_by_replay(trace, step_ids, n_replays, budget)` returning a per-step outcome plus a replay agreement rate
+- [ ] The outcome is the majority over `n_replays`; steps below a configurable agreement floor are **flagged, not silently dropped**
+- [ ] A hard spend cap and a dry-run mode reporting the projected call count and cost before executing anything
+- [ ] Stratified step sampling so the labeller can run on a subset without biasing the failure/non-failure balance; the sampling rule is recorded in the manifest
+- [ ] Trace-success (the cheap label) computed for every trace regardless, so the refit arm has a fallback if replay is cut
+
+### Technical Notes
+- Replay is non-deterministic because the systems are LLM-driven. Determinism here means low-variance and agreement-reported, exactly as for the simulator.
+- The labeller must not import the annotation fields at all; enforce with a signature test, mirroring the no-outcome discipline already used in `measure/twin.py`.
+- The labeller is a separate module from the loader, because replay costs money and the loader must stay runnable offline for tests.
+
+### Testing Requirements
+- Unit: majority voting and the agreement floor on synthetic replay outcomes; the dry-run projection; the signature guard proving the labeller cannot read annotations
+- Integration: a stubbed replay backend produces labels end to end on a fixture trace
+
+### Out of Scope
+- Running replay at full scale; that is a budgeted experiment, not a code deliverable
+
+### Definition of Done
+- Labeller merged with tests; dry-run cost projection produced for the full corpus
+
+---
+
+## DSE-043: Control tasks and probe selectivity
+
+**Epic:** E4 **Type:** feat **Priority:** P0 **Effort:** M (5-6h) **Phase:** 2 **Dependencies:** DSE-014 · **blocks the Y/V freeze**
+
+### Context
+Hewitt and Liang (EMNLP 2019) show that probe accuracy alone cannot distinguish "the representation encodes this" from "the probe learned the task". Their remedy is a control task with random labels and a reported selectivity gap. At 1,536-dimensional concatenated features and pilot-scale N this is a live risk, and `auroc_train_cond` does not address it. This must land before the Y/V freeze, because it changes what the freeze covers.
+
+### Acceptance Criteria
+- [ ] `measure/pvi_cpvi.py` gains `control_task_cpvi(e_s, e_m, y, groups, cfg, seed)` refitting both probes against random labels stratified to the observed base rate, returning the resulting CPVI
+- [ ] `CpviResult` gains `control_mean_cpvi` and `selectivity = mean_cpvi − control_mean_cpvi`
+- [ ] `analyse_rq1` reports selectivity alongside every CPVI summary; the RQ1 figure captions carry it
+- [ ] The analysis protocol gains an entry describing the check and the pre-registered expectation that control CPVI is approximately zero
+- [ ] The capacity-reduction rule that fires when control CPVI is materially above zero is written down **before** any pilot data is inspected
+
+### Technical Notes
+- This is distinct from `shuffled_message_cpvi`: that permutes real messages to test whether the message carries signal; this randomises the label to test whether the probe family can manufacture information at this sample size. Both are needed and they answer different objections.
+- Reuse the same cross-fit splitter so the comparison is like for like.
+
+### Testing Requirements
+- Unit: control CPVI is approximately zero on the informative synthetic fixture; selectivity is positive there; a deliberately over-capacity probe on few samples shows control CPVI materially above zero, proving the check detects what it is meant to detect
+- Determinism: control labels are seed-reproducible
+
+### Out of Scope
+- Changing the default probe family; the selection rule is a pre-registration decision
+
+### Definition of Done
+- Merged with tests; selectivity present in the RQ1 artefacts; protocol entry written
+
+---
+
+## DSE-044: Repeated cross-fit score stabilisation and length control
+
+**Epic:** E4 **Type:** feat **Priority:** P1 **Effort:** M (5-6h) **Phase:** 2 **Dependencies:** DSE-014, DSE-028 · **blocks the Y/V freeze**
+
+### Context
+Per-handoff CPVI from a single cross-fit carries probe-fit noise that can flip instance signs, and those scores feed the H2 mediation and all of RQ2. Separately, "CPVI is just message length" is the first sceptical question and C1 manipulates length directly, so the control belongs in the pre-registration rather than in a rebuttal.
+
+### Acceptance Criteria
+- [ ] `cpvi` gains `n_repeats` (default 1 to preserve current behaviour; the pre-registered value is set at freeze) averaging per-instance scores over repeated cross-fits with different fold seeds
+- [ ] The across-repeat standard deviation per handoff is returned and persisted in the scores table as `cpvi_sd`
+- [ ] `analysis/stats.py` gains `partial_spearman(x, y, control)` and `analyse_rq1` reports the partial Spearman of CPVI with outcome given message token length
+- [x] The episode-level mediation gains message length as a covariate on the second path, reported alongside the uncontrolled version
+- [x] The second pre-registered control (PREREGISTRATION §5): `overlap_restricted_contrast` in `analysis/stats.py`, surfaced as `RQ1Result.length_matched` per Ck on both success and CPVI. Quantile strata (3 bins, floor of 2 per condition per bin) rather than caliper matching — at six episodes per condition a caliper collapses to one or two idiosyncratic pairs. Reported as an overlap-restricted, length-adjusted **sensitivity analysis**, not as a length-free estimate of the channel effect
+
+### Technical Notes
+- Token length derives from the delivered message; no schema change is needed.
+
+### Testing Requirements
+- Unit: repeated cross-fits reduce score variance on a noisy fixture; partial Spearman matches a hand-computed value; the length-covariate path fits and is reported
+- Unit: the overlap-restricted contrast returns 0 when the outcome is a deterministic function of length alone (the known-answer case), refuses to estimate when the two length distributions are disjoint, and drops a stratum carried by a single episode
+
+### Out of Scope
+- Choosing the repeat count; that is pre-registered from the pilot
+
+### Definition of Done
+- Merged with tests; `cpvi_sd` persisted; protocol entries added for both
+
+---
+
+## DSE-045: Gate retry-feedback template and the greedy fixed-point escape
+
+**Epic:** E5 **Type:** feat **Priority:** P0 **Effort:** S (3-4h) **Phase:** 5 **Dependencies:** DSE-017 · **blocks DSE-018**
+
+### Context
+Under greedy decoding a re-prompt is a fixed point: the same prompt yields the same message, the same statistic and the same block, for all bounded retries. DSE-018 as written would pass its unit tests and be vacuous live. The retry prompt must differ, which makes the feedback template part of the treatment and therefore a pre-registration item, not an implementation detail.
+
+### Acceptance Criteria
+- [ ] A versioned `GATE_FEEDBACK` template in `agents/prompts.py`, appended to A's prompt on a blocked retry, instructing A to state the push direction, whether rotation is needed and which way, and the goal direction explicitly
+- [ ] `GATE_FEEDBACK_VERSION` recorded in the run manifest alongside `PROMPT_VERSION`
+- [ ] A test proving that a blocked retry issues a different prompt string from the original
+- [ ] A documented rejection of the nonzero-temperature-on-retry alternative, on the grounds that it breaks the determinism story mid-episode and confounds the gate's effect with an increase in sampling entropy
+
+### Technical Notes
+- The record already carries `gate_blocked`, `gate_retries` and `message_blocked` from the schema v2 bump, so no schema change is needed.
+
+### Testing Requirements
+- Unit: the retry prompt differs; the feedback version reaches the manifest; retries are bounded and recorded
+
+### Out of Scope
+- The gate itself (DSE-018) and the RQ3b sweep (DSE-025)
+
+### Definition of Done
+- Template merged, versioned and manifested; pre-registration entry written
+
+---
+
+## DSE-046: Absent-versus-unused decomposition (the SocialJax replacement)
+
+**Epic:** E7 **Type:** analysis **Priority:** P1 **Effort:** S (3-4h) **Phase:** 3 **Dependencies:** DSE-020
+
+### Context
+Eccles et al. (2019) separate two failures a single correlational number conflates: a sender that fails to encode (positive signalling) and a receiver that fails to act (positive listening). CPVI can tell them apart, which converts a possible RQ1 null into a reportable finding. This delivers the contrast the SocialJax arm was meant to provide, on data already produced, for a day of analysis and no new compute.
+
+### Acceptance Criteria
+- [ ] `analyse_rq1` emits a two-by-two of handoffs split on CPVI (above/below the within-condition median) against realised progress (positive/negative), per condition
+- [ ] Two named quantities reported with intervals: the absent-signal rate and the unused-signal rate
+- [ ] A figure showing how the two rates move across C0 to C4
+- [ ] A protocol entry framing the decomposition as a pre-registered secondary analysis
+
+### Technical Notes
+- Median split **within condition**, not pooled, so the split is not itself a restatement of the condition effect. The threshold rule is pre-registered.
+
+### Testing Requirements
+- Unit: the decomposition reproduces on a fixture with known absent and unused populations
+
+### Out of Scope
+- Any MARL comparison
+
+### Definition of Done
+- Merged with tests; figure and protocol entry produced
+
+---
+
+## DSE-047: Re-anchor the RQ3a baselines and the contribution framing
+
+**Epic:** E7 **Type:** docs **Priority:** P0 **Effort:** S (2-3h) **Phase:** 6 **Dependencies:** —
+
+### Context
+The lit review positioned H5 against Who&When's 53.5% agent and 14.2% step accuracy. Both have been beaten: AgenTracer-8B reports roughly an 18% relative margin over frontier reasoning models, and TraceElephant's agentic methods reach 66.7% agent and 33.3% step on full traces. Writing to the old numbers is a viva liability. Separately, the prospective framing needs sharpening now that online auditing exists in the literature.
+
+### Acceptance Criteria
+- [ ] A baselines table listing every method, its reported numbers, its substrate and **its date**
+- [ ] A revised contribution statement framing the measure on the prospective-versus-retrospective and cost axes rather than on raw localisation accuracy
+- [ ] An explicit treatment of the online-auditing adjacency (AgentForesight), distinguishing measure from detector, single boundary from trajectory prefix, and validated intervention from alarm
+- [ ] The methodology and abstract updated to match, with the change logged in `docs/experiment_design_log.md`
+
+### Technical Notes
+- No code. This is a research-writing ticket, deliberately ticketed so it does not live only in a chat.
+- Verify each number against the paper's own result table before it reaches the thesis; several currently rest on secondary summaries.
+
+### Testing Requirements
+- None. Human review against the cited sources.
+
+### Out of Scope
+- Running any comparison
+
+### Definition of Done
+- Table and framing committed; design-log entry dated
+
+---
+
+## DSE-048: Stretch — RuntimeGate against a real MAS via the TraceElephant middleware
+
+**Epic:** E5 **Type:** experiment **Priority:** P2 **Effort:** XL **Phase:** post-RQ1 **Dependencies:** DSE-018, DSE-041
+
+### Context
+TraceElephant ships a non-intrusive LLM API middleware that intercepts and can modify requests and responses without changing the original agent code, plus runnable agent systems. That is exactly the seam `RuntimeGate` needs. If taken, RQ3b's causal claim moves from a 2D simulator to a real multi-agent system, which is a materially stronger result.
+
+### Acceptance Criteria
+- [ ] A gate adapter behind the middleware that scores the outgoing message with the calibrated statistic and blocks or passes before the receiver acts
+- [ ] The same matched-firing-rate and random-trigger controls as the simulator arm
+- [ ] A small run on one system and one task family, with success, firing rate and retry counts reported against both controls
+
+### Technical Notes
+- Do not attempt this before RQ1 and RQ2 are frozen. It is upside, and it competes for the same time as the write-up.
+- The threshold must be **recalibrated on this domain**; transporting the simulator threshold is not defensible.
+- `Statistic` and `RuntimeGate` are already cleanly separable, which is what makes the middleware path a new adapter rather than a rewrite. Preserve that.
+
+### Testing Requirements
+- Integration against a mocked middleware; the live run is a human-gated experiment
+
+### Out of Scope
+- Full-scale evaluation across all three systems
+
+### Definition of Done
+- Adapter merged with mocked tests; one small live run reported, or the ticket formally deferred with a written reason
+
+---
+
+## DSE-049: Per-role clients on the episode runner
+
+**Epic:** E3 **Type:** feat **Priority:** P0 **Effort:** S (2-3h) **Phase:** 1 **Dependencies:** DSE-012
+
+### Context
+The runner drives both roles through a single `LLMClient`, so the heterogeneous-pair cell (DSE-021) cannot even be configured, and every new call site deepens the single-client assumption. Flagged in the ground-up status review as the one small refactor nobody had ticketed; `docs/EXPERIMENTS.md` §4 schedules it before S3 because it is cheaper now than after more call sites accrete.
+
+### Acceptance Criteria
+- [ ] `EpisodeRunner` accepts `client_a` and an optional `client_b`; when `client_b` is omitted both roles use `client_a` and behaviour is identical to the current single-client path
+- [ ] The sweep config carries an optional second serving block, validated like the first
+- [ ] The manifest records which model and revision served each role
+- [ ] No call site outside the runner constructs a role-specific client
+
+### Technical Notes
+- Composition, not inheritance: two injected clients, no subclassing, no factory.
+- Self-play stays the default and the primary cell; this ticket only removes the structural blocker on DSE-021 and the C5 stub.
+
+### Testing Requirements
+- Unit: omitting `client_b` reproduces current behaviour against a stub; with two distinct stubs, each role's calls reach only its own client; the manifest carries both identities
+- Integration: a two-cell grid with distinct stub clients runs end to end
+
+### Out of Scope
+- Running the heterogeneous cell itself (DSE-021); any per-role prompt divergence
+
+### Definition of Done
+- Merged with tests green; DSE-021 unblocked with no further runner change needed
+
+## DSE-050: Myriad pilot jobscript — serve and drive in one job
+
+**Epic:** E1 **Type:** infra **Priority:** P0 **Effort:** S (2-3h) **Phase:** 1 **Dependencies:** DSE-002, DSE-031
+
+### Context
+`scripts/myriad/serve.sh` starts vLLM on a compute node and nothing then drives it. A login node running `preceptx-pilot --base-url http://localhost:8000/v1` resolves `localhost` to the login node and finds no endpoint, so no experiment could be run on the cluster at all. Splitting serve and drive across two jobs would require discovering the compute node's hostname, holding a port open between nodes and waiting in the queue twice; co-locating them makes the endpoint a loopback address again, which is what `LLMClient` already assumes.
+
+### Acceptance Criteria
+- [x] `scripts/myriad/pilot.sh`: one SGE job that starts the server, waits for it, runs `preceptx-pilot` against it and tears it down on every exit path (success, failure, wallclock SIGTERM)
+- [x] `serve.sh` remains the single vLLM launch path — `pilot.sh` runs it as a background child rather than duplicating the command line
+- [x] The readiness wait aborts immediately if the server process dies, so a bad revision or an OOM fails in seconds rather than burning the timeout
+- [x] The embedding encoder is warmed before the sweep, because `Featuriser` loads it lazily at *analysis* time — after every episode has run
+- [x] `PRECEPTX_SERVING_SUBSTRATE` derived from `nvidia-smi`, so the manifest records the card that served rather than the node class requested
+- [x] Grid axes come from the CLI defaults (the pre-registered E3 cell), not from the jobscript, so the two cannot drift apart
+- [x] `docs/myriad.md`: cluster access, node classes, resource-request rules, the environment bootstrap, an ordered first-session runbook, and an explicit list of what is documented but unverified on the cluster
+- [x] The served name and revision are read from `configs/model/<TIER>.yaml` — the same file the manifest records them from — rather than passed on the qsub line, so a run cannot serve one checkpoint and record another. `/v1/models` carries no revision, so no health check could have caught that
+- [x] `scripts/myriad/prefetch.sh`: login-node pre-pull of the tier's weights **and** the embedding encoder, so the top unknown in §9 (compute nodes possibly having no outbound internet) stops being able to write off a session
+
+### Technical Notes
+- `serve.sh` `exec`s vllm, so `$!` is the server itself and a single `trap ... EXIT` is sufficient.
+- `-l mem` is per slot on UCL SGE; both jobscripts use `-pe smp 8 -l mem=4G` = 32 GB total.
+- `scripts/myriad/_common.sh` holds `resolve_tier` and `cache_to_scratch`, sourced by all three scripts, so a login-node prefetch cannot populate a cache the job does not read.
+- The cluster installs with `uv sync --extra serving --extra embed` (from `uv.lock`, the reproducibility anchor) into the repo's `.venv`, which is what every script activates; `uv pip install -e .` would re-resolve against PyPI on the run of record.
+- Written from UCL documentation, not from a live session: `docs/myriad.md` §9 lists what must be confirmed on the box and corrected in place.
+
+### Testing Requirements
+- `shellcheck` clean (added as a pre-commit hook alongside this ticket) and `bash -n` parses
+- The readiness loop exercised locally against a fake server on all three branches: immediate crash (fails fast), never-ready (times out), ready-after-delay (proceeds)
+- Unit: every `configs/model/*.yaml` carries a name and a full 40-character commit SHA — the invariant the shell's tier derivation depends on
+- `resolve_tier` exercised locally on all three paths: derivation from each tier config, the contradicting-override warning, and the missing-config refusal
+
+### Out of Scope
+- Running it on Myriad (needs cluster credentials — human step); the RQ1 sweep jobscript
+
+### Definition of Done
+- Both jobscripts shellcheck-clean and documented; runbook written; one live cluster run verified by the maintainer
+
+---
+
 # Claude Code Execution Guide
 
 Signals: most tickets are fully agent-executable end to end against fixtures or the 8B tier; a minority produce artefacts a human interprets or require cluster credentials. Build order follows dependencies; the critical path to a minimal dissertation is the P0 chain through RQ1, RQ2, and one of RQ3a/RQ3b.
 
-1. **Fully agent-executable (code + tests against fixtures/mock):** DSE-001, 003, 004, 006, 007, 008, 009, 010, 011, 012, 013, 014, 015, 016, 018, 023, 028, 030. These have deterministic acceptance criteria an agent can satisfy and verify without cluster access.
-2. **Agent-executable build, human-gated run or input:** DSE-002 and DSE-005 (scripts authored and unit-tested by the agent; running on Myriad needs credentials), DSE-017 and DSE-019 (harnesses built and tested by the agent; the operating-point and go/no-go are human decisions informed by the auto reports), DSE-020/021/022/024/025 (drivers and analyses built and tested on small grids by the agent; the full-scale runs need the served model and compute, and result interpretation is human), DSE-029 (hardening automatable except the CITATION contact).
-3. **Optional, defer unless ahead of schedule:** DSE-026, DSE-027.
-4. **Critical path (build first):** DSE-001 -> 004 -> {006,007,008,009} -> 010 -> 011 -> 012 -> {013 -> 014} -> 019 (pilot gate) -> 020 (RQ1) -> {015,016} -> 022 (RQ2) -> 017 -> 018 -> 025 (RQ3b), with 023 -> 024 (RQ3a) running in parallel after 014, and 028 built alongside 020. DSE-005 and DSE-002 run in Phase 0 to resolve the compute decision before the full sweeps.
+**State as of 24 August 2026.** Merged: DSE-001–004, 006–017, 019, 020, 028, plus two review-hardening passes. Built and awaiting the maintainer's commit on `infra/DSE-031-033+049-first-run-unblock`: 005, 029 (partial), 031, 032, 033, 041, 043, 044, 045, 046, 049, 050. Not built: 018, 021, 022, 024, 025, 026, 030, 042, 047, 048, and the DSE-029 remainder (CITATION.cff, .bib, demo trace). DSE-023 is superseded by DSE-041; DSE-024 is rescoped onto the new substrate; DSE-027 is cut on evidence (roadmap §3.6). **Episodes have been recorded only at the local 4-bit tier** (E1 and E3-local v3/v4, `local-lmstudio`); the bf16 cluster re-gate is the verdict of record and has not yet run.
+
+1. **Fully agent-executable (code + tests against fixtures/mock):** DSE-001, 003, 004, 006–016, 018, 028, 030, 031, 032, 033, 041, 043, 044, 045, 046, 049. Deterministic acceptance criteria, satisfiable and verifiable without cluster access.
+2. **Agent-executable build, human-gated run or input:** DSE-002 and DSE-005 (scripts authored and unit-tested by the agent; running on Myriad needs credentials); DSE-017 and DSE-019 (harnesses built and tested by the agent; the operating point and the go/no-go are human decisions informed by the auto reports); DSE-020/021/022/024/025 (drivers and analyses built and tested on small grids; full-scale runs need the served model, and interpretation is human); DSE-029 (automatable except the CITATION contact); DSE-042 (labeller buildable and testable against a stubbed backend; the live replay is budgeted and human-gated).
+3. **Human-authored:** DSE-047 (research writing, deliberately ticketed so it does not live only in a chat).
+4. **Optional / stretch:** DSE-026 (deferred, decide after RQ1 freezes), DSE-048 (post-freeze upside only). **Cut:** DSE-027.
+5. **Immediate critical path.** The pre-freeze build is complete: 031, 032, 033, 049 (drivers, wire format, encoder pin, per-role clients), then 043 + 044 (control task, repeated cross-fits) which are what the freeze covers, then 045 + 050 (gate feedback template, Myriad pilot jobscript). What remains before the freeze is **a run, not a build**: the bf16 re-gate of **019** on Myriad via `scripts/myriad/pilot.sh` → **Y/V FREEZE** → **020** (RQ1) → {**022**, **046**} and **017** (calibration) → **018** → **025** (RQ3b). In parallel, with no dependency on any of the above: **042** → **024** (RQ3a), and **047** (docs, no dependency at all).
+6. **Two ordering constraints that are easy to violate.** DSE-043 and DSE-044 must land **before** the Y/V freeze, because both change what the freeze covers and adding them afterwards forces a re-freeze. DSE-045 must land **before** DSE-018, because under greedy decoding an unchanged re-prompt is a fixed point and the gate would pass its unit tests while being vacuous in a live run.

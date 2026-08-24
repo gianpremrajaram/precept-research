@@ -79,7 +79,9 @@ def _gradient_records(n_seeds: int = 6) -> list[HandoffRecord]:
             for step in range(3):
                 y = prog_flags[h]
                 h += 1
-                msg = ("progress" if y else "stuck") if informative else "noise"
+                # Lengths differ with informativeness on purpose: that is the confound C1 creates
+                # by construction, and the DSE-044 length covariate exists to control for it.
+                msg = ("clear progress" if y else "we are stuck") if informative else "noise"
                 records.append(
                     HandoffRecord(
                         episode_id=f"{cond}-s{seed}",
@@ -141,8 +143,27 @@ def test_analyse_rq1_recovers_the_gradient(tmp_path: Path) -> None:
     assert result.seed_sensitivity.n_seeds == 6  # per-seed C0-minus-hardest gap, one value per seed
     assert result.seed_sensitivity.mean > 0.0  # the gradient holds on average across seeds
 
+    # Path b reported both raw and with the DSE-044 length covariate; C1 confounds length by design.
+    assert np.isfinite(mm.path_b_length_controlled)
+
+    # DSE-043: random labels cannot be predicted, so selectivity is essentially the whole score.
+    assert abs(result.control_mean_cpvi) < 0.06
+    assert result.selectivity > 0.0
+    assert all(c.selectivity > 0.0 for c in result.conditions if c.condition == "C0")
+    assert np.isfinite(result.partial_spearman_length)
+
     # Per-handoff scores are returned row-aligned to the records (P1-17: RQ2's join key).
-    assert list(scores.columns) == ["episode_id", "step", "condition", "seed", "cpvi", "pvi"]
+    assert list(scores.columns) == [
+        "episode_id",
+        "step",
+        "condition",
+        "seed",
+        "cpvi",
+        "cpvi_sd",
+        "pvi",
+        "msg_tokens",
+    ]
+    assert (scores["cpvi_sd"] >= 0.0).all()  # across-repeat spread persisted (DSE-044)
     assert len(scores) == len(records)
     assert scores["episode_id"].tolist() == [r.episode_id for r in records]
 
@@ -160,3 +181,29 @@ def test_write_rq1_emits_table_json_and_scores(tmp_path: Path) -> None:
     persisted = pd.read_parquet(out / "scores.parquet")
     assert len(persisted) == len(scores)  # the per-handoff distribution survives persistence
     # matplotlib is the optional viz extra; absent it the figures dict stays empty (no crash).
+
+
+def test_length_matched_control_is_reported_for_every_condition(tmp_path: Path) -> None:
+    """PREREGISTRATION section 5 promises both length controls, so both must reach the result.
+
+    The covariate model (``path_b_length_controlled``) and the overlap-restricted contrast answer
+    the same objection differently: one adjusts inside the model, the other refuses to compare
+    outside the region where both conditions supply episodes. A result carrying only the first
+    would under-deliver on the pre-registration.
+    """
+    feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "e"), encoder=_MsgEncoder())
+    result, _ = analyse_rq1(_gradient_records(), feat, dataset_hash="d0", cfg=_FAST)
+
+    matched = {m.condition: m for m in result.length_matched}
+    assert set(matched) == {"C1", "C2", "C3", "C4"}  # every Ck against the C0 reference, C0 aside
+    for m in matched.values():
+        # Both outcomes are stratified identically, so their bookkeeping cannot disagree.
+        assert m.success.n_total == m.cpvi.n_total
+        assert m.success.n_kept == m.cpvi.n_kept <= m.success.n_total
+        assert m.success.n_bins == m.cpvi.n_bins
+        # The unrestricted difference is always available, even where the overlap is too thin.
+        assert np.isfinite(m.success.delta_unrestricted)
+        if m.success.interpretable:
+            assert np.isfinite(m.success.delta)
+        else:
+            assert np.isnan(m.success.delta) and "overlap" in m.success.note

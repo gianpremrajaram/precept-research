@@ -10,7 +10,7 @@ import pytest
 from numpy.typing import NDArray
 
 from preceptx.config import ConfigError
-from preceptx.data.schema import Condition, HandoffRecord
+from preceptx.data.schema import Condition, Difficulty, HandoffRecord
 from preceptx.experiments.pilot import (
     PilotConfig,
     g1_capability,
@@ -52,21 +52,23 @@ def _rec(
     condition: Condition,
     *,
     success: bool,
+    difficulty: Difficulty = "hard",
     message: str = "hold",
     state: dict[str, float] | None = None,
     y_progress: bool | None = None,  # per-handoff progress label; defaults to the episode outcome
+    observation: str | None = None,  # None -> a restricted view distinct from A's state_str
 ) -> HandoffRecord:
     return HandoffRecord(
         episode_id=ep,
         step=step,
         condition=condition,
         serialisation="numeric",
-        difficulty="hard",
+        difficulty=difficulty,
         model="m",
         seed=int(ep[-1]) if ep[-1].isdigit() else 0,
         state=state or {},
         state_str=f"state {ep} s{step}",  # no outcome token -> e_s carries no Y signal
-        observation=f"state {ep} s{step}",
+        observation=observation if observation is not None else f"partial {ep} s{step}",
         message_raw=message,
         message_delivered=message,
         action={},
@@ -82,25 +84,38 @@ def _rec(
 
 
 def test_g1_capability_passes_above_floor_fails_below() -> None:
-    records = [_rec(f"c0_{i}", 0, "C0", success=i < 3) for i in range(4)]  # 3/4 succeed
-    assert g1_capability(records, PilotConfig(g1_success_floor=0.5)).passed
+    records = [_rec(f"c0_{i}", 0, "C0", success=i < 3, difficulty="easy") for i in range(4)]
+    assert g1_capability(records, PilotConfig(g1_success_floor=0.5)).passed  # 3/4 succeed
     high = g1_capability(records, PilotConfig(g1_success_floor=0.9))
     assert not high.passed and high.value == 0.75
 
 
-def test_g1_requires_c0() -> None:
-    records = [_rec("c4_0", 0, "C4", success=True)]
-    with pytest.raises(ConfigError, match="C0"):
+def test_g1_ignores_hard_difficulty() -> None:
+    # The pilot cell crosses C0 with easy and hard. A pair that solves every easy episode and no
+    # hard one scores 1.0 on the capability question and 0.5 on the mixed average - which would
+    # have sat exactly on the floor and passed the gate for the wrong reason.
+    records = [_rec(f"e{i}", 0, "C0", success=True, difficulty="easy") for i in range(3)]
+    records += [_rec(f"h{i}", 0, "C0", success=False, difficulty="hard") for i in range(3)]
+    res = g1_capability(records, PilotConfig())
+    assert res.value == 1.0 and res.detail["n_easy_c0_episodes"] == 3.0
+
+
+def test_g1_requires_easy_c0() -> None:
+    records = [_rec("c4_0", 0, "C4", success=True), _rec("c0_0", 0, "C0", success=True)]
+    with pytest.raises(ConfigError, match="easy C0"):
         g1_capability(records, PilotConfig())
 
 
 def _gradient_dataset() -> list[HandoffRecord]:
     """C0: 80% success with outcome-naming messages; C4: 20% success with noise messages."""
     records: list[HandoffRecord] = []
-    for i in range(10):  # C0 episodes
+    for i in range(10):  # C0 episodes, interleaved easy/hard so G1 has its own cell (4/5 easy)
         ok = i < 8
         msg = "report success" if ok else "report failure"
-        records += [_rec(f"c0_{i}", s, "C0", success=ok, message=msg) for s in range(2)]
+        diff: Difficulty = "easy" if i % 2 == 0 else "hard"
+        records += [
+            _rec(f"c0_{i}", s, "C0", success=ok, message=msg, difficulty=diff) for s in range(2)
+        ]
     for i in range(10):  # C4 episodes
         ok = i < 2
         records += [_rec(f"c4_{i}", s, "C4", success=ok, message="channel noise") for s in range(2)]
@@ -120,7 +135,9 @@ def test_g2_guards_single_progress_class(tmp_path: Path) -> None:
     records = [_rec(f"c0_{i}", 0, "C0", success=True) for i in range(3)]
     records += [_rec(f"c4_{i}", 0, "C4", success=True) for i in range(3)]  # every label positive
     res = g2_signal(records, feat, PilotConfig())
-    assert not res.passed and "single progress class" in res.note  # CPVI unmeasurable, not a crash
+    # Unmeasurable, not failed: with one progress class CPVI has nothing to predict, and a FAIL here
+    # would spend the retune and eventually invoke the fallback on an absence of data.
+    assert not res.passed and not res.assessable and "UNASSESSABLE" in res.note
 
 
 def test_g2_cpvi_uses_progress_labels_not_terminal_success(tmp_path: Path) -> None:
@@ -142,6 +159,61 @@ def test_g2_cpvi_uses_progress_labels_not_terminal_success(tmp_path: Path) -> No
     res = g2_signal(records, feat, PilotConfig())
     assert "cpvi_gap" in res.detail  # measurable despite single-class terminal success
     assert res.detail["cpvi_gap"] > 0.0
+
+
+def test_g2_measures_cpvi_even_when_the_receiver_sees_the_whole_state(tmp_path: Path) -> None:
+    # CPVI is V-*usable* information: a message can add information a bounded probe cannot extract
+    # from the state embedding even when the receiver holds that state verbatim. E3-local measured
+    # +0.19 bits in C0, where observation == state_str in every record, so shared observation must
+    # not be treated as a structural zero.
+    feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "e"), encoder=_MsgEncoder())
+    records = [
+        _rec(f"{ep}_{i}", s, c, success=ok, message=msg, observation=f"state {ep}_{i} s{s}")
+        for c, ep, ok, msg in (
+            ("C0", "c0", True, "report success"),
+            ("C0", "c0b", False, "report failure"),
+            ("C4", "c4", True, "channel noise"),
+            ("C4", "c4b", False, "channel noise"),
+        )
+        for i in range(3)
+        for s in range(2)
+    ]
+    res = g2_signal(records, feat, PilotConfig())
+    assert res.assessable and "cpvi_gap" in res.detail
+    assert res.detail["cpvi_gap"] > 0.0  # informative C0 messages still lift CPVI over noisy C4
+
+
+def test_an_unassessable_gate_never_escalates_to_the_fallback(tmp_path: Path) -> None:
+    # An unassessable gate is not a failed one: even on the second attempt it holds at retune_once
+    # rather than invoking the pivot, and the note says why no verdict is available.
+    feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "e"), encoder=_MsgEncoder())
+    records = [  # every handoff positive -> CPVI undefined -> G2 unassessable
+        _rec(f"{c}_{i}", 0, c, success=True, difficulty="easy")
+        for c in ("C0", "C4")
+        for i in range(3)
+    ]
+    report = run_pilot(records, feat, attempt=2)
+    assert report.recommendation == "retune_once"
+    assert "does not spend the retune" in report.recommendation_note
+
+
+def test_g3_credits_geometry_the_sender_was_shown_but_state_does_not_carry() -> None:
+    # `state` holds the load body only. A message correctly citing the wall abscissae and the slit
+    # interval printed in `state_str` was scored as hallucinating them: G3 read 0.720 on a run whose
+    # messages fabricated nothing. The truth set is what the sender was shown.
+    rec = _rec(
+        "e0",
+        0,
+        "C0",
+        success=True,
+        message="load (5.00, 3.00); slit 2.10 to 3.90; wall x=4.00",
+        state={"com_x": 5.0, "com_y": 3.0},
+    ).model_copy(
+        update={
+            "state_str": "load=(5.0000, 3.0000)\nwalls_x=(4.0000, 8.0000)\nslit_y=(2.1000, 3.9000)"
+        }
+    )
+    assert g3_groundedness([rec], PilotConfig()).value == 1.0
 
 
 def test_g3_grounded_passes_hallucinated_fails() -> None:
@@ -189,3 +261,13 @@ def test_render_and_write_report(tmp_path: Path) -> None:
     assert "Pilot gate report" in text and "PASS" in text and "Fallback ladder" in text
     out = write_pilot_report(report, tmp_path / "rep")
     assert (out / "pilot.json").exists() and (out / "pilot.md").exists()
+
+
+def test_pilot_report_embeds_provenance(tmp_path: Path) -> None:
+    # The re-gate verdict is a result of record: it must carry the encoder revision and probe
+    # config its G2 CPVI number was computed under, and the one-pager must show them.
+    feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "e"), encoder=_MsgEncoder())
+    report = run_pilot(_gradient_dataset(), feat, dataset_hash="d")
+    assert report.provenance is not None
+    assert report.provenance.encoder_revision == EncoderConfig().revision
+    assert "encoder:" in render_report(report)

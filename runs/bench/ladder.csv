@@ -1,0 +1,2 @@
+tier,model,revision,base_url,substrate,structured_mode,tokens_per_s,ttft_s,peak_memory_mb,schema_adherence,smoke_success_rate,n_smoke_episodes,timestamp
+8b-4bit,mlx-community/Qwen3-8B-4bit,545dc4251c05440727734bcd94334791f6ab0192,http://localhost:1234/v1,local-lmstudio,response_format,22.810438396395877,0.37021722200249013,,1.0,0.4,10,2026-08-24T01:00:01.563040+00:00

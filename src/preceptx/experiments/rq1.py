@@ -44,20 +44,30 @@ from pydantic import BaseModel, ConfigDict, Field
 from preceptx.analysis.figures import ci_plot
 from preceptx.analysis.stats import (
     AnalysisProvenance,
+    OverlapRestrictedContrast,
     SeedSensitivity,
     bootstrap_ci,
     build_provenance,
     cliffs_delta,
+    cluster_bootstrap_ci,
     correct_pvalues,
+    overlap_restricted_contrast,
+    partial_spearman,
     seed_sensitivity,
 )
 from preceptx.config import ConfigError, ModelConfig
 from preceptx.data.schema import Condition, Difficulty, HandoffRecord, Serialisation
-from preceptx.data.writer import dataset_hash, load_records
+from preceptx.data.writer import load_records
 from preceptx.experiments.runner import run_grid
-from preceptx.experiments.sweep import SweepConfig, sweep_hash
+from preceptx.experiments.sweep import SweepConfig, dataset_hash_for
 from preceptx.measure.featuriser import Featuriser
-from preceptx.measure.pvi_cpvi import ProbeConfig, cpvi, pvi, shuffled_message_cpvi
+from preceptx.measure.pvi_cpvi import (
+    ProbeConfig,
+    control_task_cpvi,
+    cpvi_with_sd,
+    pvi,
+    shuffled_message_cpvi,
+)
 from preceptx.serving.client import LLMClient
 from preceptx.sim.feasibility import STEP_BUDGETS
 
@@ -74,12 +84,19 @@ class RQ1Config(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    probe: ProbeConfig = Field(default_factory=ProbeConfig)
+    # R = 5 repeated cross-fits (PREREGISTRATION §5); repeat 0 is the canonical fold
+    # assignment, so n_repeats=1 still reproduces the unrepeated estimator exactly.
+    probe: ProbeConfig = Field(default_factory=lambda: ProbeConfig(n_repeats=5))
     n_boot: int = Field(default=2000, ge=100)  # for the cheap one-sample/effect-size CIs
     n_boot_mediation: int = Field(default=400, ge=50)  # model-refit bootstrap; costlier per draw
     n_shuffle: int = Field(default=20, ge=0)  # within-condition perms for the RD-15 null; 0 = off
     alpha: float = Field(default=0.05, gt=0, lt=1)
     correction: Literal["holm", "bh"] = "holm"
+    # The overlap-restricted length control (PREREGISTRATION section 5). Three bins with a floor of
+    # two episodes per condition per bin: at the E3 cell's six episodes per condition, finer strata
+    # keep nothing and a floor of one lets a single episode carry a stratum.
+    length_bins: int = Field(default=3, ge=1)
+    length_min_per_cell: int = Field(default=2, ge=1)
 
 
 class ConditionSummary(BaseModel):
@@ -98,6 +115,9 @@ class ConditionSummary(BaseModel):
     cpvi_ci: tuple[float, float]
     mean_pvi: float
     pvi_cpvi_gap: float  # apparent message value that was just an echo of the shared state
+    mean_control_cpvi: float  # CPVI against random labels (DSE-043); expected <= 0
+    selectivity: float  # mean_cpvi - mean_control_cpvi
+    mean_cpvi_sd: float  # mean across-repeat SD of the per-handoff scores (DSE-044)
 
 
 class Contrast(BaseModel):
@@ -142,6 +162,7 @@ class MixedModelSummary(BaseModel):
     converged: bool  # H1 handoff model
     mediation_outcome: str  # the H2 DV - "episode_success"
     path_b: float  # episode-mean CPVI -> success, controlling for condition (shared across Ck)
+    path_b_length_controlled: float  # path b with episode-mean message token length added (DSE-044)
     mediations: list[EpisodeMediation]
     mediation_converged: bool  # path-a and full-outcome episode models both converged
     diagnostic_cpvi_coef: float  # within-episode: per-handoff CPVI -> progress
@@ -149,20 +170,43 @@ class MixedModelSummary(BaseModel):
     mediation_note: str
 
 
-class ShuffledMessageAudit(BaseModel):
-    """Within-condition message-permutation null for CPVI (RD-15): real >> null validates signal.
+class LengthMatchedContrast(BaseModel):
+    """Ck-vs-C0 on success and CPVI, restricted to overlapping message-length strata (DSE-044).
 
-    Recomputing CPVI with messages permuted within condition decouples them from their handoffs, so
-    the null mean must collapse toward 0; the real ``mean_cpvi`` sitting well above the null band is
-    the pre-registered "the estimator isn't hallucinating signal" manipulation check.
+    The companion to ``partial_spearman_length`` and ``path_b_length_controlled``: those adjust for
+    length inside a model, this one refuses to extrapolate outside the region where both conditions
+    supply episodes. PREREGISTRATION section 5 pre-registers both, and both are reported.
+
+    Both fields share one stratification - the bins depend only on length and condition, not on
+    which outcome is being differenced - so ``success.n_kept`` and ``cpvi.n_kept`` always agree.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    condition: str
+    success: OverlapRestrictedContrast
+    cpvi: OverlapRestrictedContrast
+
+
+class ShuffledMessageAudit(BaseModel):
+    """Within-condition message-permutation test for CPVI (RD-15).
+
+    Permuting messages within condition decouples each message from its handoff. The criterion is a
+    permutation test - the real pooled mean CPVI must exceed *every* permutation's, p = (1 + #{null
+    >= real}) / (n_perm + 1). The null is **not** expected to reach zero: permutation preserves the
+    condition-level signatures message style carries, and per-handoff progress base rates differ by
+    condition, so condition identity alone predicts progress. The null's height is CPVI's *identity*
+    component; the real-minus-null excess is the *per-handoff message content* (PREREGISTRATION §8).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     n_perm: int
     mean_cpvi: float  # the real pooled per-handoff mean CPVI
-    null_mean_cpvi: float  # mean over permutations of the mean CPVI (expected ~0)
+    null_mean_cpvi: float  # mean over permutations of the mean CPVI (a structural floor, not 0)
     null_std_cpvi: float  # spread of the permutation null
+    null_max_cpvi: float  # the criterion the real score must beat
+    p_value: float  # (1 + #{null >= real}) / (n_perm + 1)
 
 
 class RQ1Result(BaseModel):
@@ -176,6 +220,10 @@ class RQ1Result(BaseModel):
     conditions: list[ConditionSummary]
     contrasts: list[Contrast]
     mixed_model: MixedModelSummary
+    control_mean_cpvi: float  # pooled control-task CPVI (DSE-043); the capacity rule reads this
+    selectivity: float  # pooled mean CPVI - control CPVI
+    partial_spearman_length: float  # CPVI vs progress, message token length partialled out
+    length_matched: list[LengthMatchedContrast]  # the overlap-restricted control (DSE-044)
     seed_sensitivity: SeedSensitivity
     shuffled_message_audit: ShuffledMessageAudit | None = None  # RD-15 manipulation check
     figures: dict[str, str] = Field(default_factory=dict)
@@ -243,11 +291,18 @@ def _condition_summary(
     pvi_scores: FloatArray,
     ep_frame: pd.DataFrame,
     cfg: RQ1Config,
+    *,
+    control_scores: FloatArray,
+    cpvi_sd: FloatArray,
 ) -> ConditionSummary:
     mask = np.array([r.condition == cond for r in records])
     ep = ep_frame[ep_frame["condition"] == cond]
     succ = ep["success"].to_numpy(dtype=np.float64)
     cpvi_c = cpvi_scores[mask]
+    # Episode-cluster interval for the per-handoff scores: handoffs within an episode are not
+    # independent, and the iid handoff resample read ~half the honest width on E3-local. Episode-
+    # level quantities (success) keep the plain episode bootstrap.
+    groups_c = np.unique(np.array([r.episode_id for r in records])[mask], return_inverse=True)[1]
     return ConditionSummary(
         condition=cond,
         n_episodes=len(ep),
@@ -257,9 +312,14 @@ def _condition_summary(
         mean_steps=float(ep["steps"].mean()),
         mean_collisions=float(ep["collisions"].mean()),
         mean_cpvi=float(cpvi_c.mean()),
-        cpvi_ci=bootstrap_ci(cpvi_c, n_boot=cfg.n_boot, alpha=cfg.alpha),
+        cpvi_ci=cluster_bootstrap_ci(
+            cpvi_c, groups_c.astype(int), n_boot=cfg.n_boot, alpha=cfg.alpha
+        ),
         mean_pvi=float(pvi_scores[mask].mean()),
         pvi_cpvi_gap=float(pvi_scores[mask].mean() - cpvi_c.mean()),
+        mean_control_cpvi=float(control_scores[mask].mean()),
+        selectivity=float(cpvi_c.mean() - control_scores[mask].mean()),
+        mean_cpvi_sd=float(cpvi_sd[mask].mean()),
     )
 
 
@@ -324,14 +384,20 @@ def _handoff_model(
 
 
 def _episode_mediation_frame(records: list[HandoffRecord], cpvi_scores: FloatArray) -> pd.DataFrame:
-    """One row per episode: condition, seed, binary terminal success, and mean per-handoff CPVI."""
+    """One row per episode: condition, seed, terminal success, mean CPVI, and mean message length.
+
+    ``msg_len`` is the DSE-044 length covariate: whitespace tokens of the *delivered* message - the
+    same unit the C1 cap operates in, so it measures exactly what the channel manipulates.
+    """
     rows: dict[str, dict[str, Any]] = {}
     for r, s in zip(records, cpvi_scores, strict=True):
         row = rows.setdefault(
-            r.episode_id, {"condition": r.condition, "seed": r.seed, "success": False, "_cpvi": []}
+            r.episode_id,
+            {"condition": r.condition, "seed": r.seed, "success": False, "_cpvi": [], "_len": []},
         )
         row["success"] = row["success"] or bool(r.y_terminal_success)
         row["_cpvi"].append(float(s))
+        row["_len"].append(float(len(r.message_delivered.split())))
     return pd.DataFrame(
         [
             {
@@ -339,6 +405,7 @@ def _episode_mediation_frame(records: list[HandoffRecord], cpvi_scores: FloatArr
                 "seed": v["seed"],
                 "success": 1 if v["success"] else 0,
                 "cpvi": float(np.mean(v["_cpvi"])),
+                "msg_len": float(np.mean(v["_len"])),
             }
             for v in rows.values()
         ]
@@ -389,8 +456,13 @@ def _bootstrap_indirect(
 
 def _episode_mediation(
     ep_df: pd.DataFrame, present: list[Condition], cfg: RQ1Config
-) -> tuple[list[EpisodeMediation], float, bool]:
-    """Episode-level Baron-Kenny: paths a, b, c, c' and the bootstrapped indirect effect per Ck."""
+) -> tuple[list[EpisodeMediation], float, float, bool]:
+    """Episode-level Baron-Kenny: paths a, b, c, c' and the bootstrapped indirect effect per Ck.
+
+    Also refits path b with episode-mean message length as a covariate (DSE-044): C1 shortens
+    messages by construction, so the uncontrolled path b cannot distinguish "CPVI carries the
+    channel effect" from "message length does". Both are reported.
+    """
     targets = [c for c in present if c != "C0"]
     if ep_df["success"].nunique() < 2:  # single-class outcome: mediation unmeasurable (cf. G2)
         nan = float("nan")
@@ -407,7 +479,7 @@ def _episode_mediation(
             )
             for c in targets
         ]
-        return meds, nan, False
+        return meds, nan, nan, False
     a_model, a_conv = _fit_mixed(ep_df, "cpvi ~ C(condition)")
     y_full, yf_conv = _fit_mixed(ep_df, "success ~ C(condition) + cpvi")
     y_red, _ = _fit_mixed(ep_df, "success ~ C(condition)")
@@ -415,6 +487,13 @@ def _episode_mediation(
     cprime = _condition_terms(y_full.params)
     total = _condition_terms(y_red.params)
     b = float(y_full.params["cpvi"])
+    # Length has no variance to control for when every episode's mean message length is identical;
+    # the covariate model is then undefined rather than failed, so report it as such.
+    if ep_df["msg_len"].nunique() < 2:
+        b_len = float("nan")
+    else:
+        y_len, _ = _fit_mixed(ep_df, "success ~ C(condition) + cpvi + msg_len")
+        b_len = float(y_len.params["cpvi"])
     ci, n_draws = _bootstrap_indirect(ep_df, targets, cfg)
     meds = [
         EpisodeMediation(
@@ -429,7 +508,49 @@ def _episode_mediation(
         )
         for c in targets
     ]
-    return meds, b, bool(a_conv and yf_conv)
+    return meds, b, b_len, bool(a_conv and yf_conv)
+
+
+def _length_matched(
+    ep_df: pd.DataFrame, present: list[Condition], cfg: RQ1Config
+) -> list[LengthMatchedContrast]:
+    """Ck-vs-C0 differences taken only inside message-length strata holding both conditions.
+
+    C1 caps message length, so length is confounded with condition by construction and the raw
+    contrast cannot separate the channel from the length it imposes. Restricting to the overlap is
+    a sensitivity analysis rather than a length-free estimate: where the distributions barely meet,
+    the result says so (``interpretable=False``) instead of returning a confident number computed
+    from two or three episodes.
+    """
+    out: list[LengthMatchedContrast] = []
+    for c in present:
+        if c == "C0":
+            continue
+        sub = ep_df[ep_df["condition"].isin(["C0", c])]
+        treated = (sub["condition"] == c).to_numpy(dtype=bool)
+        length = sub["msg_len"].to_numpy(dtype=np.float64)
+        # Two calls re-bin identically (the strata depend only on length and condition); at episode
+        # N this costs nothing and keeps the estimator a plain two-array function.
+        out.append(
+            LengthMatchedContrast(
+                condition=c,
+                success=overlap_restricted_contrast(
+                    sub["success"].to_numpy(dtype=np.float64),
+                    length,
+                    treated,
+                    n_bins=cfg.length_bins,
+                    min_per_cell=cfg.length_min_per_cell,
+                ),
+                cpvi=overlap_restricted_contrast(
+                    sub["cpvi"].to_numpy(dtype=np.float64),
+                    length,
+                    treated,
+                    n_bins=cfg.length_bins,
+                    min_per_cell=cfg.length_min_per_cell,
+                ),
+            )
+        )
+    return out
 
 
 def _mixed_model(
@@ -437,7 +558,7 @@ def _mixed_model(
 ) -> tuple[MixedModelSummary, dict[str, tuple[float, float]]]:
     """Assemble the H1 handoff model and the H2 episode mediation into the persisted summary."""
     coef_no, cpvi_coef, attenuation, converged, coef_p = _handoff_model(handoff_df)
-    mediations, path_b, med_conv = _episode_mediation(ep_df, present, cfg)
+    mediations, path_b, path_b_len, med_conv = _episode_mediation(ep_df, present, cfg)
     finite_indirect = [m.indirect for m in mediations if np.isfinite(m.indirect)]
     mean_indirect = float(np.mean(finite_indirect)) if finite_indirect else float("nan")
     summary = MixedModelSummary(
@@ -447,6 +568,7 @@ def _mixed_model(
         converged=converged,
         mediation_outcome="episode_success",
         path_b=path_b,
+        path_b_length_controlled=path_b_len,
         mediations=mediations,
         mediation_converged=med_conv,
         diagnostic_cpvi_coef=cpvi_coef,
@@ -484,11 +606,14 @@ def _shuffle_audit(
         rng=np.random.default_rng(0),
         n_perm=cfg.n_shuffle,
     )
+    real = float(np.mean(cpvi_scores))
     return ShuffledMessageAudit(
         n_perm=cfg.n_shuffle,
-        mean_cpvi=float(np.mean(cpvi_scores)),
+        mean_cpvi=real,
         null_mean_cpvi=float(np.mean(null)),
         null_std_cpvi=float(np.std(null)),
+        null_max_cpvi=float(np.max(null)),
+        p_value=float((1 + int(np.sum(null >= real))) / (cfg.n_shuffle + 1)),
     )
 
 
@@ -515,8 +640,12 @@ def analyse_rq1(
 
     e_s, e_m = featuriser.featurise(records)
     groups = _groups(records)
-    cpvi_scores = cpvi(e_s, e_m, y, groups, cfg.probe)
+    cpvi_scores, cpvi_sd = cpvi_with_sd(e_s, e_m, y, groups, cfg.probe)
     pvi_scores = pvi(e_m, y, groups, cfg.probe)
+    # Same features, same splitter, same probe family, random labels: whatever CPVI survives is
+    # manufactured by the probe rather than carried by the message (DSE-043, PREREGISTRATION §5).
+    control_scores = control_task_cpvi(e_s, e_m, y, groups, cfg.probe)
+    msg_tokens = np.array([len(r.message_delivered.split()) for r in records], dtype=np.float64)
     scores = pd.DataFrame(
         {
             "episode_id": [r.episode_id for r in records],
@@ -524,14 +653,26 @@ def analyse_rq1(
             "condition": [r.condition for r in records],
             "seed": [r.seed for r in records],
             "cpvi": cpvi_scores,
+            "cpvi_sd": cpvi_sd,
             "pvi": pvi_scores,
+            "msg_tokens": msg_tokens,
         }
     )
     ep_frame = _episode_frame(records)
 
     present = [c for c in CONDITION_ORDER if any(r.condition == c for r in records)]
     summaries = [
-        _condition_summary(c, records, cpvi_scores, pvi_scores, ep_frame, cfg) for c in present
+        _condition_summary(
+            c,
+            records,
+            cpvi_scores,
+            pvi_scores,
+            ep_frame,
+            cfg,
+            control_scores=control_scores,
+            cpvi_sd=cpvi_sd,
+        )
+        for c in present
     ]
 
     model_df = pd.DataFrame(
@@ -565,6 +706,10 @@ def analyse_rq1(
         conditions=summaries,
         contrasts=contrasts,
         mixed_model=mixed,
+        control_mean_cpvi=float(control_scores.mean()),
+        selectivity=float(cpvi_scores.mean() - control_scores.mean()),
+        partial_spearman_length=partial_spearman(cpvi_scores, y.astype(np.float64), msg_tokens),
+        length_matched=_length_matched(ep_med_df, present, cfg),
         seed_sensitivity=seed_sensitivity(seeds_metric),
         shuffled_message_audit=_shuffle_audit(e_s, e_m, y, groups, records, cpvi_scores, cfg),
     )
@@ -611,12 +756,16 @@ def run_rq1(
     client: LLMClient,
     featuriser: Featuriser,
     *,
+    client_b: LLMClient | None = None,
     root: Path | str,
     cfg: RQ1Config | None = None,
 ) -> tuple[RQ1Result, pd.DataFrame]:
-    """Run the RQ1 grid and analyse it end to end (full-scale run gated on DSE-005 compute)."""
-    run_grid(sweep, client, root=root)
-    d_hash = dataset_hash(sweep_hash(sweep))
+    """Run the RQ1 grid and analyse it end to end (full-scale run gated on DSE-005 compute).
+
+    ``client_b`` serves agent B (DSE-049); omitted means self-play, the primary cell.
+    """
+    run_grid(sweep, client, client_b, root=root)
+    d_hash = dataset_hash_for(sweep)
     return analyse_rq1(load_records(d_hash, root=root), featuriser, dataset_hash=d_hash, cfg=cfg)
 
 
@@ -643,7 +792,7 @@ def write_rq1(result: RQ1Result, dir: Path | str, *, scores: pd.DataFrame) -> Pa
         [c.mean_cpvi for c in result.conditions],
         [c.cpvi_ci for c in result.conditions],
         ylabel="mean CPVI (bits)",
-        title="RQ1: CPVI vs condition",
+        title=f"RQ1: CPVI vs condition (selectivity {result.selectivity:+.3f} bits)",
         path=dir / "cpvi_vs_condition.png",
     )
     if out is not None and cpvi_out is not None:  # both render or neither (viz extra present)

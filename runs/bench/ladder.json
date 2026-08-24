@@ -1,0 +1,17 @@
+[
+  {
+    "tier": "8b-4bit",
+    "model": "mlx-community/Qwen3-8B-4bit",
+    "revision": "545dc4251c05440727734bcd94334791f6ab0192",
+    "base_url": "http://localhost:1234/v1",
+    "substrate": "local-lmstudio",
+    "structured_mode": "response_format",
+    "tokens_per_s": 22.810438396395877,
+    "ttft_s": 0.37021722200249013,
+    "peak_memory_mb": null,
+    "schema_adherence": 1.0,
+    "smoke_success_rate": 0.4,
+    "n_smoke_episodes": 10,
+    "timestamp": "2026-08-24T01:00:01.563040+00:00"
+  }
+]

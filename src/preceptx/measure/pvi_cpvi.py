@@ -59,6 +59,7 @@ class ProbeConfig(BaseModel):
     c: float = Field(default=1.0, gt=0)  # L2 inverse-strength (roadmap default)
     max_iter: int = Field(default=1000, ge=1)
     n_splits: int | None = 5
+    n_repeats: int = Field(default=1, ge=1)  # repeated cross-fits; 1 = the unrepeated estimator
     mlp_hidden: int = Field(default=64, ge=1)
     seed: int = Field(default=0, ge=0)
 
@@ -87,6 +88,10 @@ class CpviResult(BaseModel):
     auroc_cond: float | None = None
     auroc_base: float | None = None
     auroc_train_cond: float | None = None
+    # Hewitt-Liang control task: CPVI against random labels, and the gap to the real score.
+    control_mean_cpvi: float | None = None
+    selectivity: float | None = None  # mean_cpvi - control_mean_cpvi
+    mean_cpvi_sd: float | None = None  # mean across-repeat SD; 0.0 at n_repeats=1
 
 
 def _warn_ungrouped(y: np.ndarray[Any, Any], groups: IntArray | None) -> None:
@@ -99,19 +104,31 @@ def _warn_ungrouped(y: np.ndarray[Any, Any], groups: IntArray | None) -> None:
 
 
 def _make_splitter(
-    y: np.ndarray[Any, Any], groups: IntArray | None, cfg: ProbeConfig, *, stratified: bool
+    y: np.ndarray[Any, Any],
+    groups: IntArray | None,
+    cfg: ProbeConfig,
+    *,
+    stratified: bool,
+    fold_seed: int | None = None,
 ) -> tuple[Any, int]:
-    """A CV splitter and its effective fold count, group- and stratify-aware (pure)."""
+    """A CV splitter and its effective fold count, group- and stratify-aware (pure).
+
+    ``fold_seed=None`` is the canonical assignment - grouped folds unshuffled, exactly as before
+    DSE-044 - so ``n_repeats=1`` reproduces the unrepeated estimator bit for bit. A repeat passes a
+    seed, which reshuffles the folds; without it repeated cross-fits would be identical copies.
+    """
     if groups is None:
         cap = int(min(np.unique(y, return_counts=True)[1])) if stratified else len(y)
         k = max(2, min(cfg.n_splits or _DEFAULT_K, cap))
         ctor = StratifiedKFold if stratified else KFold
-        return ctor(n_splits=k, shuffle=True, random_state=cfg.seed), k
+        return ctor(n_splits=k, shuffle=True, random_state=fold_seed or cfg.seed), k
     n_groups = len(np.unique(groups))
     if cfg.n_splits is None:
-        return LeaveOneGroupOut(), n_groups
+        return LeaveOneGroupOut(), n_groups  # fixed folds: repeats cannot vary it
     k = max(2, min(cfg.n_splits, n_groups))
-    return (StratifiedGroupKFold(n_splits=k) if stratified else GroupKFold(n_splits=k)), k
+    shuffle = {"shuffle": True, "random_state": fold_seed} if fold_seed is not None else {}
+    ctor_g = StratifiedGroupKFold if stratified else GroupKFold
+    return ctor_g(n_splits=k, **shuffle), k
 
 
 def _fit_classifier(X: FloatArray, y: IntArray, cfg: ProbeConfig) -> Any:
@@ -147,10 +164,15 @@ def _proba_aligned(clf: Any, X: FloatArray, classes: IntArray) -> FloatArray:
 
 
 def _oof_proba(
-    X: FloatArray, y: IntArray, groups: IntArray | None, cfg: ProbeConfig, classes: IntArray
+    X: FloatArray,
+    y: IntArray,
+    groups: IntArray | None,
+    cfg: ProbeConfig,
+    classes: IntArray,
+    fold_seed: int | None = None,
 ) -> FloatArray:
     proba = np.zeros((len(y), len(classes)), dtype=np.float64)
-    splitter, _ = _make_splitter(y, groups, cfg, stratified=True)
+    splitter, _ = _make_splitter(y, groups, cfg, stratified=True, fold_seed=fold_seed)
     for tr, te in splitter.split(X, y, groups):
         proba[te] = _proba_aligned(_fit_classifier(X[tr], y[tr], cfg), X[te], classes)
     return proba
@@ -177,22 +199,81 @@ def pointwise_logprob(proba: FloatArray, y: IntArray, classes: IntArray) -> Floa
 
 
 def predictive_distributions(
-    e_s: FloatArray, e_m: FloatArray, y: IntArray, groups: IntArray | None, cfg: ProbeConfig
+    e_s: FloatArray,
+    e_m: FloatArray,
+    y: IntArray,
+    groups: IntArray | None,
+    cfg: ProbeConfig,
+    fold_seed: int | None = None,
 ) -> tuple[FloatArray, FloatArray, IntArray]:
     """Out-of-fold ``(p_cond, p_base, classes)`` - the shared substrate of CPVI and its twin."""
     classes = np.unique(y)
-    p_cond = _oof_proba(np.hstack([e_s, e_m]), y, groups, cfg, classes)
-    p_base = _oof_proba(e_s, y, groups, cfg, classes)
+    p_cond = _oof_proba(np.hstack([e_s, e_m]), y, groups, cfg, classes, fold_seed)
+    p_base = _oof_proba(e_s, y, groups, cfg, classes, fold_seed)
     return p_cond, p_base, classes
+
+
+def _cpvi_one(
+    e_s: FloatArray,
+    e_m: FloatArray,
+    y: IntArray,
+    groups: IntArray | None,
+    cfg: ProbeConfig,
+    fold_seed: int | None,
+) -> FloatArray:
+    p_cond, p_base, classes = predictive_distributions(e_s, e_m, y, groups, cfg, fold_seed)
+    return pointwise_logprob(p_cond, y, classes) - pointwise_logprob(p_base, y, classes)
+
+
+def cpvi_with_sd(
+    e_s: FloatArray, e_m: FloatArray, y: IntArray, groups: IntArray | None, cfg: ProbeConfig
+) -> tuple[FloatArray, FloatArray]:
+    """Repeated-cross-fit CPVI: per-instance ``(mean, across-repeat SD)`` (DSE-044).
+
+    A single cross-fit carries fold-assignment noise that can flip the sign of an individual
+    handoff's score, and those per-instance scores feed the H2 mediation and all of RQ2. Averaging
+    over ``cfg.n_repeats`` fold assignments damps it; the returned SD is the honest per-handoff
+    stability, persisted as ``cpvi_sd``. Repeat 0 is the canonical assignment, so ``n_repeats=1``
+    is the unrepeated estimator exactly.
+    """
+    _warn_ungrouped(y, groups)
+    reps = np.stack(
+        [
+            _cpvi_one(e_s, e_m, y, groups, cfg, None if r == 0 else cfg.seed + r)
+            for r in range(cfg.n_repeats)
+        ]
+    )
+    return reps.mean(axis=0), reps.std(axis=0)
 
 
 def cpvi(
     e_s: FloatArray, e_m: FloatArray, y: IntArray, groups: IntArray | None, cfg: ProbeConfig
 ) -> FloatArray:
     """Per-instance conditional V-information: ``log2 g_cond[y] - log2 g_base[y]`` (held-out)."""
-    _warn_ungrouped(y, groups)
-    p_cond, p_base, classes = predictive_distributions(e_s, e_m, y, groups, cfg)
-    return pointwise_logprob(p_cond, y, classes) - pointwise_logprob(p_base, y, classes)
+    return cpvi_with_sd(e_s, e_m, y, groups, cfg)[0]
+
+
+def control_labels(y: IntArray, seed: int) -> IntArray:
+    """Random labels drawn i.i.d. at ``y``'s observed base rate (seed-reproducible)."""
+    classes, counts = np.unique(y, return_counts=True)
+    rng = np.random.default_rng(seed)
+    drawn: IntArray = rng.choice(classes, size=len(y), p=counts / counts.sum())
+    return drawn
+
+
+def control_task_cpvi(
+    e_s: FloatArray, e_m: FloatArray, y: IntArray, groups: IntArray | None, cfg: ProbeConfig
+) -> FloatArray:
+    """CPVI against random labels - the Hewitt & Liang (EMNLP 2019) control task.
+
+    Probe accuracy alone cannot separate "the representation encodes this" from "the probe learned
+    the task", and at 1,536-dimensional concatenated features on pilot-scale N that is a live risk
+    the held-out AUROC monitor does not address. Same features, same splitter, same probe family,
+    labels replaced by noise: whatever CPVI survives is manufactured by the probe rather than
+    carried by the message. Expected ``<= 0``: out of fold neither probe generalises, and ``g_cond``
+    carries twice the features, so it overfits the noise harder. Selectivity = mean CPVI minus this.
+    """
+    return cpvi(e_s, e_m, control_labels(y, cfg.seed), groups, cfg)
 
 
 def _pvi_unconditional(
@@ -276,8 +357,9 @@ def estimate(
     """Full report (summary + per-instance CPVI) for a binary outcome; AUROCs only when binary."""
     _warn_ungrouped(y, groups)
     p_cond, p_base, classes = predictive_distributions(e_s, e_m, y, groups, cfg)
-    cpvi_scores = pointwise_logprob(p_cond, y, classes) - pointwise_logprob(p_base, y, classes)
+    cpvi_scores, cpvi_sd = cpvi_with_sd(e_s, e_m, y, groups, cfg)
     pvi_scores = _pvi_unconditional(e_m, y, groups, cfg, classes)
+    control_mean = float(np.mean(control_task_cpvi(e_s, e_m, y, groups, cfg)))
 
     auroc_cond = auroc_base = auroc_train = None
     if len(classes) == 2:  # positive class is classes[1] (np.unique sorts ascending)
@@ -297,5 +379,8 @@ def estimate(
         auroc_cond=auroc_cond,
         auroc_base=auroc_base,
         auroc_train_cond=auroc_train,
+        control_mean_cpvi=control_mean,
+        selectivity=float(np.mean(cpvi_scores)) - control_mean,
+        mean_cpvi_sd=float(np.mean(cpvi_sd)),
     )
     return result, cpvi_scores

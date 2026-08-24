@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from pathlib import Path
 from typing import Protocol
 
@@ -23,13 +24,18 @@ import numpy as np
 from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field
 
+from preceptx.config import ConfigError
 from preceptx.data.schema import HandoffRecord
 
 logger = logging.getLogger(__name__)
 
-# Revisions default to a moving branch and MUST be pinned to a commit SHA before the Phase-2 freeze;
-# the real-encoder load path warns until they are (the stub-backed unit tests never trip it).
-_UNPINNED = "main"
+# Both encoders are pinned to resolved commit SHAs (DSE-033), verified against the HuggingFace API
+# on 24 August 2026. The encoder sits upstream of every CPVI number in the dissertation, so a moving
+# branch here would be a moving target underneath a manifest that claims to pin everything; the real
+# load path now REFUSES an unpinned revision rather than warning (stub-backed tests never reach it).
+_BGE_BASE_REVISION = "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a"  # BAAI/bge-base-en-v1.5
+_MPNET_REVISION = "e8c3b32edf5434bc2275fc9bab85f82640a19130"  # all-mpnet-base-v2
+_COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")  # a branch or tag name is not a pin
 
 
 class EncoderConfig(BaseModel):
@@ -37,15 +43,17 @@ class EncoderConfig(BaseModel):
 
     The default is a strong 768-dim retrieval embedder (roadmap §2.4); ``second_encoder`` is a
     different training family (paraphrase/NLI vs retrieval-contrastive) at matching dim, reserved
-    for the DSE-022 encoder-sensitivity check. Not yet nested into ``ExperimentConfig`` - it is
-    threaded in with the sweep driver (DSE-020), mirroring ``GridConfig``/``OutcomeConfig``.
+    for the DSE-022 encoder-sensitivity check. Both carry their own pinned revision. Not yet nested
+    into ``ExperimentConfig`` - it is threaded in with the sweep driver (DSE-020), mirroring
+    ``GridConfig``/``OutcomeConfig``.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(default="BAAI/bge-base-en-v1.5", min_length=1)
-    revision: str = Field(default=_UNPINNED, min_length=1)
+    revision: str = Field(default=_BGE_BASE_REVISION, min_length=1)
     second_encoder: str = Field(default="sentence-transformers/all-mpnet-base-v2", min_length=1)
+    second_encoder_revision: str = Field(default=_MPNET_REVISION, min_length=1)
     batch_size: int = Field(default=32, gt=0)
     normalize: bool = True
     cache_dir: Path = Field(default=Path(".embed_cache"))
@@ -86,11 +94,11 @@ class Featuriser:
         return self._encoder
 
     def _load(self) -> EncoderBackend:
-        if self.cfg.revision == _UNPINNED:
-            logger.warning(
-                "encoder %s loaded at unpinned revision %r; pin the commit SHA before the freeze",
-                self.cfg.name,
-                self.cfg.revision,
+        if not _COMMIT_SHA.match(self.cfg.revision):
+            raise ConfigError(
+                f"encoder {self.cfg.name!r} would load at unpinned revision "
+                f"{self.cfg.revision!r}; a result with an unrecorded revision is not a result - "
+                "pin the 40-character commit SHA"
             )
         try:
             from sentence_transformers import SentenceTransformer

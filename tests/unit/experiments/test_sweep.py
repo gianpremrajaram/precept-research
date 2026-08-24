@@ -5,8 +5,16 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from preceptx.agents.prompts import GATE_FEEDBACK_VERSION
 from preceptx.config import ModelConfig
-from preceptx.experiments.sweep import SweepConfig, episode_id, expand, sweep_hash
+from preceptx.experiments.sweep import (
+    SweepConfig,
+    build_sweep_manifest,
+    dataset_hash_for,
+    episode_id,
+    expand,
+    sweep_hash,
+)
 from preceptx.sim.actions import StepConfig
 from preceptx.sim.arena import ScenarioJitter
 from preceptx.sim.outcomes import OutcomeConfig
@@ -55,3 +63,34 @@ def test_sweep_hash_covers_jitter_step_and_outcome_knobs() -> None:
 def test_empty_axis_is_rejected() -> None:
     with pytest.raises(ValidationError):
         _sweep(seeds=[])
+
+
+def test_dataset_identity_moves_with_the_prompt_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The sweep config carries no prompt version, so without this a prompt bump would resume into
+    # the previous prompt's dataset and silently pool episodes generated under two prompt surfaces.
+    sweep = _sweep()
+    before = dataset_hash_for(sweep)
+    monkeypatch.setattr("preceptx.experiments.sweep.PROMPT_VERSION", "v99")
+    assert dataset_hash_for(sweep) != before
+    assert sweep_hash(sweep) == sweep_hash(sweep)  # the config hash itself is unmoved
+
+
+def test_sweep_hash_ignores_concurrency() -> None:
+    # Concurrency is an execution knob, not a result-shaping one: a resumed run that changes worker
+    # count must keep writing into the same dataset, not orphan every completed episode.
+    assert sweep_hash(_sweep(concurrency=1)) == sweep_hash(_sweep(concurrency=8))
+    assert dataset_hash_for(_sweep(concurrency=1)) == dataset_hash_for(_sweep(concurrency=8))
+
+
+def test_manifest_records_the_gate_feedback_version() -> None:
+    """DSE-045: the retry template is part of the RQ3b treatment, so a run that used one must say
+    which one. It is recorded but deliberately absent from the dataset hash until DSE-018 lands."""
+    manifest = build_sweep_manifest(_sweep(), dataset_hash="d", prompt_version="v4")
+    assert manifest.gate_feedback_version == GATE_FEEDBACK_VERSION
+    assert "gate_feedback_version" in manifest.model_dump(mode="json")
+
+
+def test_gate_feedback_version_does_not_re_key_the_dataset(monkeypatch: pytest.MonkeyPatch) -> None:
+    before = dataset_hash_for(_sweep())
+    monkeypatch.setattr("preceptx.experiments.sweep.GATE_FEEDBACK_VERSION", "v99")
+    assert dataset_hash_for(_sweep()) == before

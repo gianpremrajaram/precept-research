@@ -71,7 +71,8 @@ def label_episode(
       binary label, so the analysis can ask whether the continuous form carries more usable info).
     - ``y_discrete_config``: the chamber the load is in at the END of the forward window (the
       roadmap's "bucketed next pose region"). Labelling the chamber AT the handoff would be a state
-      feature ``g_base`` reads straight off ``e_s``, making its CPVI 0 by construction (P1-10).
+      feature ``g_base`` can predict from ``e_s`` alone, collapsing its CPVI toward zero (P1-10;
+      toward, not to - usable information is probe-relative).
     - ``y_terminal_success``: the episode reaches the goal at this step or any later one.
     - ``y_window_truncated``: the forward window was clamped at episode end, so this label's
       horizon is shorter than ``k`` (P1-12: visible, never silent; whether truncated labels enter

@@ -2,14 +2,27 @@
 # Myriad SGE jobscript: serve one model behind vLLM's OpenAI-compatible server.
 #
 # The resource directives below are defaults for the bf16 workhorse. Override per tier on the qsub
-# line (resource flags take precedence over the directives), and pass model/quant settings via -v:
+# line (resource flags take precedence over the directives) with -v TIER=<group>; -P takes your
+# project code.
 #
-#   8B / 14B (bf16):  qsub scripts/myriad/serve.sh
-#   32B (bf16):       qsub -l gpu=1 -v MODEL=Qwen/Qwen3-32B,GPU_MEM_UTIL=0.95 scripts/myriad/serve.sh
-#   70B-AWQ (TP=2):   qsub -l gpu=2 -v MODEL=<70B-AWQ-repo-id>,QUANT=awq,TP=2 scripts/myriad/serve.sh
-#                     (the 70B repo id is a PLACEHOLDER until DSE-005 verifies and pins it)
+# The served name and revision come from configs/model/<TIER>.yaml, which is the same file the run
+# manifest records them from. They are deliberately NOT arguments: passed separately they can
+# disagree with what the manifest claims, and nothing downstream can detect it - the health check
+# compares the served model id, but /v1/models carries no revision, so a wrong one is invisible.
 #
-# Dense Qwen3 ids carry no -Instruct suffix (P0-3); pass the pinned REVISION from configs/model/.
+#   14B (bf16, default):
+#     qsub -P <project> scripts/myriad/serve.sh
+#   8B (bf16, V100 class):
+#     qsub -P <project> -ac allow=EF -v TIER=qwen8b scripts/myriad/serve.sh
+#   32B (bf16, 80 GB A100):
+#     qsub -P <project> -ac allow=U -v TIER=qwen32b,GPU_MEM_UTIL=0.95 scripts/myriad/serve.sh
+#   70B-AWQ (TP=2), the one tier with no config file yet:
+#     qsub -P <project> -l gpu=2 -v MODEL=<70B-AWQ-repo-id>,REVISION=<sha>,QUANT=awq,TP=2 \
+#          scripts/myriad/serve.sh
+#     (the 70B repo id is a PLACEHOLDER until DSE-005 verifies and pins it; MODEL/REVISION remain
+#      overridable for exactly this case and log a warning when they diverge from the config)
+#
+# Dense Qwen3 ids carry no -Instruct suffix (P0-3).
 # Qwen3's hybrid thinking is disabled per-request by the client (chat_template_kwargs), not here.
 # Greedy decoding is enforced client-side (LLMClient temperature=0); the server only pins the seed
 # and the model revision. See docs/serving.md for the full tier/GPU table and queue notes.
@@ -17,17 +30,25 @@
 #$ -l gpu=1
 #$ -l h_rt=8:00:00
 #$ -pe smp 8
-#$ -l mem=32G
+# `mem` is PER SLOT, not per job: this is 8 x 4G = 32G total. The earlier `mem=32G` asked for 256G
+# against an L node's 160G usable, which is not a rejection - it is a job that queues forever.
+#$ -l mem=4G
 #$ -N vllm-serve
 #$ -cwd
 #$ -j y
-# Set your Free or priority allocation:
-# -P <project>
+# Node class: L = 40 GB A100, required by the bf16 14B workhorse (~28-30 GB in use). The 8B tier
+# also fits the V100 class (edit to `-ac allow=EF`); 32B bf16 needs an 80 GB A100 (`allow=U`/`V`).
+#$ -ac allow=L
+# Project allocation: pass it on the qsub line (`qsub -P <project> ...`). No usable default
+# exists, and an SGE directive cannot read the environment, so it is deliberately not set here.
 
 set -euo pipefail
 
-MODEL="${MODEL:-Qwen/Qwen3-14B}"
-REVISION="${REVISION:-main}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "$HERE/../.." && pwd)}"
+
+TIER="${TIER:-qwen14b}"             # Hydra model group; configs/model/<TIER>.yaml
+TIER_FILE="$REPO_ROOT/configs/model/$TIER.yaml"
 PORT="${PORT:-8000}"
 DTYPE="${DTYPE:-bfloat16}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
@@ -36,16 +57,38 @@ SEED="${SEED:-0}"
 TP="${TP:-1}"                       # tensor-parallel size; 2 for 70B-AWQ on 2x A100-40GB
 QUANT="${QUANT:-}"                  # e.g. 'awq' for the 70B-AWQ tier; empty for bf16
 GUIDED_BACKEND="${GUIDED_BACKEND:-xgrammar}"
-CUDA_MODULE="${CUDA_MODULE:-cuda/12.4}"
-VENV="${VENV:-$HOME/venvs/precept-research}"
+CUDA_MODULE="${CUDA_MODULE:-cuda/12.2.2/gnu-10.2.0}"  # `none` to skip; see the load below
+# uv's own default location, so `uv sync` populates exactly what these jobs activate - no
+# UV_PROJECT_ENVIRONMENT, no second path to keep in step. Override with -v VENV=<path>.
+VENV="${VENV:-$REPO_ROOT/.venv}"
 
-module load "$CUDA_MODULE"
+# shellcheck source=scripts/myriad/_common.sh
+source "$HERE/_common.sh"
+# Caches onto Scratch before anything can populate them under $HOME. Override HF_HOME to relocate;
+# prefetch.sh resolves the same paths, so a login-node pre-pull lands where this job reads.
+cache_to_scratch
+
+# vLLM's wheels bundle their own CUDA runtime through torch, so the module is a convenience, not a
+# requirement - CUDA_MODULE=none skips it. When it is loaded the name must be one Myriad actually
+# has (`module avail cuda`); UCL's are versioned like cuda/12.2.2/gnu-10.2.0, and the GPU-node
+# driver is the 12.2 branch, so a mismatched toolkit is a real runtime-error source.
+if [[ "$CUDA_MODULE" != "none" ]]; then
+  module load "$CUDA_MODULE" || {
+    echo "[serve] module load '$CUDA_MODULE' failed." >&2
+    echo "[serve] Run 'module avail cuda' on a login node and pass the exact name:" >&2
+    echo "[serve]   qsub -v CUDA_MODULE=<name> scripts/myriad/serve.sh" >&2
+    echo "[serve] or CUDA_MODULE=none to skip it (torch ships its own CUDA runtime)." >&2
+    exit 1
+  }
+fi
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
 
+resolve_tier "$TIER_FILE" serve
+
 # Serving-environment capture (P2-10): the client env cannot see server-side versions, so echo them
 # into the job log for the sweep manifest to copy (pairs with manifest._TRACKED_DEPS).
-echo "[serve-env] model=$MODEL revision=$REVISION"
+echo "[serve-env] tier=$TIER model=$MODEL revision=$REVISION"
 echo "[serve-env] vllm=$(python -c 'import vllm; print(vllm.__version__)' 2>/dev/null || echo unknown)"
 echo "[serve-env] torch=$(python -c 'import torch; print(torch.__version__)' 2>/dev/null || echo unknown)"
 echo "[serve-env] gpu=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | paste -sd, - || echo unknown)"

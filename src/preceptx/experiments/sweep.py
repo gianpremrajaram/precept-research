@@ -21,9 +21,12 @@ import sys
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from preceptx.agents.channel import ChannelConfig
+from preceptx.agents.prompts import GATE_FEEDBACK_VERSION, PROMPT_VERSION
 from preceptx.config import ExperimentConfig, ModelConfig
 from preceptx.data.schema import Condition, Difficulty, Serialisation
+from preceptx.data.writer import dataset_hash
 from preceptx.manifest import dep_versions, git_sha
+from preceptx.serving.client import ServingConfig
 from preceptx.sim.actions import StepConfig
 from preceptx.sim.arena import ScenarioJitter
 from preceptx.sim.feasibility import STEP_BUDGETS
@@ -42,6 +45,9 @@ class SweepConfig(BaseModel):
     difficulties: list[Difficulty] = Field(min_length=1)
     seeds: list[int] = Field(min_length=1)
     model: ModelConfig
+    # The optional second role (DSE-049): when set, agent B is served by this model instead of
+    # `model`, and the caller must supply a matching client_b. None = self-play, the primary cell.
+    model_b: ModelConfig | None = None
     channel: ChannelConfig = Field(default_factory=ChannelConfig)
     # Result-shaping knobs carried here so they reach sweep_hash and the manifest (P0-2, P1-6):
     # a silent change to the jitter region, impulse parameters, or the label horizon k would
@@ -88,6 +94,11 @@ class SweepManifest(BaseModel):
     model_name: str
     model_revision: str
     prompt_version: str
+    # The retry-feedback template version (DSE-045). Recorded, deliberately NOT folded into
+    # dataset_hash_for: the gate is unbuilt (DSE-018), so today the template reaches no model and
+    # hashing it would re-key every existing dataset over a string nothing reads. It must join the
+    # dataset hash when DSE-018 makes retries live, at which point it does shape the data.
+    gate_feedback_version: str = GATE_FEEDBACK_VERSION
     command: list[str]
     dep_versions: dict[str, str]
     timestamp: str
@@ -96,6 +107,21 @@ class SweepManifest(BaseModel):
     # environment property, and separating roots (not hashes) keeps interim/Myriad datasets apart.
     serving_substrate: str = "unspecified"
     endpoint_base_url: str = ""
+    # Which model and endpoint served each role (DSE-049). None/"" means B was served by A's model
+    # at A's endpoint, i.e. self-play; a heterogeneous pair records both identities.
+    model_b_name: str | None = None
+    model_b_revision: str | None = None
+    endpoint_base_url_b: str = ""
+    # The wire format the schema constraint was sent in (DSE-032): a local-pilot dataset served
+    # under `response_format` must stay distinguishable from a vLLM `guided_json` one, because the
+    # constraining engine (llama.cpp/Outlines vs xgrammar) differs even though the schema does not.
+    structured_mode: str = "guided_json"
+    # The resolved decoding config per role, api key redacted. Temperature, decoding seed, the token
+    # budget and the thinking switch all shape what the model emits, and none of them live in
+    # SweepConfig - so without this the manifest recorded WHERE a run was served but not HOW it was
+    # decoded, and two datasets differing only in max_tokens were indistinguishable after the fact.
+    serving_a: ServingConfig | None = None
+    serving_b: ServingConfig | None = None
     summary: RunSummary | None = None
 
 
@@ -117,9 +143,24 @@ def episode_id(cell: ExperimentConfig) -> str:
 
 
 def sweep_hash(sweep: SweepConfig) -> str:
-    """Content hash of the resolved sweep config (sorted-key JSON, sha256, 16 hex)."""
-    canonical = json.dumps(sweep.model_dump(mode="json"), sort_keys=True)
+    """Content hash of the resolved sweep config (sorted-key JSON, sha256, 16 hex).
+
+    ``concurrency`` is excluded: it is an execution knob, not a result-shaping one, and hashing it
+    would re-key the dataset when a resumed run changes worker count - orphaning every completed
+    episode under the old hash.
+    """
+    canonical = json.dumps(sweep.model_dump(mode="json", exclude={"concurrency"}), sort_keys=True)
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
+def dataset_hash_for(sweep: SweepConfig) -> str:
+    """The dataset directory a sweep writes to - the one derivation every caller must use.
+
+    Folds the live ``PROMPT_VERSION`` in, so a prompt bump starts a new dataset instead of resuming
+    into the old one. Every reader (the runner, the drivers, the CLI) goes through here, because a
+    caller that derived the hash without the prompt version would look in the wrong directory.
+    """
+    return dataset_hash(sweep_hash(sweep), prompt_version=PROMPT_VERSION)
 
 
 def build_sweep_manifest(
@@ -129,6 +170,10 @@ def build_sweep_manifest(
     prompt_version: str,
     serving_substrate: str = "unspecified",
     endpoint_base_url: str = "",
+    endpoint_base_url_b: str = "",
+    structured_mode: str = "guided_json",
+    serving_a: ServingConfig | None = None,
+    serving_b: ServingConfig | None = None,
 ) -> SweepManifest:
     """Assemble the run-level manifest from the sweep plus the live environment."""
     return SweepManifest(
@@ -144,4 +189,15 @@ def build_sweep_manifest(
         timestamp=dt.datetime.now(dt.UTC).isoformat(),
         serving_substrate=serving_substrate,
         endpoint_base_url=endpoint_base_url,
+        model_b_name=None if sweep.model_b is None else sweep.model_b.name,
+        model_b_revision=None if sweep.model_b is None else sweep.model_b.revision,
+        endpoint_base_url_b=endpoint_base_url_b,
+        structured_mode=structured_mode,
+        serving_a=_redact(serving_a),
+        serving_b=_redact(serving_b),
     )
+
+
+def _redact(cfg: ServingConfig | None) -> ServingConfig | None:
+    """Never write a key into an artefact, even the placeholder one (CLAUDE.md)."""
+    return None if cfg is None else cfg.model_copy(update={"api_key": "REDACTED"})

@@ -70,10 +70,21 @@ class DatasetError(RuntimeError):
     """A dataset read or write failed, or a dataset hash was not found in the index."""
 
 
-def dataset_hash(config_hash: str, *, schema_version: int = SCHEMA_VERSION) -> str:
-    """Derive a stable dataset hash from the run's config hash and the schema version."""
-    payload = f"{config_hash}:v{schema_version}".encode()
-    return hashlib.sha256(payload).hexdigest()[:16]
+def dataset_hash(
+    config_hash: str, *, schema_version: int = SCHEMA_VERSION, prompt_version: str = ""
+) -> str:
+    """Derive a stable dataset hash from the run's config hash, schema version and prompt version.
+
+    ``prompt_version`` is part of dataset identity, not just provenance: the sweep config does not
+    carry it, so without it two runs under different prompts hash to the same directory and the
+    resume path silently pools them into one dataset. Empty (the default) reproduces the pre-v3
+    hash for callers that have no prompt surface. Sweep callers go through
+    ``experiments.sweep.dataset_hash_for``, which never omits it.
+    """
+    payload = f"{config_hash}:v{schema_version}"
+    if prompt_version:
+        payload += f":p{prompt_version}"
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
 def _record_to_row(record: HandoffRecord) -> dict[str, Any]:

@@ -18,9 +18,8 @@ import respx
 from numpy.typing import NDArray
 
 from preceptx.config import ModelConfig
-from preceptx.data.writer import dataset_hash
 from preceptx.experiments.rq1 import RQ1Config, rq1_sweep, run_rq1, write_rq1
-from preceptx.experiments.sweep import sweep_hash
+from preceptx.experiments.sweep import dataset_hash_for
 from preceptx.measure.featuriser import EncoderConfig, Featuriser
 from preceptx.measure.pvi_cpvi import ProbeConfig
 from preceptx.serving.client import LLMClient, ServingConfig
@@ -83,7 +82,7 @@ def test_rq1_runs_on_a_small_grid_and_writes_artefacts(tmp_path: Path) -> None:
         sweep, client, feat, root=tmp_path, cfg=RQ1Config(probe=ProbeConfig(n_splits=2))
     )
 
-    assert result.dataset_hash == dataset_hash(sweep_hash(sweep))
+    assert result.dataset_hash == dataset_hash_for(sweep)
     assert {c.condition for c in result.conditions} == {"C0", "C4"}
     assert len(scores) == result.n_handoffs  # per-handoff scores row-aligned to the dataset
     assert result.provenance.encoder_name == EncoderConfig().name  # P1-8 provenance rides along

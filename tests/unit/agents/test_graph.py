@@ -143,3 +143,39 @@ def test_jittered_runner_reproduces_within_seed_and_varies_across_seeds() -> Non
     assert a[0].pre_state == b[0].pre_state  # same seed -> same jittered instance
     c = runner.run_episode(_cell(seed=7), "ep-c")
     assert c[0].pre_state != a[0].pre_state  # different seed -> different instance
+
+
+# --- DSE-049: per-role clients -----------------------------------------------------------------
+
+BASE_URL_B = "http://localhost:8001/v1"
+CHAT_B = f"{BASE_URL_B}/chat/completions"
+
+
+def _client_b() -> LLMClient:
+    return LLMClient(ServingConfig(model="mb", base_url=BASE_URL_B, max_retries=0))
+
+
+@respx.mock
+def test_omitting_client_b_reproduces_the_single_client_path() -> None:
+    respx.post(CHAT).mock(side_effect=_script("WAIT"))
+    client = _client()
+    one = EpisodeRunner(client, max_steps=3).run_episode(_cell(), "ep")
+    two = EpisodeRunner(client, None, max_steps=3).run_episode(_cell(), "ep")
+    assert [r.model_dump() for r in one] == [r.model_dump() for r in two]
+
+
+@respx.mock
+def test_each_role_calls_only_its_own_client() -> None:
+    # A's endpoint only ever serves the message; B's only ever serves the structured action.
+    route_a = respx.post(CHAT).mock(
+        return_value=httpx.Response(200, json=_completion("push the load east"))
+    )
+    route_b = respx.post(CHAT_B).mock(
+        return_value=httpx.Response(200, json=_completion(json.dumps({"action": "WAIT"})))
+    )
+    records = EpisodeRunner(_client(), _client_b(), max_steps=2).run_episode(_cell(), "ep")
+
+    assert len(records) == 2
+    assert route_a.call_count == 2 and route_b.call_count == 2
+    assert all(b"guided_json" not in c.request.content for c in route_a.calls)
+    assert all(b"guided_json" in c.request.content for c in route_b.calls)
