@@ -55,6 +55,9 @@ VENV="${VENV:-$REPO_ROOT/.venv}"
 # TIER is exported so serve.sh serves the tier this pilot drives. Left unexported they are set
 # independently, and `-v TIER=qwen8b` alone would drive the 8B pilot against a 14B server.
 export PORT VENV TIER REPO_ROOT
+# The sidecar serve.sh writes; exported so the manifest picks up the server-side stack (vLLM and
+# torch versions, the physical GPU) that the client process has no way to observe for itself.
+export PRECEPTX_SERVE_ENV="${SERVE_ENV_PATH:-$REPO_ROOT/runs/serve_env.json}"
 
 # Checked here rather than in serve.sh so a typo'd tier fails now, not after the model has loaded.
 if [[ ! -f "$REPO_ROOT/configs/model/$TIER.yaml" ]]; then

@@ -58,3 +58,33 @@ cache_to_scratch() {
   export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-$XDG_CACHE_HOME/triton}"
   mkdir -p "$HF_HOME" "$VLLM_CACHE_ROOT" "$TRITON_CACHE_DIR"
 }
+
+# Serving-environment sidecar. vLLM's and torch's versions and the physical GPU exist only in the
+# server process on the compute node; the client that writes the run manifest cannot import them or
+# see the card. Echoing them to the job log made the run of record's server-side stack recoverable
+# only by a human copying lines out of precept-pilot.o<jobid>. This writes them where
+# manifest.serve_env() can read them, via PRECEPTX_SERVE_ENV.
+#
+# Usage: write_serve_env <path>   (serve.sh writes it; pilot.sh exports the same path)
+serve_env_path() {
+  echo "${SERVE_ENV_PATH:-$REPO_ROOT/runs/serve_env.json}"
+}
+
+write_serve_env() {
+  local out="$1"
+  mkdir -p "$(dirname "$out")"
+  cat >"$out" <<JSON
+{
+  "tier": "$TIER",
+  "model": "$MODEL",
+  "revision": "$REVISION",
+  "vllm": "$(python -c 'import vllm; print(vllm.__version__)' 2>/dev/null || echo unknown)",
+  "torch": "$(python -c 'import torch; print(torch.__version__)' 2>/dev/null || echo unknown)",
+  "gpu": "$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | paste -sd, - || echo unknown)",
+  "driver": "$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || echo unknown)",
+  "host": "$(hostname)",
+  "job_id": "${JOB_ID:-}",
+  "captured_at": "$(date -u +%FT%TZ)"
+}
+JSON
+}

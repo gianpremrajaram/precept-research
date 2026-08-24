@@ -413,4 +413,3 @@ Zhang, G., Wang, J., Chen, J., Zhou, W., Wang, K. and Yan, S. (2025b) *AgenTrace
 Zhang, H., Du, W., Shan, J., Zhou, Q., Du, Y., Tenenbaum, J.B., Shu, T. and Gan, C. (2024) 'Building cooperative embodied agents modularly with large language models', *International Conference on Learning Representations (ICLR)*. arXiv:2307.02485. Available at: https://arxiv.org/abs/2307.02485
 
 Zhang, S., Yin, M. et al. (2025a) 'Which agent causes task failures and when? On automated failure attribution of LLM multi-agent systems', *Proceedings of the 42nd International Conference on Machine Learning (ICML)*. arXiv:2505.00212. Available at: https://arxiv.org/abs/2505.00212
-

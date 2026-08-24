@@ -25,14 +25,15 @@ from preceptx.agents.prompts import GATE_FEEDBACK_VERSION, PROMPT_VERSION
 from preceptx.config import ExperimentConfig, ModelConfig
 from preceptx.data.schema import Condition, Difficulty, Serialisation
 from preceptx.data.writer import dataset_hash
-from preceptx.manifest import dep_versions, git_sha
+from preceptx.manifest import ServeEnv, dep_versions, git_sha, serve_env
 from preceptx.serving.client import ServingConfig
 from preceptx.sim.actions import StepConfig
 from preceptx.sim.arena import ScenarioJitter
 from preceptx.sim.feasibility import STEP_BUDGETS
+from preceptx.sim.fingerprint import SimulationFingerprint, simulation_fingerprint
 from preceptx.sim.outcomes import OutcomeConfig
 
-SWEEP_MANIFEST_VERSION = 1
+SWEEP_MANIFEST_VERSION = 2
 
 
 class SweepConfig(BaseModel):
@@ -94,6 +95,12 @@ class SweepManifest(BaseModel):
     model_name: str
     model_revision: str
     prompt_version: str
+    # The world the episodes were simulated in (sim/fingerprint.py). ``simulation_digest`` is
+    # folded into dataset_hash_for, so a geometry retune starts a new dataset instead of
+    # resuming into the one it was meant to replace; the payload is recorded whole beside it
+    # because the digest says a dataset's identity changed and only the payload says why.
+    simulation: SimulationFingerprint
+    simulation_digest: str
     # The retry-feedback template version (DSE-045). Recorded, deliberately NOT folded into
     # dataset_hash_for: the gate is unbuilt (DSE-018), so today the template reaches no model and
     # hashing it would re-key every existing dataset over a string nothing reads. It must join the
@@ -122,6 +129,10 @@ class SweepManifest(BaseModel):
     # decoded, and two datasets differing only in max_tokens were indistinguishable after the fact.
     serving_a: ServingConfig | None = None
     serving_b: ServingConfig | None = None
+    # The server-side stack (vLLM/torch versions, the physical GPU), captured by serve.sh and
+    # read from the sidecar it writes. None off the cluster, where there is no separate server
+    # process to describe - dep_versions already covers everything the client can see.
+    serve_env: ServeEnv | None = None
     summary: RunSummary | None = None
 
 
@@ -159,8 +170,16 @@ def dataset_hash_for(sweep: SweepConfig) -> str:
     Folds the live ``PROMPT_VERSION`` in, so a prompt bump starts a new dataset instead of resuming
     into the old one. Every reader (the runner, the drivers, the CLI) goes through here, because a
     caller that derived the hash without the prompt version would look in the wrong directory.
+
+    Folds the simulation fingerprint in for the same reason (sim/fingerprint.py): the world
+    constants are not ``SweepConfig`` fields, so without it the pre-registered difficulty retune
+    resumes into the pre-retune dataset and re-reports its verdict.
     """
-    return dataset_hash(sweep_hash(sweep), prompt_version=PROMPT_VERSION)
+    return dataset_hash(
+        sweep_hash(sweep),
+        prompt_version=PROMPT_VERSION,
+        simulation_digest=simulation_fingerprint().digest(),
+    )
 
 
 def build_sweep_manifest(
@@ -176,8 +195,11 @@ def build_sweep_manifest(
     serving_b: ServingConfig | None = None,
 ) -> SweepManifest:
     """Assemble the run-level manifest from the sweep plus the live environment."""
+    fingerprint = simulation_fingerprint()
     return SweepManifest(
         git_sha=git_sha(),
+        simulation=fingerprint,
+        simulation_digest=fingerprint.digest(),
         sweep=sweep,
         sweep_hash=sweep_hash(sweep),
         dataset_hash=dataset_hash,
@@ -195,6 +217,7 @@ def build_sweep_manifest(
         structured_mode=structured_mode,
         serving_a=_redact(serving_a),
         serving_b=_redact(serving_b),
+        serve_env=serve_env(),
     )
 
 

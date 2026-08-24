@@ -8,6 +8,66 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
 ## [Unreleased]
 
 ### Added
+- **Dataset identity carries the simulated world** (`sim/fingerprint.py`, `data/writer.py`,
+  `experiments/sweep.py`, `experiments/runner.py`). The pre-registered retune lever sat outside the
+  dataset hash: `_DIFFICULTY_SLITS`, `ArenaGeometry`, the T dimensions, `LOAD_MASS`, `GOAL_RADIUS`,
+  `DAMPING`/frictions and `GridConfig.cell` are module constants, and `ExperimentConfig` carries
+  `difficulty` only as a *label*. Widening a slit therefore left `dataset_hash_for` unchanged, so
+  `run_grid` read the pre-retune `episode_id`s, logged `0 pending`, ran nothing, and let the driver
+  re-report the old verdict as the post-retune result — silently, on the verdict of record, on the
+  path PREREGISTRATION §6 and roadmap §3.1 prescribe.
+  - `simulation_fingerprint()` returns a typed `SimulationFingerprint` grouped by owning module
+    (slit map / arena / load / grid) plus `ENVIRONMENT_SCHEMA_VERSION`, an escape hatch for a
+    behavioural change that leaves every constant identical. `digest()` is sha256 over sorted-key
+    JSON, 16 hex — the same shape as `sweep_hash`.
+  - `dataset_hash` gains `simulation_digest`, folded in exactly as `prompt_version` already is
+    (`:w<digest>` suffix, empty default preserving the old value for callers with no world surface);
+    `dataset_hash_for` never omits it.
+  - **Deliberately not re-fingerprinted:** `ScenarioJitter`, `StepConfig`, `OutcomeConfig` and the
+    step budgets are `SweepConfig` fields already inside `sweep_hash` (P0-2, P1-6) — hashing them
+    twice would put one guarantee in two places. Derived values (`load.HALF_H`, `load.COG_Y`) are
+    omitted as pure functions of dimensions that *are* hashed.
+  - `SweepManifest` records the **payload beside the digest** (`simulation`, `simulation_digest`):
+    the digest prevents an unsafe resume, the payload is the only thing that explains *why* an
+    identity changed without the source tree to hand. `SWEEP_MANIFEST_VERSION` 1 → 2.
+  - `run_grid._assert_simulation_matches` is defence in depth behind the hash, not the mechanism:
+    a recorded fingerprint disagreeing with this process raises `ConfigError`. It deliberately does
+    **not** fail closed on a *missing* manifest — the manifest is written when a sweep finishes, so
+    its absence is the ordinary killed-at-wallclock case that resumability exists to serve.
+  - `arena.slit_widths()` returns a copy, so the fingerprint observes the map without being able to
+    mutate it.
+  - **Re-keys every existing dataset.** `runs/local/*` and `runs/bench/smoke/*` are no longer
+    resumable; their findings survive in `docs/EXPERIMENTS.md`, the committed `runs/bench/ladder.*`
+    table is append-only, and both local pilots were indicative by pre-registration.
+- **The server-side serving environment reaches the manifest** (`manifest.py`,
+  `scripts/myriad/_common.sh`, `serve.sh`, `pilot.sh`). vLLM's and torch's versions and the physical
+  GPU exist only in the server process on the compute node; `_TRACKED_DEPS` is client-side, and the
+  values were previously echoed to the job log alone — recoverable on the run of record only by a
+  human copying four lines out of `precept-pilot.o<jobid>`.
+  - `write_serve_env` (in `_common.sh`, so serve/pilot cannot disagree on the path) writes tier,
+    model, revision, vLLM, torch, GPU name, **driver version**, host, `JOB_ID` and capture time to a
+    sidecar; `serve.sh` still echoes it so the job log stands alone.
+  - `manifest.serve_env()` reads the sidecar named by `PRECEPTX_SERVE_ENV` into a typed `ServeEnv`
+    (path, 16-hex digest over the bytes, values). `None` off the cluster — a local run has no
+    separate server process to describe. A sidecar that is *named but unreadable or corrupt* raises
+    `ManifestError`: that means the job wrote one and we lost it, which is not the same as absent.
+  - `SweepManifest.serve_env` carries it; `pilot.sh` exports the path so a cluster run picks it up
+    with no extra flag.
+- **`BenchmarkInvocation` — provenance for a hand-launched ladder row** (`serving/benchmark.py`,
+  `scripts/benchmark_models.py`). One model is served per GPU job, so DSE-005 rows are launched by
+  hand with free-text `--model`/`--revision`, and the served checkpoint is exactly what no later
+  check recovers — `/v1/models` carries no revision at all.
+  - Written to `runs/bench/<run_id>/benchmark-invocation.json` **before the first model call**, so
+    persistence is a precondition of serving rather than a courtesy afterwards; rewritten once on
+    completion with `ended_at`, `exit_status` and artefact paths.
+  - Carries tier, model, resolved revision, substrate, full argv and resolved args, git SHA **and
+    dirty-tree flag** (a dirty tree means the SHA does not describe the code that ran), the
+    simulation fingerprint and digest, the `ServeEnv` it ran against, host, `JOB_ID` and timestamps.
+  - **A crashed run needs no handler**: it keeps the `exit_status: null` it was written with, which
+    reads as "started, never finished" — accurate, and one fewer broad `except` than recording the
+    failure explicitly would have cost.
+  - `manifest.git_dirty()` added beside `git_sha()`.
+
 - **DSE-044 — The second pre-registered length control** (`analysis/stats.py`,
   `experiments/rq1.py`). PREREGISTRATION §5 pre-registers *two* controls for the length/condition
   confound and states that both are reported; only the covariate one existed.
@@ -646,6 +706,16 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
   power basis; and the analysis protocol. Records **one anticipated v0 → v1 change** — G2's CPVI half
   is directional until the pilot reveals the bit-scale — and opens a prospective deviation log that
   takes over from `docs/methodology.md` §10.5 at the freeze.
+
+### Changed
+- `docs/myriad.md`: new §9 **"Getting the results back"** — `runs/` is gitignored and the pilot
+  writes its verdict to Scratch, so nothing left the cluster on its own and the runbook never said
+  how to retrieve it. Gives the `rsync` filter for the small set a frozen result is made of
+  (manifest, summary, `pilot.{json,md}`, `serve_env.json`) and notes when to pull the Parquet too.
+  §5 names the real HTTPS clone URL and states that results do not come back by pushing. Old §9/§10
+  renumbered to §10/§11.
+- `experiments/pilot.py`: the fallback ladder's first rung now reads "TraceElephant external
+  validity" rather than the superseded "Who&When / MAST" (DSE-041 supersedes DSE-023).
 
 ### Fixed
 - **`scripts/myriad/serve.sh` requested 256 GB and could never have been scheduled** (DSE-002).

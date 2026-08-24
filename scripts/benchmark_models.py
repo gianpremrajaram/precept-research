@@ -18,11 +18,18 @@ the table and recommendation note from all rows collected so far.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import logging
 import os
 
 from preceptx.config import ConfigError, ModelConfig
-from preceptx.serving.benchmark import append_result, benchmark_tier, write_report
+from preceptx.serving.benchmark import (
+    append_result,
+    begin_invocation,
+    benchmark_tier,
+    write_invocation,
+    write_report,
+)
 from preceptx.serving.client import LLMClient, ServingConfig, ServingError
 
 
@@ -52,6 +59,20 @@ def main() -> int:
             "measured cannot be compared with one from another substrate"
         )
 
+    # Provenance is written BEFORE anything is served. --model and --revision are free text, and
+    # the served checkpoint is precisely what no later check can recover: /v1/models carries no
+    # revision, so a row recorded against the wrong one is undetectable afterwards. Writing first
+    # makes persistence a precondition of running rather than a courtesy after the fact.
+    invocation = begin_invocation(
+        tier=args.tier,
+        model=args.model,
+        revision=args.revision,
+        substrate=substrate,
+        args={k: str(v) for k, v in sorted(vars(args).items())},
+    )
+    record = write_invocation(invocation, args.out)
+    print(f"invocation recorded at {record}")
+
     client = LLMClient(
         ServingConfig(
             model=args.model,
@@ -73,6 +94,19 @@ def main() -> int:
             n_schema_calls=args.schema_calls,
         )
     out = write_report(append_result(result, args.out), args.out)
+    # Finalise the same record. A crashed run needs no handler: it simply keeps the exit_status of
+    # None it was written with, which reads as "started, never finished" - accurate, and one fewer
+    # broad except clause than recording the failure explicitly would cost.
+    write_invocation(
+        invocation.model_copy(
+            update={
+                "ended_at": dt.datetime.now(dt.UTC).isoformat(),
+                "exit_status": 0,
+                "artefacts": [str(out), str(args.root)],
+            }
+        ),
+        args.out,
+    )
     print(f"ladder table written to {out}")
     return 0
 
