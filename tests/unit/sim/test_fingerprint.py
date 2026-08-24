@@ -41,7 +41,8 @@ def test_the_digest_is_stable_across_processes_and_hash_seeds() -> None:
 
 
 def test_the_payload_is_json_primitives_only() -> None:
-    """What is hashed must also be readable: the manifest carries this payload to explain a re-key."""
+    """What is hashed must also be readable: the manifest carries this payload to explain
+    a re-key."""
     payload = json.loads(simulation_fingerprint().model_dump_json())
     assert payload["schema_version"] == ENVIRONMENT_SCHEMA_VERSION
     for group in ("slit_widths", "arena", "load", "grid"):
