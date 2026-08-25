@@ -57,21 +57,35 @@ SEED="${SEED:-0}"
 TP="${TP:-1}"                       # tensor-parallel size; 2 for 70B-AWQ on 2x A100-40GB
 QUANT="${QUANT:-}"                  # e.g. 'awq' for the 70B-AWQ tier; empty for bf16
 GUIDED_BACKEND="${GUIDED_BACKEND:-xgrammar}"
-CUDA_MODULE="${CUDA_MODULE:-cuda/12.2.2/gnu-10.2.0}"  # `none` to skip; see the load below
+# `none` by default since DSE-051: the job runs containerised and there is no module system inside
+# the image. Nothing is lost - torch's bundled cu12 libraries are the CUDA userspace and
+# `apptainer --nv` injects the host driver. Kept overridable for a bare run on a future non-RHEL7
+# node; see the load below.
+CUDA_MODULE="${CUDA_MODULE:-none}"
 # uv's own default location, so `uv sync` populates exactly what these jobs activate - no
 # UV_PROJECT_ENVIRONMENT, no second path to keep in step. Override with -v VENV=<path>.
 VENV="${VENV:-$REPO_ROOT/.venv}"
 
 # shellcheck source=scripts/myriad/_common.sh
 source "$HERE/_common.sh"
+
+# Myriad is glibc 2.17 and the lock is manylinux_2_28 throughout, so vLLM can only run inside the
+# container (DSE-051). Asserted, never pulled: an image pull here would spend A100 time on network
+# I/O. A no-op when pilot.sh has already entered the container - which is what keeps serve and
+# drive in one process tree, so pilot.sh's trap on $! still kills the right process.
+require_image
+enter_container "$HERE/serve.sh" "$@"
+
 # Caches onto Scratch before anything can populate them under $HOME. Override HF_HOME to relocate;
 # prefetch.sh resolves the same paths, so a login-node pre-pull lands where this job reads.
 cache_to_scratch
 
 # vLLM's wheels bundle their own CUDA runtime through torch, so the module is a convenience, not a
-# requirement - CUDA_MODULE=none skips it. When it is loaded the name must be one Myriad actually
-# has (`module avail cuda`); UCL's are versioned like cuda/12.2.2/gnu-10.2.0, and the GPU-node
-# driver is the 12.2 branch, so a mismatched toolkit is a real runtime-error source.
+# requirement - and inside the container it is unreachable, which is why CUDA_MODULE now defaults to
+# `none`. The locked stack is cu12 throughout (nvidia-cublas-cu12 12.8.4.1) and the L-node driver is
+# 550.127.05 / CUDA 12.4, so CUDA minor-version compatibility covers it. If it is ever loaded for a
+# bare run the name must be one Myriad actually has (`module avail cuda`, e.g.
+# cuda/12.2.2/gnu-10.2.0).
 if [[ "$CUDA_MODULE" != "none" ]]; then
   module load "$CUDA_MODULE" || {
     echo "[serve] module load '$CUDA_MODULE' failed." >&2

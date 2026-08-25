@@ -1,9 +1,13 @@
 # Running on Myriad
 
 Everything the repository needs from UCL Research Computing, and the order to do it in on a first
-session. Written from the [UCL RC documentation](https://www.rc.ucl.ac.uk/docs/) before any live
-session, so §10 lists what is *documented* but not yet *verified on the box* — check those first and
-correct this file in place.
+session. Originally written from the [UCL RC documentation](https://www.rc.ucl.ac.uk/docs/) before
+any live session; §10 now records what the **25 August 2026** session verified on the box and the
+four items still open. Correct this file in place as the rest are settled.
+
+**The short version of what that session found:** Myriad is RHEL 7.9 / glibc 2.17 on login *and*
+compute nodes, and every wheel in `uv.lock` needs glibc 2.28 or newer — so the environment runs
+inside an Apptainer container and the lockfile does not move. See §6.
 
 `docs/serving.md` covers the model ladder and the vLLM wire format. This file covers the cluster.
 
@@ -117,38 +121,94 @@ UCL's example jobscripts all say compute nodes cannot write to `$HOME`. Myriad's
 the job's working directory is wherever you submit from, and Scratch is correct under either
 reading. The `.o`/`.e` job logs land there too.
 
-## 6. Environment
+## 6. Environment — and why it runs in a container
 
-The repo pins Python 3.11. Myriad has a `python3/3.11` module, but **uv is the better route** — it
-is the project's package manager and `uv.lock` is the reproducibility anchor, so an interpreter uv
-manages reproduces the lockfile exactly.
+Myriad's login **and** compute nodes are Red Hat Enterprise Linux 7.9 with **glibc 2.17** (verified
+25 Aug 2026 on `login12` and on `node-l00a-006`; the cluster is homogeneous, so there is no node
+where this is not true). Every wheel in `uv.lock` is `manylinux_2_28` or newer. That is not a torch
+problem — it is a pandas, pyarrow, scipy and scikit-learn problem:
+
+| package | cp311 x86_64 tags in `uv.lock` |
+|---|---|
+| pandas 2.3.3 | `manylinux_2_24` / `2_28` |
+| pyarrow 21.0.0 | `manylinux_2_28` |
+| scipy 1.17.1 | `manylinux_2_27` / `2_28` |
+| scikit-learn 1.9.0 | `manylinux_2_27` / `2_28` |
+| torch 2.10.0 | `manylinux_2_28`, **and no sdist** |
+| vllm 0.18.1 | `manylinux_2_31` |
+
+`uv sync` reports torch first only because torch is the one package publishing no source
+distribution. The other four have sdists, so uv would fall through to compiling them with gcc 4.8.5
+on RHEL 7 — which for pyarrow, needing Arrow C++ and C++17, does not happen. **`uv sync` with no
+extras at all cannot produce a working environment on a bare Myriad node.**
+
+Downgrading is not the fix. The newest torch with a glibc-2.17 wheel is **2.6.0**; the newest vLLM
+pinning ≤ 2.6.0 is **0.8.5**, from April 2025:
+
+| vLLM | torch pin | installs at glibc 2.17? |
+|---|---|---|
+| 0.8.5 | `==2.6.0` | yes — the last one |
+| 0.9.x | `==2.7.0` | no |
+| 0.11.2 | `==2.9.0` | no |
+| 0.18.1 (locked) | `2.10.0` | no |
+
+And that path still leaves pandas, pyarrow, scipy and scikit-learn unsolved. Since scipy and
+scikit-learn sit directly under the CPVI estimator, moving them would make every measurement taken
+before the change incomparable with every one taken after — for a sixteen-month-old server. So the
+environment runs in a container instead, and **`uv.lock` does not move**.
+
+### The image
 
 ```bash
-# uv installs as a single static binary into user space; no module, no root.
+docker://python@sha256:a8677eb08a56d04e75df938f9d2af3d50c0f0fba17af8eb9c8e41b65fa32938d
+```
+
+Pinned by **digest, not tag**: `python:3.11` is mutable, and a verdict-of-record run cannot rest on
+whatever Docker Hub served that day. Debian bookworm carries glibc 2.36, clearing `manylinux_2_28`
+and vLLM's `manylinux_2_31`. The **full** image, not `-slim`, because `manifest.git_sha()` shells
+out to `git` and raises rather than defaulting when it is absent — a git-less image would fail
+*after* the episodes were paid for.
+
+Nothing is built: `apptainer pull` converts an existing image, so no `--fakeroot` and no `.def`
+file. `scripts/myriad/prefetch.sh` pulls it to `~/Scratch/containers/` and records its SHA-256
+beside it. Both the source digest and the `.sif` digest land in every run manifest via
+`serve_env.json`, alongside the glibc version the run actually saw.
+
+### Getting set up
+
+```bash
+# uv installs as a single static binary into user space; no module, no root. It targets glibc 2.17,
+# so the same binary runs on the bare node and inside the container.
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 cd ~/Scratch/precept-research
-uv sync --extra serving --extra embed
+bash scripts/myriad/prefetch.sh        # image, then venv, then weights, then the encoder
 ```
+
+`scripts/myriad/shell.sh` is the entry point for everything that is *not* a jobscript — the dry-run
+hash checks, the smoke, poking at a failed run. `bash scripts/myriad/shell.sh` drops you into an
+interactive shell inside the container with `.venv` active; `-c '<cmd>'` runs one command and
+exits. It applies `--nv` only where there is a GPU, so the same invocation works on a login node.
+
+
+`prefetch.sh` now owns all four, in that order, and each step is idempotent. It checks `gquota`
+before pulling anything, pulls the image, re-execs itself inside it, then builds `.venv` with
+`uv sync --extra serving --extra embed --python /usr/local/bin/python3.11` and asserts that
+pandas, pyarrow, scikit-learn and torch import — which is the check that proves the environment is
+the container's and not the host's.
 
 `uv sync` rather than `uv pip install -e .`: sync installs the resolved versions from `uv.lock`,
-which is the reproducibility anchor, while `uv pip install` re-resolves against whatever PyPI serves
-that day. The cluster run is the run of record, so it is the last place to install off-lock. The
-lock already carries vLLM's `manylinux_2_31_x86_64` wheel, so nothing compiles from source.
+while `uv pip install` re-resolves against whatever PyPI serves that day. The cluster run is the run
+of record, so it is the last place to install off-lock.
 
-Sync populates `.venv` in the repo — uv's default, and what all three scripts activate. Override
-with `-v VENV=<path>` if you keep environments elsewhere.
+> If you already ran `uv sync` on the bare login node, it left a `.venv` that cannot import the
+> locked wheels. `ensure_venv` detects exactly that and rebuilds it; you do not need to clean up.
 
-**CUDA.** vLLM's wheels bundle their own CUDA runtime through torch, so the module is a convenience
-rather than a requirement. When it is loaded the name must be one Myriad has — UCL's are versioned
-like `cuda/12.2.2/gnu-10.2.0`, and the GPU-node driver is on the 12.2 branch, so a mismatched
-toolkit is a genuine source of runtime errors. Check before your first submit:
-
-```bash
-module avail cuda
-```
-
-Then either pass the exact name (`-v CUDA_MODULE=<name>`) or skip it (`-v CUDA_MODULE=none`).
+**CUDA.** `CUDA_MODULE` now defaults to `none`. There is no module system inside the image, and
+nothing is lost: torch's bundled `cu12` libraries are the CUDA userspace and `apptainer --nv`
+injects the host driver. The locked stack is `cu12` throughout (`nvidia-cublas-cu12 12.8.4.1`) and
+the L-node driver is **550.127.05 / CUDA 12.4**, so CUDA minor-version compatibility covers it. The
+override survives for a bare run on some future non-RHEL7 node.
 
 ## 7. First session, in order
 
@@ -156,28 +216,68 @@ Do the first vLLM launch **interactively**. Debugging a serving failure through 
 multi-hour loop; interactively it is a multi-second one.
 
 ```bash
-# 1. Login node: environment, and the cheap checks that need no GPU.
-module avail cuda                      # note the exact 12.x name
-uv run preceptx-pilot --dry-run --model qwen14b    # cells, call count, hashes; no model calls
-
-# 2. Pre-pull weights AND the embedding encoder on the login node. Checks quota first; resumable.
+# 1. Login node: build everything. Image, then venv, then weights, then the encoder.
+#    `bash <script>` is not a login shell, so load the module explicitly rather than relying on
+#    `module` having been exported as a function into the environment.
+module load apptainer/1.2.4-1
 bash scripts/myriad/prefetch.sh        # TIER=qwen8b for the V100-class tier
 
-# 3. Interactive GPU node: prove vLLM serves before trusting a batch job with it.
-qrsh -P <project> -l gpu=1,h_rt=2:00:00,mem=4G -pe smp 8 -ac allow=L
-#    ... on the node:
-nvidia-smi                             # which card did you actually get
-source .venv/bin/activate
-bash scripts/myriad/serve.sh
-#    ... in a second shell on the same node:
-curl -s localhost:8000/v1/models       # the served id must equal configs/model/qwen14b.yaml's name
+# 2. Login node: prove the container before trusting anything else to it. Seconds, no GPU.
+bash scripts/myriad/shell.sh -c 'pwd; git rev-parse --short HEAD; ldd --version | head -1; python -c "import torch, pyarrow; print(torch.__version__)"'
+#    expect: the repo path, the commit SHA, glibc 2.36, a torch version
 
-# 4. Batch: the real re-gate.
-qsub -P <project> scripts/myriad/pilot.sh
+# 3. Login node: the plan hashes. These go through the container too — the CLI imports pandas and
+#    pyarrow, so even --dry-run cannot run on the bare node.
+bash scripts/myriad/shell.sh -c 'preceptx-pilot --dry-run --model qwen14b'
+#    expect: cells 40, calls 2040, dataset hash 1c994b87bbca8257
+
+# 4. Interactive GPU node: prove vLLM serves, then drive two episodes end to end.
+qrsh -l gpu=1,h_rt=2:00:00,mem=4G -pe smp 8 -ac allow=L
+#    ... on the node (see the smoke recipe below)
+
+# 5. Batch: the real re-gate.
+qsub scripts/myriad/pilot.sh
 ```
 
-Step 3 is the one that catches the cluster-specific failures — a wrong CUDA module, a memory
-request that will not schedule, a missing wheel — while they still cost seconds.
+Step 2 is the cheapest possible failure: if the bind, the working directory, git or the wheels are
+wrong, it costs seconds on a login node rather than a queue wait and an A100.
+
+Step 4 is what catches the cluster-specific serving failures — a wheel that will not run against
+driver 550.127.05, a memory request that will not schedule — while they still cost seconds.
+
+### The two-episode smoke (step 4, on the GPU node)
+
+```bash
+cd ~/Scratch/precept-research
+nvidia-smi                             # which card did you actually get
+module load apptainer/1.2.4-1          # so the scripts find it without relying on `module`
+
+bash scripts/myriad/serve.sh > runs/smoke-serve.log 2>&1 &
+SERVER_PID=$!
+trap 'kill $SERVER_PID 2>/dev/null' EXIT
+
+until curl -sf localhost:8000/v1/models >/dev/null; do
+  kill -0 $SERVER_PID 2>/dev/null || { tail -60 runs/smoke-serve.log; break; }
+  sleep 5
+done
+curl -s localhost:8000/v1/models       # the served id must equal configs/model/qwen14b.yaml's name
+
+PRECEPTX_SERVE_ENV="$PWD/runs/serve_env.json" \
+PRECEPTX_SERVING_SUBSTRATE=myriad-smoke \
+bash scripts/myriad/shell.sh -c 'preceptx-pilot --model qwen14b \
+  --base-url http://localhost:8000/v1 \
+  --conditions C0,C4 --difficulties easy --seeds 0 \
+  --root runs/smoke --concurrency 2' 2>&1 | tee runs/smoke-pilot.log
+```
+
+C4 is not optional: the pilot analysis contrasts a degraded condition against C0, so a C0-only
+smoke runs its episodes and then fails in the report. The G1/G2/G3 numbers this produces are **not
+evidence** — two episodes only prove the analysis path executes. Artefacts land under
+`runs/smoke/05fcef471b8b9726…`, a different dataset hash from the re-gate's
+`1c994b87bbca8257`, so the smoke cannot mix with or resume the real run.
+
+**No `-P <project>` anywhere.** The 25 Aug 2026 session confirmed `qrsh -l gpu=1 -ac allow=L`
+succeeds with no project code; the Free allocation is the default.
 
 **No `REVISION=` anywhere.** Since DSE-050 the served name and revision are read from
 `configs/model/<TIER>.yaml`, the same file the manifest records them from, so the two cannot
@@ -194,7 +294,7 @@ and kills the server on every exit path including the scheduler's wallclock SIGT
 cannot drive a compute node's `localhost`, which is why the two halves share a job.
 
 ```bash
-qsub -P <project> scripts/myriad/pilot.sh                      # submit
+qsub scripts/myriad/pilot.sh                                   # submit
 qstat                                                          # running jobs
 qstat -f -j <job-id>                                           # why is it still queued
 qdel <job-id>                                                  # stop it
@@ -203,8 +303,18 @@ tail -f precept-pilot.o<job-id>                                # live log; -j y 
 ```
 
 Useful `-v` overrides: `TIER` (Hydra model group), `ATTEMPT=2` (the one permitted retune),
-`SERVE_TIMEOUT` (default 1800 s, sized for a cold weights cache), `RUNS_ROOT`, `PORT`, `VENV`.
+`SERVE_TIMEOUT` (default 1800 s, sized for a cold weights cache), `RUNS_ROOT`, `PORT`, `VENV`,
+`SIF` (a different container image) and `APPTAINER_MODULE` (if UCL renames the module).
 Add `-m be -M <email>` to be told when it starts and ends.
+
+**Both jobscripts enter the container themselves.** They re-exec into it once, at the top, rather
+than wrapping each command — `pilot.sh` launches `serve.sh` in the background and traps `$!`, so
+two separate `apptainer exec` calls would put them in different process namespaces and the trap
+would name the wrapper rather than vLLM. Re-execing keeps both halves in one process tree in one
+container: `serve.sh` sees `APPTAINER_CONTAINER` already set and does not nest. Neither jobscript
+will pull an image — that is `prefetch.sh`'s job, on a login node, because pulling while holding an
+A100 spends GPU allocation on network I/O. Submit before prefetching and the job exits immediately
+saying so.
 
 `serve.sh` alone still works when you want a long-lived endpoint to poke at by hand; tear it down
 with `qdel`, since the client's `close()` only drops local HTTP connections.
@@ -236,32 +346,44 @@ Bring the Parquet dataset back too (`--include='*.parquet'`) when you want to re
 locally rather than trust the on-node run — it is the same estimator either way, but a local re-run
 is how you check that.
 
-## 10. Not yet verified on the cluster
+## 10. Verified on the cluster, and what is still open
 
-Documented, plausible, and unconfirmed. Check these in the first session and correct this file.
+Checked in the first live session, **25 August 2026** (`login12`, `node-l00a-006`):
 
-- [ ] The exact CUDA module name (`module avail cuda`); `cuda/12.2.2/gnu-10.2.0` is what UCL's docs
-      name, and the jobscript default.
-- [ ] **Whether compute nodes have outbound internet.** If not, `scripts/myriad/prefetch.sh` (§7
-      step 2) is mandatory rather than merely thrifty — it pulls both the weights and the embedding
-      encoder on a login node, which does have a route out. Run it either way: it is the only
-      preparation that makes this answer stop mattering. `pilot.sh` additionally warms the encoder
-      before the sweep, so a node with no route out fails in seconds rather than after a full GPU
-      hour with the dataset already paid for.
-- [ ] Queue latency for `-ac allow=L` on the Free allocation. There are only 6 L-type nodes; if the
-      wait is bad, the 8B tier on `EF` has 19 nodes and is the pressure valve.
-- [ ] That `vllm` **runs** against the cluster's driver. Installation itself is no longer in
-      question: `uv.lock` carries the `manylinux_2_31_x86_64` wheel, so `uv sync --extra serving`
-      fetches a prebuilt binary and compiles nothing. What is unverified is the wheel's bundled
-      CUDA runtime against driver 550.127.05 — which is what §7 step 3 exists to find out.
+- [x] **`-P <project>` is not needed.** `qrsh -l gpu=1,h_rt=0:20:0,mem=4G -ac allow=L` was granted
+      with no project code. The Free allocation is the default for UCL internal users.
+- [x] **The GPU class is right.** `-ac allow=L` yielded an **NVIDIA A100-PCIE-40GB**, driver
+      **550.127.05**, CUDA 12.4, on `node-l00a-006`. The queue returned it in seconds.
+- [x] **Compute nodes have outbound internet — untested, and now irrelevant.** `prefetch.sh` pulls
+      the image, the weights and the encoder on a login node, which demonstrably does (PyPI, Hugging
+      Face and GitHub all returned 200). `pilot.sh` still warms the encoder before the sweep, so a
+      node with no route out fails in seconds rather than after a full GPU hour.
+- [x] **The CUDA module question is closed by the container.** `CUDA_MODULE` defaults to `none`;
+      torch's bundled `cu12` libraries are the CUDA userspace and `--nv` injects the host driver.
+      `cuda/12.2.2/gnu-10.2.0` does exist on Myriad if a bare run ever needs it.
+- [x] **glibc is 2.17 on login *and* compute.** RHEL 7.9 throughout. This is what forced the
+      container; see §6.
+- [x] **Apptainer is available** as `apptainer/1.2.4-1` on both login and compute nodes, with
+      `singularity-env/1.0.0` alongside it. UCL's module points `APPTAINER_CACHEDIR` at Scratch but
+      its build directory at `/run/user/<uid>`, a small RAM-backed tmpfs — `_common.sh` overrides
+      `APPTAINER_TMPDIR` onto Scratch, since a ~1 GB image pull through tmpfs can fail on space.
+
+Still open:
+
+- [ ] **That vLLM 0.18.1 runs against driver 550.127.05.** The locked stack is `cu12` throughout, so
+      CUDA minor-version compatibility should cover a 12.8 userspace on a 12.4 driver, and the A100
+      is sm_80 for which torch ships precompiled kernels rather than relying on PTX JIT. Documented
+      and plausible; not yet observed. §7 step 3 is what finds out.
+- [ ] **That Docker Hub is reachable from a login node.** PyPI, Hugging Face and GitHub are; the
+      registry has not been tried. `prefetch.sh` fails on the pull, at no cost, if it is not.
 - [ ] Wallclock actually needed for the 40-episode E3 cell at bf16. `h_rt=6:00:00` is a guess from a
       local 4-bit run (5 episodes in ~7 min) and should be replaced with a measured number.
-- [ ] Whether `-P <project>` is needed at all — most UCL internal users default to `AllUsers`.
+- [ ] Queue latency for `-ac allow=L` under load. One grant in seconds is not a distribution; if the
+      wait ever bites, the 8B tier on `EF` has 19 nodes and is the pressure valve.
 
-Two items that were on this list are now closed by construction rather than by checking: the served
-revision can no longer disagree with the manifest (it is read from the tier config), and the venv
-can no longer diverge from the lockfile (`uv sync` into the repo's `.venv`, which is what every
-script activates).
+Two items are closed by construction rather than by checking: the served revision can no longer
+disagree with the manifest (it is read from the tier config), and the venv can no longer diverge
+from the lockfile (`uv sync` into the repo's `.venv`, which is what every script activates).
 
 ## 11. Cost
 

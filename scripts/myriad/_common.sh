@@ -83,8 +83,139 @@ write_serve_env() {
   "gpu": "$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | paste -sd, - || echo unknown)",
   "driver": "$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || echo unknown)",
   "host": "$(hostname)",
+  "container_source": "$CONTAINER_SOURCE",
+  "container_sif": "$SIF",
+  "container_sif_sha256": "$(cat "$SIF.sha256" 2>/dev/null || echo unknown)",
+  "glibc": "$(ldd --version 2>/dev/null | head -1 | awk '{print $NF}' || echo unknown)",
   "job_id": "${JOB_ID:-}",
   "captured_at": "$(date -u +%FT%TZ)"
 }
 JSON
+}
+
+
+# --- Container runtime (DSE-051) ---------------------------------------------------------------
+# Myriad's login AND compute nodes are both RHEL 7.9 / glibc 2.17 (verified 25 Aug 2026 on login12
+# and node-l00a-006). Every wheel this project locks is manylinux_2_28 or newer - not just torch and
+# vLLM but pandas, pyarrow, scipy and scikit-learn - and torch publishes no sdist, so `uv sync`
+# cannot build a working environment on the bare node at all.
+#
+# The fix is to run inside a container, not to move the lock backwards. Downgrading to the last
+# glibc-2.17-compatible pair (vLLM 0.8.5 / torch 2.6.0, April 2025) would also drag scipy and
+# scikit-learn - the estimator's own numerical stack - back with it, making every measurement taken
+# before the change incomparable with every one taken after. The container changes zero packages:
+# uv.lock stays the reproducibility anchor and simply executes where its wheels are valid.
+#
+# The image is pinned by digest, not tag: `python:3.11` is mutable and a verdict-of-record run
+# cannot rest on whatever Docker Hub served that day. Debian bookworm carries glibc 2.36, which
+# clears manylinux_2_28 and vLLM's manylinux_2_31. The full image is used rather than -slim because
+# manifest.git_sha() shells out to `git` and raises ManifestError when it is missing, so a run in a
+# git-less image would fail after the episodes were already paid for.
+CONTAINER_SOURCE="${CONTAINER_SOURCE:-docker://python@sha256:a8677eb08a56d04e75df938f9d2af3d50c0f0fba17af8eb9c8e41b65fa32938d}"
+SIF="${SIF:-$HOME/Scratch/containers/precept-python311.sif}"
+UV_BIN="${UV_BIN:-$HOME/.local/bin/uv}"
+
+# UCL's apptainer module points its build directory at /run/user/<uid>, a small RAM-backed tmpfs on
+# the login nodes; a ~1 GB image pull through it can fail on space. Scratch is the only location
+# sized for it, and the pull is the one operation large enough for this to matter.
+container_paths() {
+  export APPTAINER_CACHEDIR="${APPTAINER_CACHEDIR:-$HOME/Scratch/.apptainer}"
+  export APPTAINER_TMPDIR="${APPTAINER_TMPDIR:-$APPTAINER_CACHEDIR/tmp}"
+  mkdir -p "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" "$(dirname "$SIF")"
+}
+
+load_apptainer() {
+  if ! command -v apptainer >/dev/null 2>&1; then
+    module load "${APPTAINER_MODULE:-apptainer/1.2.4-1}"
+  fi
+}
+
+# The digest of the file actually executed, recorded beside the source reference: the source pins
+# what was asked for, this pins what is on disk. Computed once and cached - it is a ~1 GB hash.
+record_sif_digest() {
+  if [[ ! -f "$SIF.sha256" ]]; then
+    sha256sum "$SIF" | awk '{print $1}' >"$SIF.sha256"
+  fi
+}
+
+# Login-node side of prefetch.sh: pull the image if it is not already there.
+ensure_image() {
+  container_paths
+  load_apptainer
+  if [[ -f "$SIF" ]]; then
+    echo "[image] present: $SIF"
+  else
+    echo "[image] pulling $CONTAINER_SOURCE"
+    echo "[image] -> $SIF (~1 GB, once; login node only, needs outbound network)"
+    apptainer pull "$SIF" "$CONTAINER_SOURCE"
+  fi
+  record_sif_digest
+  echo "[image] sha256=$(cat "$SIF.sha256")"
+}
+
+# serve.sh / pilot.sh side: assert, never pull. Pulling an image while holding an A100 would spend
+# GPU allocation on network I/O, which is the same mistake prefetch.sh exists to prevent.
+require_image() {
+  # A host-side precondition only: inside the container there is no module system and the image is
+  # by definition already there. Without this guard pilot.sh's nested serve.sh would try to
+  # `module load apptainer` from inside the container and die.
+  if [[ -n "${APPTAINER_CONTAINER:-}" ]]; then
+    return 0
+  fi
+  container_paths
+  if [[ ! -f "$SIF" ]]; then
+    echo "[container] no image at $SIF" >&2
+    echo "[container] run 'bash scripts/myriad/prefetch.sh' on a login node first" >&2
+    exit 1
+  fi
+  load_apptainer
+  record_sif_digest
+}
+
+# Re-exec THIS script inside the container, once.
+#
+# Deliberately a re-exec rather than wrapping each command in `apptainer exec`. pilot.sh launches
+# serve.sh in the background, captures $! and traps it so the server dies on the scheduler's
+# wallclock SIGTERM. Two separate `apptainer exec` invocations would put them in different process
+# namespaces and $! would name the wrapper rather than vLLM, so the guarantee that no orphaned
+# server outlives the job would quietly stop holding. Re-execing keeps serve and drive in one
+# process tree in one container, and every existing line downstream runs unchanged.
+#
+# $HOME is a symlink into /myriadfs here, so it is bound resolved-source-to-original-destination:
+# that makes $HOME, $HOME/Scratch, the repo, the caches and the uv binary all resolve inside the
+# container exactly as they do outside. --pwd preserves the working directory for the same reason -
+# `#$ -cwd` plus a relative RUNS_ROOT means a dropped cwd would send artefacts to a read-only /runs.
+enter_container() {
+  if [[ -n "${APPTAINER_CONTAINER:-}" ]]; then
+    return 0
+  fi
+  local script="$1"
+  shift
+  local bind
+  bind="$(readlink -f "$HOME"):$HOME"
+  # No GPU on a login node, where --nv fails looking for driver libraries that are not there.
+  if [[ -e /dev/nvidiactl ]]; then
+    exec apptainer exec --nv --bind "$bind" --pwd "$PWD" "$SIF" bash "$script" "$@"
+  fi
+  exec apptainer exec --bind "$bind" --pwd "$PWD" "$SIF" bash "$script" "$@"
+}
+
+# Built with the image's own interpreter and only ever from inside the container. `uv sync` rather
+# than `uv pip install`, so uv.lock stays the anchor. The import check is the assertion that the
+# environment is the container's: these four are exactly the wheels that cannot exist at glibc 2.17,
+# so importing them proves the container is real. Checking platform.libc_ver() instead would report
+# the interpreter's own build-time libc and mislead.
+ensure_venv() {
+  if [[ -x "$VENV/bin/python" ]] && ! "$VENV/bin/python" -c 'import pyarrow' >/dev/null 2>&1; then
+    echo "[venv] $VENV cannot import the locked wheels (built outside the container?); rebuilding"
+    rm -rf "$VENV"
+  fi
+  echo "[venv] uv sync --extra serving --extra embed"
+  "$UV_BIN" sync --extra serving --extra embed --python /usr/local/bin/python3.11
+  "$VENV/bin/python" - <<'PYVENV'
+import pandas, pyarrow, sklearn, torch
+
+print(f"[venv] ok torch={torch.__version__} pyarrow={pyarrow.__version__} "
+      f"pandas={pandas.__version__} sklearn={sklearn.__version__}")
+PYVENV
 }
