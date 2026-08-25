@@ -53,8 +53,13 @@ def test_structured_parses_json_object() -> None:
     schema = {"type": "object", "properties": {"action": {"type": "string"}}}
     result = LLMClient(_config()).structured([ChatMessage(role="user", content="go")], schema)
     assert result == {"action": "N"}
-    # The schema is forwarded to vLLM guided decoding.
-    assert b"guided_json" in route.calls.last.request.content
+    # The schema is forwarded in vLLM's structured-outputs wire format, and the removed `guided_*`
+    # fields must not come back: vLLM 0.12.0 dropped them, so a regression here is a request that
+    # either 400s or - worse - decodes unconstrained (DSE-052).
+    body = json.loads(route.calls.last.request.content)
+    assert body["structured_outputs"] == {"json": schema}
+    assert "guided_json" not in body
+    assert "guided_decoding_backend" not in body
 
 
 @respx.mock
@@ -92,13 +97,13 @@ def test_chat_sends_thinking_off_template_kwargs_by_default() -> None:
 
 
 @respx.mock
-def test_structured_sends_template_kwargs_alongside_guided_decoding() -> None:
+def test_structured_sends_template_kwargs_alongside_structured_outputs() -> None:
     route = respx.post(CHAT).mock(
         return_value=httpx.Response(200, json=_completion('{"action": "N"}'))
     )
     LLMClient(_config()).structured([ChatMessage(role="user", content="go")], {"type": "object"})
     body = route.calls.last.request.content
-    assert b"guided_json" in body and b"chat_template_kwargs" in body
+    assert b"structured_outputs" in body and b"chat_template_kwargs" in body
 
 
 @respx.mock
@@ -188,7 +193,7 @@ def _schema() -> dict[str, object]:
 def _sent_schema(request: httpx.Request, mode: str) -> object:
     body = json.loads(request.content)
     if mode == "guided_json":
-        return body["guided_json"]
+        return body["structured_outputs"]["json"]
     return body["response_format"]["json_schema"]["schema"]
 
 
@@ -205,8 +210,8 @@ def test_response_format_mode_sends_openai_json_schema() -> None:
     assert body["response_format"]["json_schema"]["name"] == "action"
     assert body["response_format"]["json_schema"]["strict"] is True
     # The vLLM-only keys must not leak to a local runtime that would reject them.
+    assert "structured_outputs" not in body
     assert "guided_json" not in body
-    assert "guided_decoding_backend" not in body
 
 
 @respx.mock

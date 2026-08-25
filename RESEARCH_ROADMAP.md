@@ -72,7 +72,7 @@ source ~/venvs/precept/bin/activate
 vllm serve Qwen/Qwen3-14B-Instruct \
   --port 8000 --dtype bfloat16 --max-model-len 8192 \
   --gpu-memory-utilization 0.90 --seed 0 \
-  --guided-decoding-backend xgrammar
+  --structured-outputs-config.backend xgrammar
 ```
 
 ---

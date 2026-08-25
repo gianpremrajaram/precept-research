@@ -63,6 +63,45 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
     still open, of which "vLLM 0.18.1 actually runs against driver 550.127.05" is the load-bearing
     one.
 
+- **vLLM structured-output API migration** (`serving/client.py`, `scripts/myriad/serve.sh`,
+  `_common.sh`, `RESEARCH_ROADMAP.md`, DSE-052). The first cluster serve attempt (25 Aug 2026)
+  exited 2 at argument parsing: `vllm: error: unrecognized arguments: --guided-decoding-backend
+  xgrammar`. vLLM removed the whole `guided_*` family in **v0.12.0**; the locked version is 0.18.1.
+  Dataset hashes are unchanged (`1c994b87bbca8257` / `05fcef471b8b9726`) — `ServingConfig` and
+  `structured_mode` live on `SweepManifest`, not `SweepConfig`, so `sweep_hash` never saw them.
+  - `scripts/myriad/serve.sh` now passes `--structured-outputs-config.backend`. Explicit `xgrammar`
+    is kept rather than falling back to the default `auto`, which selects a backend per request:
+    the constraining engine is a property of the run of record, not something to leave to the
+    server's judgement.
+  - `LLMClient._structured_kwargs` sends `{"structured_outputs": {"json": schema}}` in place of
+    `{"guided_json": …, "guided_decoding_backend": …}`. **This was the more dangerous of the two.**
+    The CLI flag fails loudly at parse time, before the model loads; the request field would have
+    failed *after* the weights were resident and the episodes were being paid for — and if vLLM
+    ignores unknown `extra_body` keys rather than rejecting them, it would not have failed at all,
+    it would have decoded the action channel unconstrained and produced a passing-looking run.
+  - `ServingConfig.guided_decoding_backend` is **removed**. The backend is no longer a per-request
+    choice, so a client-side field claiming one would have been written into every manifest as
+    provenance it no longer controls. It is replaced by `structured_outputs_backend` in
+    `serve_env.json`, written by the server that actually selects it. `ServeEnv.values` is a free
+    `dict[str, str]`, so the manifest schema is unchanged.
+  - `structured_mode` keeps its `guided_json` value deliberately. It names which endpoint dialect
+    the branch speaks, not the field, and it is a `--structured-mode` CLI choice recorded in every
+    `SweepManifest`; renaming it would churn a config contract for a label. The frozen E3-local
+    data used the `response_format` branch, which is untouched — **no re-freeze**.
+  - Six test stubs dispatched on `b"guided_json"` to tell an action call from a message call, so
+    they kept passing against the removed field. They now sniff `b"structured_outputs"`, and
+    `test_structured_parses_json_object` asserts the removed keys are absent rather than
+    only asserting the new one is present.
+
+### Fixed
+- **`serve_env.json` fields truncated by a pipefail/SIGPIPE race** (`_common.sh`, DSE-052). The
+  live run recorded `"glibc": "2.41\nunknown"` — a two-line JSON value. Under `set -o pipefail`,
+  `ldd --version | head -1 | awk …` has `head` close the pipe, `ldd` die of SIGPIPE, and the
+  pipeline report 141 even though `awk` already printed the right answer, so `|| echo unknown`
+  appended a second line. Replaced with `awk 'NR==1{…}'`, which reads all of stdin and cannot lose
+  the race. The `driver` field had the same latent bug and survived only because `nvidia-smi`
+  produces one short line; it is fixed identically. Reproduced and verified before and after.
+
 ### Added
 - **RQ3a corpus loaders and the E9 substrate spike** (`data/logs.py`,
   `experiments/rq3a_load.py`, `scripts/fetch_rq3a.sh`, `docs/rq3a_schema_mapping.md`, DSE-041).

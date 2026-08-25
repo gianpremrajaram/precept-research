@@ -65,6 +65,11 @@ cache_to_scratch() {
 # only by a human copying lines out of precept-pilot.o<jobid>. This writes them where
 # manifest.serve_env() can read them, via PRECEPTX_SERVE_ENV.
 #
+# `head -1 | awk ...` is deliberately avoided in the fields below. Under `set -o pipefail` head
+# closes the pipe on a multi-line producer, the producer dies of SIGPIPE, and the pipeline reports
+# 141 even though awk already printed the right answer - so `|| echo unknown` fires as well and the
+# field ends up two lines long. `awk NR==1` reads all of stdin and cannot lose that race (DSE-052).
+#
 # Usage: write_serve_env <path>   (serve.sh writes it; pilot.sh exports the same path)
 serve_env_path() {
   echo "${SERVE_ENV_PATH:-$REPO_ROOT/runs/serve_env.json}"
@@ -81,12 +86,13 @@ write_serve_env() {
   "vllm": "$(python -c 'import vllm; print(vllm.__version__)' 2>/dev/null || echo unknown)",
   "torch": "$(python -c 'import torch; print(torch.__version__)' 2>/dev/null || echo unknown)",
   "gpu": "$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | paste -sd, - || echo unknown)",
-  "driver": "$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || echo unknown)",
+  "driver": "$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | awk 'NR==1{print}' || echo unknown)",
   "host": "$(hostname)",
   "container_source": "$CONTAINER_SOURCE",
   "container_sif": "$SIF",
   "container_sif_sha256": "$(cat "$SIF.sha256" 2>/dev/null || echo unknown)",
-  "glibc": "$(ldd --version 2>/dev/null | head -1 | awk '{print $NF}' || echo unknown)",
+  "structured_outputs_backend": "${GUIDED_BACKEND:-unknown}",
+  "glibc": "$(ldd --version 2>/dev/null | awk 'NR==1{print $NF}' || echo unknown)",
   "job_id": "${JOB_ID:-}",
   "captured_at": "$(date -u +%FT%TZ)"
 }
