@@ -62,7 +62,7 @@ def _completion(content: str) -> dict[str, object]:
 
 
 def _wait_script(request: httpx.Request) -> httpx.Response:
-    if b"guided_json" in request.content or b"response_format" in request.content:
+    if b"structured_outputs" in request.content or b"response_format" in request.content:
         return httpx.Response(200, json=_completion(json.dumps({"action": "WAIT"})))
     return httpx.Response(200, json=_completion("hold position"))
 

@@ -56,7 +56,7 @@ def _script(action: str):  # type: ignore[no-untyped-def]
     """Route A's chat to a fixed instruction and B's structured call to ``action``."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if b"guided_json" in request.content:  # B's guided-decoding call carries the schema
+        if b"structured_outputs" in request.content:  # B's action call carries the schema
             return httpx.Response(200, json=_completion(json.dumps({"action": action})))
         return httpx.Response(200, json=_completion("push the load east"))
 
@@ -125,7 +125,7 @@ def test_records_persist_the_receiver_observation() -> None:
 def test_transport_error_on_action_call_fails_the_episode_loud() -> None:
     # P1-3: a dead endpoint mid-episode must crash the run, not record a passing-looking WAIT.
     def handler(request: httpx.Request) -> httpx.Response:
-        if b"guided_json" in request.content:  # B's structured action call: transport failure
+        if b"structured_outputs" in request.content:  # B's action call: transport failure
             return httpx.Response(500)
         return httpx.Response(200, json=_completion("push the load east"))
 
@@ -177,5 +177,5 @@ def test_each_role_calls_only_its_own_client() -> None:
 
     assert len(records) == 2
     assert route_a.call_count == 2 and route_b.call_count == 2
-    assert all(b"guided_json" not in c.request.content for c in route_a.calls)
-    assert all(b"guided_json" in c.request.content for c in route_b.calls)
+    assert all(b"structured_outputs" not in c.request.content for c in route_a.calls)
+    assert all(b"structured_outputs" in c.request.content for c in route_b.calls)

@@ -46,12 +46,15 @@ class ServingConfig(BaseModel):
     max_tokens: int = Field(default=512, gt=0)
     timeout: float = Field(default=60.0, gt=0)
     max_retries: int = Field(default=2, ge=0)
-    guided_decoding_backend: Literal["xgrammar", "outlines"] = "xgrammar"
-    # Wire format for schema-constrained decoding (DSE-032). vLLM takes the schema as `guided_json`
-    # in extra_body; an OpenAI-compatible local runtime (the free pre-cluster pilot) takes the
-    # standard `response_format.json_schema`. Both constrain decoding against the SAME schema
-    # object - xgrammar under vLLM, llama.cpp grammars / Outlines locally - so this is a wire-format
+    # Wire format for schema-constrained decoding (DSE-032). vLLM takes the schema in extra_body;
+    # an OpenAI-compatible local runtime (the free pre-cluster pilot) takes the standard
+    # `response_format.json_schema`. Both constrain decoding against the SAME schema object -
+    # xgrammar under vLLM, llama.cpp grammars / Outlines locally - so this is a wire-format
     # difference, not a semantic one. Default keeps served-vLLM behaviour unchanged.
+    #
+    # The value is still spelled `guided_json` after vLLM renamed the field (DSE-052): it names
+    # which endpoint dialect the branch speaks, not the field, and it is recorded in every
+    # SweepManifest. Renaming it would churn a CLI contract and a manifest label to no effect.
     structured_mode: Literal["guided_json", "response_format"] = "guided_json"
     # Rendered into the served model's chat template per request (P0-3). The default disables
     # Qwen3's hybrid thinking - greedy decoding in thinking mode is explicitly discouraged by Qwen,
@@ -107,10 +110,13 @@ class LLMClient:
         property of the runtime, not of this code (DSE-005 reports that rate).
         """
         if self._config.structured_mode == "guided_json":
+            # vLLM removed the `guided_*` request fields in v0.12.0 (DSE-052); `guided_json` and
+            # `guided_decoding_backend` are both gone, replaced by the unified `structured_outputs`
+            # object. The backend is no longer a per-request choice at all - it is the server's
+            # `--structured-outputs-config.backend`, which serve.sh sets and records in serve_env.
             return {
                 "extra_body": {
-                    "guided_json": schema,
-                    "guided_decoding_backend": self._config.guided_decoding_backend,
+                    "structured_outputs": {"json": schema},
                     **self._template_kwargs(),
                 }
             }

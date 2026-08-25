@@ -56,6 +56,8 @@ GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.90}"
 SEED="${SEED:-0}"
 TP="${TP:-1}"                       # tensor-parallel size; 2 for 70B-AWQ on 2x A100-40GB
 QUANT="${QUANT:-}"                  # e.g. 'awq' for the 70B-AWQ tier; empty for bf16
+# vLLM 0.18.1 spells this --structured-outputs-config.backend; the old --guided-decoding-backend
+# was removed in v0.12.0 and made the server exit 2 at argument parsing (DSE-052).
 GUIDED_BACKEND="${GUIDED_BACKEND:-xgrammar}"
 # `none` by default since DSE-051: the job runs containerised and there is no module system inside
 # the image. Nothing is lost - torch's bundled cu12 libraries are the CUDA userspace and
@@ -117,7 +119,7 @@ args=(
   --gpu-memory-utilization "$GPU_MEM_UTIL"
   --seed "$SEED"
   --tensor-parallel-size "$TP"
-  --guided-decoding-backend "$GUIDED_BACKEND"
+  --structured-outputs-config.backend "$GUIDED_BACKEND"
 )
 if [[ -n "$QUANT" ]]; then
   args+=(--quantization "$QUANT")
