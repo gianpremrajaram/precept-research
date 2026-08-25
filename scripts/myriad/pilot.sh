@@ -59,12 +59,22 @@ export PORT VENV TIER REPO_ROOT
 # torch versions, the physical GPU) that the client process has no way to observe for itself.
 export PRECEPTX_SERVE_ENV="${SERVE_ENV_PATH:-$REPO_ROOT/runs/serve_env.json}"
 
+# shellcheck source=scripts/myriad/_common.sh
+source "$HERE/_common.sh"
+
 # Checked here rather than in serve.sh so a typo'd tier fails now, not after the model has loaded.
 if [[ ! -f "$REPO_ROOT/configs/model/$TIER.yaml" ]]; then
   echo "[pilot] no configs/model/$TIER.yaml - available tiers:" >&2
   ls "$REPO_ROOT/configs/model/" >&2
   exit 1
 fi
+
+# Myriad is glibc 2.17 and the lock is manylinux_2_28 throughout (DSE-051). Entering here rather
+# than in serve.sh alone is what keeps this a single job: serve.sh sees APPTAINER_CONTAINER already
+# set and does not nest, so the server it launches stays in this process tree and the trap below
+# still names vLLM. The image is asserted, not pulled - prefetch.sh owns that, on a login node.
+require_image
+enter_container "$HERE/pilot.sh" "$@"
 
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"

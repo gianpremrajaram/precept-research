@@ -7,6 +7,62 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
 
 ## [Unreleased]
 
+### Changed
+- **Myriad jobs run inside an Apptainer container** (`scripts/myriad/_common.sh`,
+  `prefetch.sh`, `serve.sh`, `pilot.sh`, `shell.sh`, `docs/myriad.md`, DSE-051). The first live cluster session
+  (25 Aug 2026) found Myriad is RHEL 7.9 / **glibc 2.17** on login *and* compute nodes, while every
+  wheel in `uv.lock` is `manylinux_2_28` or newer. `uv sync` cannot build a working environment on
+  a bare node — not only torch and vLLM but pandas, pyarrow, scipy and scikit-learn have no
+  compatible wheel. **`uv.lock`, `pyproject.toml`, `src/` and every schema are unchanged**: the
+  lock now executes where its wheels are valid instead of being moved backwards.
+  - *Why not downgrade.* The newest torch with a glibc-2.17 wheel is 2.6.0 and the newest vLLM
+    pinning it is 0.8.5 (April 2025) — and that still leaves pandas/pyarrow/scipy/scikit-learn
+    unsolved. scipy and scikit-learn sit directly under the CPVI estimator, so moving them would
+    make measurements taken before and after the change incomparable, and would have forced a
+    re-freeze of E3-local for a sixteen-month-old server.
+  - `CONTAINER_SOURCE` is pinned by **digest**, not tag:
+    `docker://python@sha256:a8677eb0…32938d`. Debian bookworm carries glibc 2.36, clearing
+    `manylinux_2_28` and vLLM's `manylinux_2_31`. The **full** image, not `-slim`, because
+    `manifest.git_sha()` shells out to `git` and raises when it is missing — a git-less image would
+    have failed *after* the episodes were paid for. Nothing is built, so no `--fakeroot` is needed.
+  - `enter_container` **re-execs the script** into the container once, rather than wrapping each
+    command. `pilot.sh` launches `serve.sh` in the background and traps `$!` to kill the server on
+    the scheduler's wallclock SIGTERM; two `apptainer exec` calls would put them in different
+    process namespaces and the trap would name the wrapper, not vLLM. Re-execing keeps serve and
+    drive in one process tree in one container — `serve.sh` sees `APPTAINER_CONTAINER` set and does
+    not nest — so every line downstream, including the trap, is untouched.
+  - `--nv` is passed **only when `/dev/nvidiactl` exists**: `prefetch.sh` runs on a login node,
+    where `--nv` fails looking for driver libraries that are not there.
+  - `$HOME` is a symlink into `/myriadfs`, so the bind is resolved-source-to-original-destination
+    (`$(readlink -f "$HOME"):$HOME`) and `--pwd "$PWD"` is passed explicitly. Without both, `#$ -cwd`
+    plus a relative `RUNS_ROOT` would send artefacts to a read-only `/runs`.
+  - `APPTAINER_TMPDIR` is forced onto Scratch. UCL's module points the build directory at
+    `/run/user/<uid>`, a small RAM-backed tmpfs on the login nodes, where a ~1 GB pull can fail.
+  - `prefetch.sh` now owns image → venv → weights → encoder, in that order, each idempotent. The
+    `gquota` check moved **host-side**, since `gquota` does not exist inside the image and what it
+    guards against is decided before anything is pulled. `ensure_venv` rebuilds a `.venv` that
+    cannot import the locked wheels — exactly the state a bare-node `uv sync` leaves behind — and
+    asserts pandas, pyarrow, scikit-learn and torch import, which is what proves the environment is
+    the container's rather than the host's.
+  - `scripts/myriad/shell.sh` is the container entry point for everything that is *not* a
+    jobscript — the dry-run hash checks, the two-episode smoke, poking at a failed run. It reuses
+    `require_image`/`enter_container` and activates the venv, so `bash scripts/myriad/shell.sh -c
+    '<cmd>'` replaces hand-typing a 150-character `apptainer exec --nv --bind … --pwd …` line on a
+    cluster where a mistyped one costs a queue wait. Interactive when given no arguments.
+  - `require_image` **asserts, never pulls**: pulling an image while holding an A100 would spend GPU
+    allocation on network I/O. Submitting before prefetching exits immediately with the fix.
+  - `serve_env.json` gains `container_source`, `container_sif`, `container_sif_sha256` and `glibc`,
+    so the run manifest records both what was asked for and what was on disk. `ServeEnv.values` is
+    a free `dict[str, str]`, so this is not a schema change.
+  - `CUDA_MODULE` now defaults to `none` — there is no module system inside the image, and torch's
+    bundled `cu12` libraries plus `--nv` are the whole CUDA story. The locked stack is `cu12`
+    throughout (`nvidia-cublas-cu12` 12.8.4.1) against driver **550.127.05 / CUDA 12.4**, which
+    CUDA minor-version compatibility covers. The override survives for a future non-RHEL7 node.
+  - `docs/myriad.md` §6 and §7 rewritten; §10 now records what the live session verified —
+    **no `-P` project code is needed**, `-ac allow=L` yields an A100-PCIE-40GB — and the four items
+    still open, of which "vLLM 0.18.1 actually runs against driver 550.127.05" is the load-bearing
+    one.
+
 ### Added
 - **RQ3a corpus loaders and the E9 substrate spike** (`data/logs.py`,
   `experiments/rq3a_load.py`, `scripts/fetch_rq3a.sh`, `docs/rq3a_schema_mapping.md`, DSE-041).

@@ -7,6 +7,9 @@
 #   bash scripts/myriad/prefetch.sh              # the 14B workhorse
 #   TIER=qwen8b bash scripts/myriad/prefetch.sh  # the V100-class fallback tier
 #
+# It now also prepares the two things a GPU job cannot build for itself: the Apptainer image and
+# the virtual environment inside it (DSE-051). Both are idempotent - a second run re-uses them.
+#
 # Two reasons this exists, in order of severity:
 #
 #  1. Compute nodes may have no outbound internet (docs/myriad.md §10 - unconfirmed, and the single
@@ -30,6 +33,25 @@ VENV="${VENV:-$REPO_ROOT/.venv}"
 
 # shellcheck source=scripts/myriad/_common.sh
 source "$HERE/_common.sh"
+
+# Myriad's nodes are glibc 2.17 and every wheel in uv.lock is manylinux_2_28 or newer, so the
+# environment can only be built inside the container (DSE-051; see _common.sh for the full note).
+# The image pull and the venv build are login-node work for the same reason the weights are: doing
+# either while holding an A100 spends GPU allocation on network I/O.
+if [[ -z "${APPTAINER_CONTAINER:-}" ]]; then
+  # Quota first, and on the host: `gquota` is a Myriad login-node command that does not exist inside
+  # the image, and what it guards against - a download that fills the quota and leaves the *next*
+  # job unable to write its own .o/.e files - is decided before anything is pulled.
+  if command -v gquota >/dev/null 2>&1; then
+    gquota
+  else
+    echo "[prefetch] gquota not found; check your quota headroom manually (~28 GB for the 14B tier)"
+  fi
+  ensure_image
+  enter_container "$HERE/prefetch.sh" "$@"
+fi
+# ---- everything below runs inside the container ----
+ensure_venv
 cache_to_scratch
 
 # shellcheck disable=SC1091
@@ -38,14 +60,6 @@ resolve_tier "$REPO_ROOT/configs/model/$TIER.yaml" prefetch
 
 echo "[prefetch] HF_HOME=$HF_HOME"
 echo "[prefetch] tier=$TIER model=$MODEL revision=$REVISION"
-
-# Quota first: the failure mode this guards against is a download that fills the quota and leaves
-# the *next* job unable to write its own .o/.e files.
-if command -v gquota >/dev/null 2>&1; then
-  gquota
-else
-  echo "[prefetch] gquota not found; check your quota headroom manually (~28 GB for the 14B tier)"
-fi
 
 echo "[prefetch] pulling weights - tens of GB, and resumable if interrupted"
 hf download "$MODEL" --revision "$REVISION"
