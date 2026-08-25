@@ -231,6 +231,16 @@ bash scripts/myriad/shell.sh -c 'pwd; git rev-parse --short HEAD; ldd --version 
 bash scripts/myriad/shell.sh -c 'preceptx-pilot --dry-run --model qwen14b'
 #    expect: cells 40, calls 2040, dataset hash 1c994b87bbca8257
 
+#    The serve flag, without a GPU. `vllm serve --help` does NOT work here: building the parser
+#    instantiates VllmConfig's defaults, which raises "Failed to infer device type" on a login
+#    node. Reading the dataclass needs no device.
+bash scripts/myriad/shell.sh -c 'python -c "
+import dataclasses
+from vllm.config import VllmConfig
+names = [f.name for f in dataclasses.fields(VllmConfig)]
+assert \"structured_outputs_config\" in names, names
+print(\"structured_outputs_config: present\")"'
+
 # 4. Interactive GPU node: prove vLLM serves, then drive two episodes end to end.
 qrsh -l gpu=1,h_rt=2:00:00,mem=4G -pe smp 8 -ac allow=L
 #    ... on the node (see the smoke recipe below)
@@ -363,6 +373,16 @@ Checked in the first live session, **25 August 2026** (`login12`, `node-l00a-006
       `cuda/12.2.2/gnu-10.2.0` does exist on Myriad if a bare run ever needs it.
 - [x] **glibc is 2.17 on login *and* compute.** RHEL 7.9 throughout. This is what forced the
       container; see §6.
+- [x] **Docker Hub is reachable from a login node** and the container runs. `prefetch.sh` pulled
+      the digest-pinned image (366 MB compressed as a SIF), built the venv inside it, and the
+      weights and encoder landed in `~/Scratch/hf-home` (28 GB). vLLM 0.18.1 reached engine
+      initialisation on the A100 with torch 2.10.0+cu128 against driver 550.127.05 — so the
+      glibc, CUDA and driver questions are all answered in the affirmative.
+- [x] **The host environment leaks into the container.** `default-modules/2018` loads
+      `compilers/intel/2018/update3`, which exports `CC=icc`; Apptainer passes the environment
+      through, and torch/Triton JIT-compile a CUDA support module at engine start using `CC`
+      verbatim. `container_toolchain` now pins `CC=gcc`/`CXX=g++` and clears `PYTHONPATH` on entry
+      (DSE-053). Assume any host variable is present inside the container unless overridden.
 - [x] **Apptainer is available** as `apptainer/1.2.4-1` on both login and compute nodes, with
       `singularity-env/1.0.0` alongside it. UCL's module points `APPTAINER_CACHEDIR` at Scratch but
       its build directory at `/run/user/<uid>`, a small RAM-backed tmpfs — `_common.sh` overrides
@@ -370,12 +390,13 @@ Checked in the first live session, **25 August 2026** (`login12`, `node-l00a-006
 
 Still open:
 
-- [ ] **That vLLM 0.18.1 runs against driver 550.127.05.** The locked stack is `cu12` throughout, so
-      CUDA minor-version compatibility should cover a 12.8 userspace on a 12.4 driver, and the A100
-      is sm_80 for which torch ships precompiled kernels rather than relying on PTX JIT. Documented
-      and plausible; not yet observed. §7 step 3 is what finds out.
-- [ ] **That Docker Hub is reachable from a login node.** PyPI, Hugging Face and GitHub are; the
-      registry has not been tried. `prefetch.sh` fails on the pull, at no cost, if it is not.
+- [ ] **That Qwen3-14B bf16 loads and serves.** vLLM 0.18.1 now gets as far as engine
+      initialisation against driver 550.127.05, which closes the CUDA-compatibility question, but
+      no weights have been resident yet. `--gpu-memory-utilization 0.90` on a 40 GB card for a
+      ~28-30 GB model is the next thing to be proven, and Triton's first JIT compile will be slow.
+- [ ] **That the request path works end to end.** Two removed vLLM request fields were caught by
+      inspection rather than by a run (DSE-052); `chat_template_kwargs` and the `<think>`-block
+      guard are the two remaining client-side assumptions that only fire once a model responds.
 - [ ] Wallclock actually needed for the 40-episode E3 cell at bf16. `h_rt=6:00:00` is a guess from a
       local 4-bit run (5 episodes in ~7 min) and should be replaced with a measured number.
 - [ ] Queue latency for `-ac allow=L` under load. One grant in seconds is not a distribution; if the
@@ -391,3 +412,36 @@ Nothing here is billed. The Free allocation trades queue latency for cost, which
 and the pilot; the three-monthly priority allocation is worth saving for the main RQ1 sweep. Every
 model call in this project is either local open-weight inference or the Myriad allocation — no
 hosted API is ever called.
+
+## 12. Changing these scripts
+
+`tests/unit/scripts/test_myriad_container.py` runs the real scripts against a fake cluster: a stub
+`apptainer` on PATH that records how it was invoked and then runs the payload in-process with
+`APPTAINER_CONTAINER` set, which is what the real one does from the scripts' point of view. It
+needs no Apptainer, no GPU and no network, and it runs in the normal `pytest` tier.
+
+It exists because these scripts only ever execute somewhere a mistake costs a queue wait and an
+A100 rather than a red test. Every case in it guards a defect that actually shipped:
+
+| Test | Incident |
+|---|---|
+| `test_the_script_enters_the_container_exactly_once` | a second `apptainer exec` would break `pilot.sh`'s trap on `$!` |
+| `test_no_nv_flag_without_a_gpu` | `--nv` on a login node fails looking for absent driver libraries |
+| `test_home_is_bound_resolved_and_the_working_directory_survives` | `$HOME` is a symlink into `/myriadfs`; a dropped cwd sends artefacts to a read-only `/runs` |
+| `test_leaked_intel_compiler_is_overridden_inside_the_container` | `CC=icc` from `default-modules/2018` killed vLLM at engine start (DSE-053) |
+| `test_serve_env_is_valid_json_with_single_line_fields` | `head -1` under `pipefail` recorded `"glibc": "2.41\nunknown"` (DSE-052) |
+
+Two details in there are load-bearing rather than incidental, and deleting either would leave a
+test that passes against broken code:
+
+- The stub `ldd` emits **twenty thousand** lines. `head -1` only closes the pipe early enough to
+  kill the producer when there is more to write, so a one-line stub hides the SIGPIPE bug. macOS
+  has no `ldd` at all, which would otherwise limit the guard to CI.
+- `write_serve_env` is invoked under `set -euo pipefail`. **pipefail is the precondition** for that
+  same bug: without it the pipeline reports success and the assertions pass either way.
+
+`NV_SENTINEL` exists purely so both branches of the `--nv` decision are reachable from a test.
+Nothing outside the suite should set it.
+
+When you change a script, add the case that fails before your fix and passes after. The quickest
+way to check a guard is real is to revert the fix and watch it go red.

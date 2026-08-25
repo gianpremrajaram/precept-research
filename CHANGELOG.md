@@ -94,6 +94,30 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
     only asserting the new one is present.
 
 ### Fixed
+- **Myriad's Intel compiler leaking into the container** (`scripts/myriad/_common.sh`, DSE-053).
+  The second cluster serve attempt got vLLM 0.18.1 all the way to engine initialisation on the
+  A100 and then died with `InductorError: FileNotFoundError: [Errno 2] No such file or directory:
+  'icc'`. Myriad's login shells load `default-modules/2018`, which pulls in
+  `compilers/intel/2018/update3` and exports `CC=icc`; Apptainer passes the host environment
+  straight through, and torch/Triton JIT-compile a small CUDA support module at engine start,
+  reading `CC` from the environment with no existence check (`triton/runtime/build.py`).
+  - `container_toolchain` pins `CC=gcc` and `CXX=g++` **unconditionally** on container entry.
+    `${CC:-gcc}` would have been worse than useless: the leaked value is already set, so the
+    default never fires and the broken state is preserved exactly.
+  - It is called from `enter_container`'s already-inside branch, which every script reaches
+    exactly once on the way in, so the fix applies to `serve.sh`, `pilot.sh`, `prefetch.sh` and
+    `shell.sh` from one place and stays idempotent under `pilot.sh`'s nested `serve.sh`.
+  - A preflight asserts `gcc` and `g++` resolve, and names `-slim` as the likely cause if they do
+    not. Without it a missing compiler surfaces as a forty-line Triton traceback minutes into
+    startup, on the GPU, rather than as one line on a login node.
+  - `LD_LIBRARY_PATH` is deliberately **not** touched — `apptainer --nv` manages it to expose the
+    host driver libraries, and clearing it would break CUDA in order to fix a compiler.
+    `PYTHONPATH`/`PYTHONHOME` are cleared: the venv is self-contained and nothing in this repo sets
+    them, so a leaked value can only point at host site-packages built against glibc 2.17.
+  - `serve_env.json` gains `cc`, the resolved absolute path of the compiler Triton will actually
+    use. The generalisable lesson, recorded in `docs/myriad.md` §10: assume **every** host
+    variable is present inside the container unless it is explicitly overridden.
+
 - **`serve_env.json` fields truncated by a pipefail/SIGPIPE race** (`_common.sh`, DSE-052). The
   live run recorded `"glibc": "2.41\nunknown"` — a two-line JSON value. Under `set -o pipefail`,
   `ldd --version | head -1 | awk …` has `head` close the pipe, `ldd` die of SIGPIPE, and the
@@ -103,6 +127,28 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
   produces one short line; it is fixed identically. Reproduced and verified before and after.
 
 ### Added
+- **A test tier for the Myriad scripts** (`tests/unit/scripts/test_myriad_container.py`, DSE-053).
+  Three tickets of container plumbing had been verified only by out-of-band stub harnesses, so
+  nothing in the repo would have caught a regression in it. The suite runs the real scripts against
+  a fake cluster: a stub `apptainer` on PATH that records its invocation and then runs the payload
+  in-process with `APPTAINER_CONTAINER` set, which is what the real one does from the scripts'
+  point of view. No Apptainer, no GPU, no network; it runs in the normal `pytest` tier.
+  - Eight cases, each guarding a defect that actually shipped: enter-once (or `pilot.sh`'s trap
+    stops naming vLLM), `--nv` only with a GPU, the resolved-`$HOME` bind and `--pwd`, the
+    `CC=icc` override, the compiler preflight, the missing-image message, and `serve_env.json`
+    being valid JSON with single-line fields.
+  - Each guard was checked by **reverting its fix and confirming the test goes red** — which caught
+    two tests that would otherwise have passed against broken code. The stub `ldd` emits 20 000
+    lines, because `head -1` only kills the producer when there is more to write (and macOS has no
+    `ldd`, which would have limited the guard to CI); and `write_serve_env` is invoked under
+    `set -euo pipefail`, since pipefail is the precondition for the bug rather than decoration.
+  - `NV_SENTINEL` (default `/dev/nvidiactl`) is a seam so both branches of the `--nv` decision are
+    reachable. Nothing outside the suite should set it.
+  - `docs/myriad.md` §12 records the rule for changing these scripts, and §7 now gives a **GPU-free
+    way to verify the serve flag**: `vllm serve --help` cannot run on a login node, because
+    building the parser instantiates `VllmConfig`'s defaults and raises `Failed to infer device
+    type`. Reading `dataclasses.fields(VllmConfig)` needs no device.
+
 - **RQ3a corpus loaders and the E9 substrate spike** (`data/logs.py`,
   `experiments/rq3a_load.py`, `scripts/fetch_rq3a.sh`, `docs/rq3a_schema_mapping.md`, DSE-041).
   The pre-planned fallback that can carry the dissertation alone had never been opened; its

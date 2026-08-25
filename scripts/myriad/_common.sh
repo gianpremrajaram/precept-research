@@ -92,6 +92,7 @@ write_serve_env() {
   "container_sif": "$SIF",
   "container_sif_sha256": "$(cat "$SIF.sha256" 2>/dev/null || echo unknown)",
   "structured_outputs_backend": "${GUIDED_BACKEND:-unknown}",
+  "cc": "$(command -v "${CC:-cc}" 2>/dev/null || echo unknown)",
   "glibc": "$(ldd --version 2>/dev/null | awk 'NR==1{print $NF}' || echo unknown)",
   "job_id": "${JOB_ID:-}",
   "captured_at": "$(date -u +%FT%TZ)"
@@ -178,6 +179,33 @@ require_image() {
   record_sif_digest
 }
 
+# Myriad's login shells load default-modules/2018, which pulls in compilers/intel/2018/update3 and
+# exports CC=icc / CXX=icpc. Apptainer passes the host environment straight through, so those follow
+# us into an image that has no Intel compiler - and torch/Triton JIT-compile a small CUDA support
+# module at engine start, reading CC from the environment with no existence check
+# (triton/runtime/build.py). The result was `FileNotFoundError: 'icc'` minutes into vLLM startup,
+# with the A100 already allocated (DSE-053).
+#
+# Overridden UNCONDITIONALLY. `${CC:-gcc}` would be worse than useless here: the leaked value is
+# already set, so the default never fires and the broken state is preserved exactly.
+#
+# LD_LIBRARY_PATH is deliberately NOT touched - `apptainer --nv` manages it to expose the host
+# driver libraries, and clearing it would break CUDA to fix a compiler. PYTHONPATH/PYTHONHOME are
+# cleared because the venv is self-contained and nothing in this repo sets them, so a leaked value
+# can only point at host site-packages built against glibc 2.17.
+container_toolchain() {
+  export CC=gcc CXX=g++
+  unset PYTHONPATH PYTHONHOME
+  local tool
+  for tool in gcc g++; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      echo "[container] the image has no $tool; torch/Triton JIT needs a C compiler at runtime" >&2
+      echo "[container] CONTAINER_SOURCE must be a full python image, never -slim" >&2
+      exit 1
+    fi
+  done
+}
+
 # Re-exec THIS script inside the container, once.
 #
 # Deliberately a re-exec rather than wrapping each command in `apptainer exec`. pilot.sh launches
@@ -193,6 +221,7 @@ require_image() {
 # `#$ -cwd` plus a relative RUNS_ROOT means a dropped cwd would send artefacts to a read-only /runs.
 enter_container() {
   if [[ -n "${APPTAINER_CONTAINER:-}" ]]; then
+    container_toolchain
     return 0
   fi
   local script="$1"
@@ -200,7 +229,9 @@ enter_container() {
   local bind
   bind="$(readlink -f "$HOME"):$HOME"
   # No GPU on a login node, where --nv fails looking for driver libraries that are not there.
-  if [[ -e /dev/nvidiactl ]]; then
+  # The sentinel is a variable purely so tests/unit/scripts can exercise both branches; nothing
+  # outside the test suite should ever set it.
+  if [[ -e "${NV_SENTINEL:-/dev/nvidiactl}" ]]; then
     exec apptainer exec --nv --bind "$bind" --pwd "$PWD" "$SIF" bash "$script" "$@"
   fi
   exec apptainer exec --bind "$bind" --pwd "$PWD" "$SIF" bash "$script" "$@"
