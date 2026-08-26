@@ -8,16 +8,16 @@
 # endpoint a loopback address again, which is what the client already expects.
 #
 # The served name and revision come from configs/model/<TIER>.yaml - the same file the manifest
-# records them from - so a run cannot serve one checkpoint while recording another. -P takes your
-# project code and is the only thing you must supply:
+# records them from - so a run cannot serve one checkpoint while recording another. No -P project
+# code: the Free allocation is the default (see the directive note below).
 #
-#   qsub -P <project> scripts/myriad/pilot.sh
+#   qsub scripts/myriad/pilot.sh
 #
 #   # the 8B tier on a V100 node instead:
-#   qsub -P <project> -ac allow=EF -v TIER=qwen8b scripts/myriad/pilot.sh
+#   qsub -ac allow=EF -v TIER=qwen8b scripts/myriad/pilot.sh
 #
 #   # the one permitted retune (PREREGISTRATION §6):
-#   qsub -P <project> -v ATTEMPT=2 scripts/myriad/pilot.sh
+#   qsub -v ATTEMPT=2 scripts/myriad/pilot.sh
 #
 # Cost the sweep first, on the login node, where it issues no model calls and needs no GPU:
 #   uv run preceptx-pilot --dry-run --model qwen14b
@@ -36,12 +36,26 @@
 # L = 40 GB A100, what the bf16 14B workhorse (~28-30 GB) needs. EF = V100 for the 8B tier;
 # U/V = 80 GB A100 for 32B bf16.
 #$ -ac allow=L
-# Project allocation: pass it on the qsub line (`qsub -P <project> ...`). An SGE directive cannot
-# read the environment and there is no usable default, so it is deliberately not set here.
+# No -P directive: the Free allocation is Myriad's default for UCL internal users, verified live
+# 25-26 Aug 2026 - jobs 212241 and 212796 were both accepted without one (docs/myriad.md section 10).
+# A paid/priority allocation, if one ever exists, goes on the qsub line; an SGE directive cannot
+# read the environment, so it could not live here anyway.
 
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# SGE runs a SPOOLED COPY of this script (/var/opt/sge/<node>/job_scripts/<jobid>), so BASH_SOURCE
+# names the spool directory, not the checkout, and $HERE/_common.sh does not exist there - job
+# 212796 died on that source line in under a second. `#$ -cwd` puts us in the submit directory,
+# which is the repo root (RUNS_ROOT is already relative to it), so recover the checkout from there.
+# HERE also feeds enter_container, which would otherwise re-exec a spool path the container has no
+# bind mount for. Running the file in place (`bash scripts/myriad/pilot.sh`) keeps the first branch.
+[[ -f "$HERE/_common.sh" ]] || HERE="$PWD/scripts/myriad"
+[[ -f "$HERE/_common.sh" ]] || {
+  echo "[pilot] cannot find scripts/myriad/_common.sh from the spool directory or \$PWD ($PWD)" >&2
+  echo "[pilot] submit from the repo root: cd ~/Scratch/precept-research && qsub scripts/myriad/pilot.sh" >&2
+  exit 1
+}
 REPO_ROOT="${REPO_ROOT:-$(cd "$HERE/../.." && pwd)}"
 
 TIER="${TIER:-qwen14b}"                 # Hydra model group (configs/model/<tier>.yaml)

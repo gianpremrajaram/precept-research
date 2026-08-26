@@ -28,8 +28,9 @@ live in `configs/model/*.yaml`.
 - **Free** allocation: longer, less predictable queue latency; fine for development and small smokes.
   Budget seeds/conditions conservatively.
 - **Priority** (three-monthly) allocation: shorter latency; reserve it for the main RQ1 sweeps.
-- Set the project on the qsub line: `qsub -P <project> ...`. `serve.sh` deliberately carries no
-  `-P` directive — an SGE directive cannot read the environment, and there is no usable default.
+- **No `-P` project code is needed**: the Free allocation is the default for UCL internal users
+  (verified live, 25–26 Aug 2026). A future priority allocation would go on the qsub line — an SGE
+  directive cannot read the environment, so the jobscripts deliberately carry none.
 
 Myriad is single-node: tensor-parallelism is capped by GPUs-per-node (≤ 4). Multi-node serving,
 autoscaling and non-vLLM backends are out of scope.
@@ -39,18 +40,18 @@ autoscaling and non-vLLM backends are out of scope.
 The served name and revision come from `configs/model/<TIER>.yaml` — the same file the run manifest
 records them from — so a job cannot serve one checkpoint while the manifest claims another. That
 mismatch has no other detector: the health check compares the served model *id*, but `/v1/models`
-carries no revision at all. `-P` is your project code and the only thing you must supply.
+carries no revision at all. Nothing needs supplying — no `-P` project code; Free is the default.
 
 ```bash
 # Workhorse (bf16 14B), the default tier:
-qsub -P <project> scripts/myriad/serve.sh
+qsub scripts/myriad/serve.sh
 
 # The 8B tier on the V100 class:
-qsub -P <project> -ac allow=EF -v TIER=qwen8b scripts/myriad/serve.sh
+qsub -ac allow=EF -v TIER=qwen8b scripts/myriad/serve.sh
 
 # 70B-AWQ across 2 GPUs — the one tier with no config file, so it still takes both by hand
 # (repo id is a placeholder until DSE-005 verifies and pins it):
-qsub -P <project> -l gpu=2 -v MODEL=<70B-AWQ-repo-id>,REVISION=<sha>,QUANT=awq,TP=2 \
+qsub -l gpu=2 -v MODEL=<70B-AWQ-repo-id>,REVISION=<sha>,QUANT=awq,TP=2 \
   scripts/myriad/serve.sh
 ```
 
