@@ -28,6 +28,7 @@ from preceptx.config import ConfigError
 from preceptx.data.schema import Condition, HandoffRecord
 from preceptx.measure.featuriser import Featuriser
 from preceptx.measure.pvi_cpvi import ProbeConfig, control_task_cpvi, cpvi
+from preceptx.sim.serialise import HISTORY_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +259,26 @@ def _numeric_leaves(obj: object) -> list[float]:
     return []
 
 
+def _geometry_of(state_str: str) -> str:
+    """The sender's view minus the v5 action-history line - G3's truth set is *geometry* only.
+
+    v5 put the last four actions and the geodesic distance each gained into ``state_str``, and this
+    gate's truth set is every number the sender was shown. That silently widened the admissible set
+    from geometry to geometry-union-gains: with ``g3_abs_tol = 0.5`` and gains clustering in 0-1.5,
+    a fabricated small-magnitude geometric claim then matched a gain and scored *grounded*. Measured
+    on a synthetic record, a message asserting an offset of 0.85 that no wall, slit, load or goal
+    coordinate supports reads 0.0 against the geometry and 1.0 against geometry-plus-history.
+
+    The inflation is single-sided - it can only credit, never penalise - so it degrades exactly the
+    property G3 exists to certify, and PREREGISTRATION section 6 fixes the construct as "match true
+    geometry". Excluding costs the reverse error, a message correctly quoting a gain scored
+    ungrounded; that is the direction a gate should fail in, and A's prompt asks for position and
+    intent, not for gains. Keyed on the exported prefix rather than a literal so the two modules
+    cannot drift apart silently.
+    """
+    return "\n".join(line for line in state_str.splitlines() if not line.startswith(HISTORY_PREFIX))
+
+
 def _record_grounding(rec: HandoffRecord, cfg: PilotConfig) -> float:
     """Fraction of the message's numbers that match a number the sender was shown, within tolerance.
 
@@ -272,7 +293,9 @@ def _record_grounding(rec: HandoffRecord, cfg: PilotConfig) -> float:
     mentioned = [float(m) for m in _NUM.findall(rec.message_delivered)]
     if not mentioned:
         return 1.0
-    truth = _numeric_leaves(rec.state) + [float(m) for m in _NUM.findall(rec.state_str)]
+    truth = _numeric_leaves(rec.state) + [
+        float(m) for m in _NUM.findall(_geometry_of(rec.state_str))
+    ]
     grounded = sum(
         any(abs(m - t) <= max(cfg.g3_abs_tol, cfg.g3_rel_tol * abs(t)) for t in truth)
         for m in mentioned

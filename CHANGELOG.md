@@ -8,6 +8,59 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
 ## [Unreleased]
 
 ### Changed
+- **Prompt surface v5 — the state carries an action history (`PROMPT_VERSION` v4 → v5, DSE-055).**
+  The one retune PREREGISTRATION §6 permits, spent on the E3 attempt-1 failure. Result-affecting: it
+  re-keys every dataset.
+  - `sim/serialise.history_line(recent)` renders the last `HISTORY_WINDOW = 4` `(action, geodesic
+    gain)` pairs plus their net as one line, e.g.
+    `recent=((ROT+, +0.00), (ROT-, -0.00), …)  # … net +0.00 over the last 4`. **Four** is the
+    smallest window that displays a period-2 limit cycle twice — the dominant attempt-1 failure.
+    The line reports **fact, never advice**: a directive would make the retune a behavioural
+    intervention rather than an observability fix and the two would be inseparable in the result.
+    A unit test asserts the absence of instruction words.
+  - `agents/graph.agent_a` now splits the prompt into the *scene* (what the channel may restrict)
+    and the *history* (what it may not), appending the history **after** `apply_channel`. C3 windows
+    B's view of the world; B's memory of its own actions is not the world. This keeps
+    `apply_channel` touching exactly what it touched before, keeps the history identical across all
+    three serialisations (a per-form whitelist could not), and preserves the standing invariant that
+    `observation == state_str` in C0/C1/C2/C4.
+  - `agents/prompts._SYSTEM_A` names the `recent` line. B's prompt is untouched.
+  - **Accepted risk, recorded:** a receiver that can self-correct from its own history needs the
+    message less, so this may depress CPVI. G2's CPVI half is where it will show; it currently
+    carries +0.243 bits over a directional threshold.
+- **The pilot cell widens to seeds 0–9** (`experiments/cli._PILOT_SEEDS`, 40 → **80 episodes**,
+  4,080 upper-bound calls). Precision, not retune: no threshold and no estimator moves. Attempt 1's
+  G1 read 2/5 (Wilson 95% [0.12, 0.77]; a design on the 0.5 threshold fails half the time) and G2's
+  success half passed by exactly zero margin (2/10 vs 1/10 — one episode). Not optional stopping:
+  the point estimate lies *below* the threshold, so added n moves the expected verdict toward FAIL.
+- **`sim/actions.detect_stuck` compares the window's endpoints instead of its span**, window 3 → 5
+  states (4 actions, so a period-2 cycle closes twice; an odd window cannot tell `N,S,N` from one
+  net step north). The span form detected only *immobility* and scored `stuck=False` for all 18
+  handoffs of an episode alternating `N,S,N,S` against a wall, and for one pushing `E` 33 times into
+  a wall it could not pass (contact jitter exceeds `move_eps`). **Diagnostic only** — no gate reads
+  `stuck`, and `graph.py` exits on success or budget alone — so this changes what a run records
+  about itself, never what it does.
+- **G3's truth set excludes the v5 action-history line** (`experiments/pilot._geometry_of`,
+  `sim/serialise.HISTORY_PREFIX`). Found by review before attempt 2 ran; caught nothing in attempt
+  1, which predates v5.
+  - `_record_grounding` builds its truth set from every number the sender was shown, which was
+    geometry-only until v5 put per-action geodesic gains into `state_str`. With `g3_abs_tol = 0.5`
+    and gains clustering in 0-1.5, a fabricated small-magnitude geometric claim then matched a
+    gain and scored *grounded*: on a synthetic record, a message asserting an offset of 0.85 that
+    no wall, slit, load or goal coordinate supports reads **0.0** against the geometry and **1.0**
+    against geometry-plus-history.
+  - The drift is **single-sided** — it can only credit, never penalise — so it degrades exactly the
+    property G3 certifies, and PREREGISTRATION §6 fixes the construct as "match true geometry".
+    Excluding costs the reverse error (a message correctly quoting a gain scored ungrounded); that
+    is the direction a gate should fail in, and A's prompt asks for position and intent, not for
+    gains.
+  - Keyed on `HISTORY_PREFIX`, exported from the module that owns the line's shape, so the two
+    modules cannot drift apart silently. Regression test pins both directions.
+- **The per-difficulty step budget stays at 2.5 × the oracle optimum** (18/33/33). All 34 attempt-1
+  failures spent their full budget, which reads as starvation and is not: mean geodesic distance
+  still to run at the end of a failure was **7.02** against a goal radius of 0.8, only **1 of 34**
+  ended within 1.5 of the goal, and every success finished in 8–12 steps of an 18-step budget. More
+  steps buy more cycling. Recorded because the rejection is evidence, not an omission.
 - **Myriad jobs run inside an Apptainer container** (`scripts/myriad/_common.sh`,
   `prefetch.sh`, `serve.sh`, `pilot.sh`, `shell.sh`, `docs/myriad.md`, DSE-051). The first live cluster session
   (25 Aug 2026) found Myriad is RHEL 7.9 / **glibc 2.17** on login *and* compute nodes, while every

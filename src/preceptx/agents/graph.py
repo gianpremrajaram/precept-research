@@ -35,7 +35,7 @@ from preceptx.sim.actions import (
 )
 from preceptx.sim.arena import ArenaGeometry, Goal, ScenarioJitter, make_scenario, slit_width_for
 from preceptx.sim.outcomes import OutcomeConfig, label_episode, reached_goal, step_progress
-from preceptx.sim.serialise import SceneState, serialise
+from preceptx.sim.serialise import HISTORY_WINDOW, SceneState, history_line, serialise
 
 logger = logging.getLogger(__name__)
 
@@ -154,22 +154,33 @@ class EpisodeRunner:
             scene = SceneState(
                 load=read_state(space, load), geometry=geometry, goal=goal, slit_width=slit
             )
-            state_str = serialise(scene, cell.serialisation)
+            # The scene is what the channel may restrict; the action history is not part of it.
+            # C3 windows B's view of the *world*, and B's own past actions are not the world - they
+            # are B's memory of what it already did. Appending the line after `apply_channel` keeps
+            # `apply_channel` touching exactly what it touched before (CLAUDE.md: the channel
+            # degrades one thing only) and keeps the history identical across all three
+            # serialisations, which a whitelist/window per form could not guarantee.
+            scene_str = serialise(scene, cell.serialisation)
+            history = history_line(
+                [(r.action["action"], r.progress) for r in state["records"][-HISTORY_WINDOW:]]
+            )
+            state_str = f"{scene_str}\n{history}"
             message_raw = client_a.chat(prompt_a(state_str))
             result = apply_channel(
                 message_raw,
                 cell.condition,
                 serialisation=cell.serialisation,
-                observation=state_str,
+                observation=scene_str,
                 cfg=channel_cfg,
                 rng=np.random.default_rng([cell.seed, state["step"]]),
                 buffered=state["buffered"],
             )
+            observed_scene = result.observation_override or scene_str
             return {
                 "state_str": state_str,
                 "message_raw": message_raw,
                 "message_delivered": result.message_delivered,
-                "observation": result.observation_override or state_str,
+                "observation": f"{observed_scene}\n{history}",
                 "buffered": result.new_buffer,
             }
 

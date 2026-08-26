@@ -51,11 +51,14 @@ _DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[3] / "configs"
 # without C3" - was falsified by E3-local, which measured +0.19 bits in C0 (design log, D20).
 _PILOT_CONDITIONS = ["C0", "C1", "C3", "C4"]
 _PILOT_DIFFICULTIES = ["easy", "hard"]
-# Seeds 0-4, not 0-2: PREREGISTRATION §6 was amended (2026-08-24, before the bf16 re-gate and before
-# F0) to 40 episodes, because at 24 a single flipped easy-C0 episode moves G1 across its 0.5
-# threshold about a third of the time. The default has to match the pre-registered cell, or a bare
-# `preceptx-pilot` runs a cell the analysis plan does not describe.
-_PILOT_SEEDS = [0, 1, 2, 3, 4]
+# Seeds 0-9, amended again for attempt 2 (PREREGISTRATION §6, 2026-08-26, before F0). At seeds 0-4
+# G1 rested on five easy-C0 episodes and read 2/5: a Wilson 95% interval of [0.12, 0.77], and a
+# design whose true rate is exactly the 0.5 threshold fails the gate half the time. Doubling to ten
+# also doubles G2's success half, which passed attempt 1 by exactly zero margin (2/10 against 1/10 -
+# one episode). This is a precision change, not a retune: it moves no threshold and no estimator,
+# and because the attempt-1 point estimate sits BELOW the threshold, added n moves the expected
+# verdict toward FAIL, which is the opposite direction from optional stopping.
+_PILOT_SEEDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
 
 def _parser(name: str, description: str) -> argparse.ArgumentParser:

@@ -126,15 +126,28 @@ def detect_collision(state: BodyState) -> bool:
     return state.in_contact
 
 
-def detect_stuck(states: list[BodyState], *, move_eps: float = 0.02, window: int = 3) -> bool:
-    """Whether the COM has barely moved over the last ``window`` post-action states (jammed).
+def detect_stuck(states: list[BodyState], *, move_eps: float = 0.02, window: int = 5) -> bool:
+    """Whether the COM has ended up where it started over the last ``window`` post-action states.
 
     Position-based, not velocity-based: in the quasi-static regime velocity is zeroed after each
     settle, so a jam shows up as the COM failing to advance across turns rather than as low speed.
+
+    **Net displacement, not span** (v5). The span form - ``(max-min) < eps`` over the window -
+    detects only *immobility*, and immobility was the minority failure on the E3 attempt-1 dataset.
+    It scored ``stuck=False`` for all eighteen handoffs of an episode that alternated ``N,S,N,S...``
+    against a wall (the COM genuinely moves a full unit each step, and returns), and for an episode
+    that pushed ``E`` thirty-three times into a wall it could not pass (contact jitter exceeds
+    ``move_eps`` per step). Both are the same thing operationally - a trajectory going nowhere - and
+    the field that exists to name it saw neither. Comparing the window's endpoints catches
+    immobility, any even-period limit cycle, and a jitter-jammed wall press alike.
+
+    ``window`` is five states (four actions) so a period-2 cycle closes twice inside it; an odd
+    window cannot distinguish ``N,S,N`` from one net step north.
+
+    Diagnostic only: no gate reads ``stuck`` and nothing terminates on it (``graph.py`` exits on
+    success or budget alone), so this changes what a run *records about itself*, never what it does.
     """
     if len(states) < window:
         return False
-    recent = states[-window:]
-    xs = [s.com_x for s in recent]
-    ys = [s.com_y for s in recent]
-    return (max(xs) - min(xs)) + (max(ys) - min(ys)) < move_eps
+    first, last = states[-window], states[-1]
+    return abs(last.com_x - first.com_x) + abs(last.com_y - first.com_y) < move_eps

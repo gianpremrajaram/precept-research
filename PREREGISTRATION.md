@@ -187,12 +187,20 @@ run.
 | G3 groundedness | ≥ **0.8** of numeric mentions in messages match true geometry (abs tol 0.5, rel tol 0.05) |
 | Minimum seeds for a `proceed` | **3** |
 
-**The E3 cell is C0, C1, C3 and C4 crossed with easy and hard, over seeds 0–4** (40 episodes).
+**The E3 cell is C0, C1, C3 and C4 crossed with easy and hard, over seeds 0–9** (80 episodes).
 *Amended 2026-08-24, before the bf16 re-gate and before F0: v0 specified seeds 0–2 (24 episodes).
 G1 then rests on three easy-C0 episodes, where a design whose true success rate is 0.67 fails the
 ≥ 0.5 threshold about a third of the time. The widening buys a five-episode read on the one gate
 that has already failed once and stays inside the declared compute budget. The amendment changes
 the cell, not any threshold.*
+*Amended again 2026-08-26, after attempt 1 and before F0: seeds 0–4 (40 episodes) proved still too
+few. G1 read 2/5 — a Wilson 95 % interval of [0.12, 0.77], and a design sitting exactly on the 0.5
+threshold fails this gate half the time — while G2's success half passed by exactly zero margin
+(2/10 against 1/10, one episode). Ten seeds doubles both. **This is a precision amendment, not the
+retune**: it moves no threshold, no estimator and no task parameter. It is not optional stopping,
+and the direction is the proof — the attempt-1 point estimate (0.400) lies **below** the 0.500
+threshold, so added n moves the expected verdict toward FAIL, the opposite of the direction optional
+stopping travels in.*
 C3 is in the cell because it is the only condition carrying a genuine observation asymmetry and it
 is in the headline design: a pilot that never exercises it certifies an instrument the main sweep
 will not use.
@@ -223,7 +231,21 @@ positive floor set from the pilot's observed bit-scale — this is the single ch
 and it is set from the pilot, never from the main sweep.**
 
 **One retune.** The pilot is allowed exactly one retune (`attempt = 2`). A gate still failing after
-it triggers the documented fallback ladder — elevate RQ3a to the headline — not a scramble.
+it triggers the documented fallback ladder — elevate RQ3a to the headline — not a scramble. `attempt`
+counts *re-gates*, not levers: the retune is one coherent package applied once and declared before
+the run, which is also how the fallback ladder's own rung 2 is written ("wider slits, fewer chambers,
+or a shorter horizon" as one rung).
+
+**The retune was spent on 2026-08-26 as prompt surface v5** (declared here before attempt 2 runs;
+evidence in `docs/EXPERIMENTS.md` E3 attempt 1 and `docs/experiment_design_log.md` 2026-08-26). The
+state gains a `recent=` line naming the last four actions and the geodesic distance each gained.
+Attempt 1 failed G1 with **53 % of its failed episodes ending in a period-1 or period-2 limit cycle**
+consuming 68 % of their steps; under greedy decoding a prompt that is a pure function of the current
+scene makes any self-returning state a fixed point of the policy. The line is fact, not instruction,
+and is appended after `apply_channel` so the channel still degrades one thing only. **The step budget
+is explicitly NOT the retune and stays at 2.5 × the oracle optimum**: failed episodes ended a mean
+geodesic 7.02 from a goal of radius 0.8 and only 1 of 34 within 1.5, so more steps buy more cycling.
+There is no attempt 3.
 **The retune ledger starts at the Myriad bf16 re-gate.** Local 4-bit results are indicative:
 a local G1 pass is not the verdict of record, and a local G1 *failure* does not spend the retune
 until it is reproduced at bf16.

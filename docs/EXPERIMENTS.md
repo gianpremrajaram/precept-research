@@ -33,7 +33,7 @@ verdict is indicative by pre-registration and the ledger starts at the Myriad bf
 | E0 | Task certification (CPU only, no model) | S0 | Nothing | **Passed 24 Aug 2026** |
 | E1 | Serving smoke test and transcript read | S1 | A served model | **Run 24 Aug 2026 (v2, then v3)** |
 | E2 | Model-ladder benchmark (DSE-005) | S1 / S2 | A served model | **Local row 24 Aug 2026; cluster rows open** |
-| E3 | Formal pilot gate run — G1/G2/G3 (DSE-019) | S1 → re-gate S2 | E1, the driver | **Run twice locally 24 Aug 2026: `retune_once` both times (G1 and G2's success half fail; G3 passes 0.977). CPVI gradient C0>C1>C3>C4. Indicative — bf16 re-gate is the verdict of record** |
+| E3 | Formal pilot gate run — G1/G2/G3 (DSE-019) | S1 → re-gate S2 | E1, the driver | **Attempt 1 of record run on Myriad bf16, 26 Aug 2026 (job 214590, exit 0): `retune_once`. G1 FAIL 0.400; G2 PASS (success half by zero margin, CPVI gap +0.243 bits, selectivity +0.136); G3 PASS 0.986. 53% of failures end in a period-1/2 limit cycle. Retune spent as prompt v5; attempt 2 pending — no attempt 3** |
 | E4 | RQ1 information-gradient main sweep (DSE-020) | S3 | E3 verdict = proceed; the freeze | **Not run** |
 | E5 | RQ1 robustness cells (DSE-021) | S3 | E4; per-role client refactor | **Not run** |
 | E6 | RQ2 measurement primitive (DSE-022) | S4 | E4 episodes (no new compute) | **Not run** |
@@ -173,11 +173,14 @@ Current implementation defaults, frozen or re-set at F0: the G1 success floor is
 G2's CPVI half is directional-only until the pilot reveals the bit-scale, at which point a positive
 floor is pre-registered; the G3 groundedness floor is 0.8.
 
-**Design.** C0, C1, **C3** and C4 crossed with easy and hard, at **three or more seeds**; the bf16
-re-gate runs **seeds 0–4** (40 episodes), widened from 0–2 on 2026-08-24 because G1 — the one gate
-bf16 can plausibly flip, and the one that has already failed — was resting on three easy-C0
-episodes, where a true success rate of 0.67 fails a 0.5 threshold about a third of the time
-(PREREGISTRATION §6, dated pre-freeze). C3 is in the cell because it is the only condition carrying a genuine observation asymmetry and it
+**Design.** C0, C1, **C3** and C4 crossed with easy and hard, at **three or more seeds**; the cell
+runs **seeds 0–9** (80 episodes), widened from 0–2 to 0–4 on 2026-08-24 and from 0–4 to 0–9 on
+2026-08-26 after attempt 1 (PREREGISTRATION §6 carries the amendment ledger; both are dated
+pre-freeze). Both widenings answer the same problem: G1 is the one gate bf16 can plausibly flip and
+the one that has already failed, and at five easy-C0 episodes it read 2/5 — a Wilson 95% interval of
+[0.12, 0.77], with a design sitting exactly on the 0.5 threshold failing the gate half the time. Ten
+seeds also doubles G2's success half, which passed attempt 1 by exactly zero margin (2/10 against
+1/10 — one episode). C3 is in the cell because it is the only condition carrying a genuine observation asymmetry and it
 is in the headline design; a pilot that never exercises it certifies an instrument the main sweep will not
 use. **G2 fits the CPVI probe once over the whole cell** and contrasts the resulting per-instance scores —
 refitting per contrast is a different estimator from the RQ1 analysis's and understated the E3-local
@@ -194,7 +197,8 @@ it to `retune_once` rather than reporting a proceed.
 **Emits.** A pilot report with a verdict of `proceed`, `retune_once` or `fallback`.
 **How the re-gate is run.** Pre-pull on a login node (`bash scripts/myriad/prefetch.sh`), then one
 SGE job, because a login node driving a compute node's `localhost` reaches the wrong machine:
-`qsub scripts/myriad/pilot.sh` (DSE-050; no `-P` — the Free allocation is the default). It serves, waits for the endpoint, warms the
+`qsub scripts/myriad/pilot.sh` (DSE-050; no `-P` — the Free allocation is the default), and
+`qsub -v ATTEMPT=2 scripts/myriad/pilot.sh` for the one retune. It serves, waits for the endpoint, warms the
 embedding encoder, runs the cell and tears the server down on every exit path. Two things the
 command deliberately does not carry: the **revision**, which is read from
 `configs/model/<TIER>.yaml` — the same file the manifest records it from, so the served and recorded
@@ -712,3 +716,173 @@ load-bearing control rather than hygiene. Any MAST arm must stratify by `system_
 system-identity-only baseline beside it. Methodology §9.8's *Y* table needs the Y1 row marked
 unavailable at step level. Remaining before E10: the second DSE-047 number (AgenTracer accuracies)
 still rests on a secondary summary and needs checking against the paper's own result table.
+
+### E3 — Formal pilot gate run, Myriad bf16 — **attempt 1, the verdict of record** — 2026-08-26
+
+- **Run id / manifest:** `1c994b87bbca8257` · `runs/1c994b87bbca8257-run/manifest.json` · report
+  `runs/1c994b87bbca8257-report/pilot.{md,json}` · job log `precept-pilot.o214590`
+- **Substrate:** `myriad-nvidia-a100-pcie-40gb` — **the verdict of record; the first non-interim
+  data this project has produced** · **Model + revision:**
+  `Qwen/Qwen3-14B`@`40c069824f4251a91eefaf281ebe4c544efd3e18` (bf16, vLLM, guided JSON)
+- **Encoder + revision:** `BAAI/bge-base-en-v1.5`@`a5beb1e3e68b9ab74eb54cfd186867f64f240e1a` ·
+  **Prompt / gate-template version:** v4 / n/a (no gate in the loop)
+- **Config hash / sweep hash:** `1c994b87bbca8257` / `2fb965…` · **Seeds:** 0–4 ·
+  **Episodes:** 40 (965 handoffs, 1,287 s of sweep inside a 24 m 46 s job)
+- **Command:** `qsub scripts/myriad/pilot.sh` (SGE job 214590, exit 0; `-ac allow=L`, no `-P`)
+
+**What was asked.** The three pilot gates over the pre-registered E3 cell — C0/C1/C3/C4 × easy/hard
+× seeds 0–4 — at bf16 on the cluster. This is the run the one-retune ledger opens at: both earlier
+E3 runs were 4-bit local and indicative by construction.
+
+**What came back.** Verdict `retune_once`. One gate failed, one passed with margin, one passed by
+exactly zero margin.
+
+| Gate | Value | Threshold | Verdict |
+|---|---|---|---|
+| G1 capability (easy-C0 episode success) | 0.400 (2/5) | ≥ 0.5 | **FAIL** |
+| G2 signal — success half (C0 − C4) | 0.100 (2/10 − 1/10) | ≥ 0.1 | **PASS, by zero margin** |
+| G2 signal — CPVI half (C0 − C4) | **+0.243 bits** | > 0 (directional) | **PASS** |
+| G3 groundedness | 0.986 (965/965 records cite numbers) | ≥ 0.8 | **PASS** |
+
+Per-condition CPVI, one probe fitted over all 965 handoffs, *Y* = `y_binary_progress`, R = 5
+repeated cross-fits: **C0 +0.228, C4 −0.015**. Control-task CPVI on random labels **−0.004**,
+**selectivity +0.136** — so a probe of this capacity did not manufacture the score. Episode success
+by condition: **C0 2/10, C1 2/10, C3 1/10, C4 1/10**.
+
+Two things must be said about the two gates that passed, because the headline table flatters both.
+**G2's success half is one episode.** 0.100 is 2/10 minus 1/10; flip any single episode in either
+arm and the gate fails. **G1 has almost no power at this n.** 2/5 carries a Wilson 95 % interval of
+**[0.12, 0.77]**, and a design whose true success rate is exactly the 0.5 threshold fails this gate
+**50 %** of the time (true 0.6 fails 32 %, true 0.7 fails 16 %). Neither number is evidence about
+the design at the precision the verdict implies. The **CPVI half is the one solid measurement in the
+run**: a +0.243-bit gradient with the control at zero, on 965 handoffs, from a pair that solved 6
+episodes out of 40.
+
+**How it reads. The instrument works and the task is jammed, and the jam has a named mechanism.**
+
+*Every failure ran to the step budget.* Maximum handoffs for the cell is 20 × 18 (easy) + 20 × 33
+(hard) = 1,020; 965 were written with 6 successes. `agents/graph.py` has exactly one exit,
+`done = success or next_step >= max_steps`, so all 34 failures spent their whole budget. Nothing
+crashed, nothing timed out, every one of the ~1,930 completions returned HTTP 200.
+
+*But they did not run out of road — they ran on the spot.* Reconstructing the action sequences from
+the Parquet (`action["action"]` per step, ordered):
+
+| Failure mode | Episodes | Signature |
+|---|---|---|
+| Period-2 rotation cycle | 5 | `ROT+,ROT-,ROT+,ROT-,…` for up to 27 consecutive steps |
+| Period-2 translation cycle | 6 | `N,S,N,S,…` — one episode alternates for 26 of 33 steps |
+| Period-1 push cycle | 7 | `E` repeated into a wall it cannot pass — `E×18`, `E×33` |
+| Mixed thrash (no clean cycle ≥ 6) | 16 | |
+| **Success** | **6** | |
+
+**18 of 40 episodes — 53 % of the failures — end in a period-1 or period-2 limit cycle, and the
+cycle consumes 68 % of the steps those episodes spent** (mean terminal cycle 18.4 actions of a mean
+27.2-step episode).
+
+*The obvious remedy was tested against the data and refuted.* The natural first reading of "every
+failure hit the budget" is that the budget is too small. It is not. **Mean geodesic distance still
+to run at the end of a failed episode is 7.02** against a goal radius of 0.8, in a task whose total
+geodesic span is about 8 — and **only 1 of 34 failures ends within 1.5 of the goal**. Meanwhile
+every success finished in **8, 8, 8, 9, 12 and 12 steps** against an easy budget of 18 and an oracle
+optimum of 7. The budget is generous for anything that works and irrelevant to anything that does
+not: extending it buys more cycling, not more arrivals. This hypothesis was raised, tested and
+dropped before any parameter was touched, and it is recorded here because the refutation is the
+evidence that the retune below is aimed at the right thing.
+
+*The mechanism is a fixed point of a memoryless greedy policy.* Decoding is greedy
+(`temperature = 0`) by design. The v4 prompt surface contains the current scene and nothing else —
+no action history, no record of what the previous action achieved. So the policy is a pure function
+of the current state. Any state *s* whose action *a* returns the system to *s* (a wall press, a pure
+rotation) is a **period-1 fixed point**, and any pair *s → s′ → s* is a **period-2 cycle**; in both
+cases the agents cannot escape, because escaping would require the prompt to differ and the prompt
+is a function of the state alone. This is not a capability failure and it is not stochastic: it is a
+structural property of a deterministic memoryless policy on a deterministic environment. Note the
+repository had **already reasoned this out for the gate** — `GATE_FEEDBACK` exists precisely because
+"under greedy decoding a re-prompt is a fixed point" — and had never applied the same argument to
+the base loop.
+
+*Corroborating detail: the failure is not model capability.* The same cell at 4-bit 8B scored 0/3 on
+easy C0; bf16 14B scores 2/5. Real improvement, same wall. And at easy seed 0 the action sequences
+under **C0, C3 and C4 are byte-identical** (`N,E,E,E,E,E,E,E`) — where the task is trivially
+solvable the channel is irrelevant, which is a ceiling effect on the easiest cell rather than a
+broken channel (every other seed diverges across conditions).
+
+*A condition-specific finding worth carrying forward.* **C1 (the 8-token length cap) degenerates
+into a single-action policy**: 7 of its 8 failures are pure cycles, 5 of them `E` repeated for the
+entire budget (`E×33` three times over). A truncated instruction collapses to a direction, and B
+executes that direction until the budget ends. This is *why the success gradient is flat rather than
+merely noisy*: at easy seed 1 the capped channel **succeeded in 8 steps** where the clean channel
+spent 15 straight `ROT-`. A degraded channel can outscore a clean one when the degraded message
+happens to encode the near-optimal policy and the clean one talks the actuator into rotating. That
+is a systematic mechanism, not sampling noise, and it is the honest explanation for C0 2/10 against
+C4 1/10.
+
+*One measurement instrument was blind to all of this.* The `stuck` field scored **False for all 18
+handoffs** of the `N,S,N,S,…` episode and for the `E×18` wall press, because pre-v5 `detect_stuck`
+tested the *span* of the COM over a 3-state window: an alternating trajectory genuinely moves a full
+unit each step, and a jittering wall press exceeds the 0.02 threshold. The field that exists to name
+a trajectory going nowhere missed the failure mode that consumed the run. See "What it changes".
+
+**Seed sensitivity.** All 6 successes are easy-difficulty; **0 of 20 hard episodes succeeded in any
+condition**. Success concentrates on seeds 0, 1 and 3 (start poses already near the slit line) and is
+absent at seeds 2 and 4 entirely — at seed 2 the load never moves in *x* at all in four of the eight
+cells, ending at its start abscissa of 1.27. The C0 − C4 success gap is carried by a single episode,
+so it has no per-seed structure to report. The CPVI ordering is again the stable part of the run.
+
+**Deviations.** None from the pre-registration for the run itself: the executed cell, the thresholds,
+the estimator, the encoder and the model revision are the pre-registered ones, and the jobscript
+carries neither the revision (read from `configs/model/qwen14b.yaml`) nor the grid axes (the CLI
+defaults) precisely so the executed and pre-registered cells cannot drift. The retune applied *after*
+this run is recorded under "What it changes" and amends PREREGISTRATION §6 prospectively.
+
+**Working on Myriad — what this run cost to make possible.** Four defects stood between a correct
+local pipeline and a single successful cluster job, each found only on the cluster and each fixed as
+its own ticket:
+
+| | Symptom | Cause | Fix |
+|---|---|---|---|
+| DSE-051 | `uv sync` cannot build an environment at all | Myriad login *and* compute nodes are RHEL 7.9 / glibc 2.17; every locked wheel is manylinux_2_28+, and torch ships no sdist | Run inside a digest-pinned Debian-bookworm Apptainer image (glibc 2.36). `uv.lock` unchanged — the lock stays the anchor and simply executes where its wheels are valid |
+| DSE-052 | vLLM structured-output flag mismatch | vLLM's config surface moved | Assert `structured_outputs_config` on a login node, no GPU needed |
+| DSE-053 | `FileNotFoundError: 'icc'` minutes into vLLM start-up, A100 already allocated | Myriad's login shell exports `CC=icc` from `compilers/intel/2018`; Apptainer passes the host environment straight through; Triton JIT-compiles a CUDA shim at engine start and reads `CC` with no existence check | Override `CC`/`CXX` unconditionally inside the container — `${CC:-gcc}` is useless here, the broken value is already set so the default never fires |
+| DSE-054 | Job 212796 died in under a second | SGE executes a **spooled copy** of the jobscript from `/var/opt/sge/<node>/job_scripts/<jobid>`, so `BASH_SOURCE` names the spool directory and `$HERE/_common.sh` does not exist | Recover the checkout from `$PWD` (`#$ -cwd` puts us in the submit directory) |
+
+Three habits that paid for themselves, worth stating as method rather than as anecdote: **(i)** serve
+and drive in **one** job — a login node driving a compute node's `localhost` reaches the wrong
+machine, and splitting them means two queue waits and a hostname discovery problem; **(ii)** warm the
+embedding encoder **before** any GPU time is spent, because it is first used at analysis time and a
+node without outbound network would otherwise fail after a full GPU-hour with the dataset already
+paid for; **(iii)** derive the served model *and its revision* from the same `configs/model/*.yaml`
+the manifest records them from, so a job physically cannot serve one checkpoint while claiming
+another — `/v1/models` carries no revision, so nothing else in the repository could catch that.
+Measured throughput for sizing later runs: **~1.5 model calls/s at concurrency 4**, 150–165 tok/s
+generation, 56–57 % prefix-cache hit rate, 965 handoffs in 1,287 s on one A100-PCIE-40GB.
+
+**What it changes. This spends the one permitted retune (PREREGISTRATION §6), as prompt surface v5.**
+
+1. **The retune — `recent=` in the prompt surface (PROMPT_VERSION v4 → v5).** The state now carries
+   the last four actions and the geodesic distance each gained, oldest first, plus their net. The
+   prompt therefore differs on the second visit to a state, which is exactly what a fixed point
+   requires to stop being one. It is deliberately **fact, not instruction** — it reports what was
+   done and what it gained, and leaves "so try something else" as the agent's inference; a directive
+   would make this a behavioural intervention rather than an observability fix, and the two are not
+   separable after the fact. The line is appended **after** `apply_channel`, so the channel still
+   degrades exactly what it degraded before: C3 windows B's view of the *world*, and B's memory of
+   its own actions is not the world. The same line is appended to all three serialisations, so the
+   serialisation axis stays a contrast over representation.
+2. **The cell widens to seeds 0–9 (80 episodes).** A precision change, not a retune: it moves no
+   threshold and no estimator. It is not optional stopping, and the direction is the proof — the
+   attempt-1 point estimate (0.4) sits **below** the 0.5 threshold, so added *n* moves the expected
+   verdict **toward FAIL**. It also doubles G2's success half, which currently rests on one episode.
+3. **`detect_stuck` measures net displacement across the window, not span** (window 3 → 5 states).
+   Diagnostic only — no gate reads `stuck` and nothing terminates on it — but the retune run has to
+   be able to *see* the pathology it targets, and the pre-v5 field could not.
+4. **The step budget is deliberately unchanged** at 2.5 × the oracle optimum. See the refutation
+   above; this is a recorded decision, not an omission.
+
+Attempt 2 lands in a **different dataset** by construction: `PROMPT_VERSION` and the per-difficulty
+budgets both feed `dataset_hash_for`, so v5 resolves to `eddd19c654515bb2` and `1c994b87bbca8257`
+can be neither resumed into nor overwritten. **Attempt 1 is preserved as evidence** — dataset,
+Parquet, manifest, report and job log — and remains a valid result even though it does not clear the
+gate. If attempt 2 still fails, the fallback ladder fires and RQ3a becomes the headline; there is no
+attempt 3.

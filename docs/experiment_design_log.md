@@ -15,6 +15,157 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
+## 2026-08-26 — The retune: a greedy fixed point, not a capability ceiling
+
+- **Area:** the task's action loop and prompt surface — the mechanism behind the G1 failure at the
+  bf16 re-gate, and the one retune PREREGISTRATION §6 allows (E3 attempt 1, DSE-019/DSE-055).
+- **Status:** pre-freeze. F0 is still open; this changes the design before v1 is committed.
+
+### Trigger
+
+E3 attempt 1 — the verdict of record, Myriad bf16, job 214590 — returned `retune_once`: G1 FAIL
+0.400, G2 PASS with its success half at exactly the threshold, G3 PASS 0.986. Under §6 exactly one
+retune is available and a second failure fires the fallback ladder, so the lever had to be chosen
+from the data rather than from the most plausible-sounding story.
+
+### Finding
+
+**Every one of the 34 failed episodes spent its full step budget** — 965 handoffs against a cell
+maximum of 1,020, and `graph.py` exits only on success or budget. The obvious inference is that the
+budget is too small. **It is wrong, and the data say so unambiguously**: mean geodesic distance still
+to run at the end of a failed episode is **7.02** against a goal radius of 0.8 in a task spanning
+about 8, and **only 1 of 34 failures ends within 1.5 of the goal**, while every one of the 6
+successes finished in 8–12 steps of an 18-step easy budget (oracle optimum 7). The failures are not
+short of road. They are stationary.
+
+Reconstructing the action sequences shows what they are doing instead. **18 of 40 episodes — 53 % of
+the failures — terminate in a period-1 or period-2 limit cycle**, and the cycle consumes **68 %** of
+the steps those episodes spend: `ROT+,ROT-,ROT+,ROT-,…` (5 episodes, up to 27 consecutive steps),
+`N,S,N,S,…` (6), and `E` pressed into an impassable wall for the entire budget (7, including three
+`E×33`).
+
+**The mechanism is structural, not stochastic.** Decoding is greedy by design and the v4 prompt
+surface is a pure function of the current scene — it carries no action history and no record of what
+the last action achieved. So the policy is memoryless: any state whose chosen action returns the
+system to that state is a **fixed point**, and any two-state orbit is a **period-2 cycle**, and in
+both cases escape is impossible because escape would require the prompt to differ and the prompt
+depends only on the state. The repository had already made exactly this argument for the runtime
+gate — `GATE_FEEDBACK` exists because "under greedy decoding a re-prompt is a fixed point" — and had
+never applied it to the base loop.
+
+Two corroborating observations. **This is not model capability**: the same cell scored 0/3 easy-C0
+at 4-bit 8B and 2/5 at bf16 14B — real improvement into the same wall. And **C1 (the 8-token cap)
+collapses to a single-action policy**: 7 of its 8 failures are pure cycles, 5 of them `E` for the
+whole budget. That is why the *outcome* gradient is flat rather than merely noisy — at easy seed 1
+the capped channel succeeded in 8 steps while the clean channel spent 15 straight `ROT-`. A degraded
+channel can outscore a clean one when truncation happens to encode the near-optimal policy.
+
+### Impact
+
+The G1 failure was being read as "the task is above this tier", which points at the fallback ladder
+or at a bigger model. Both readings are wrong and both are expensive. The binding constraint is that
+**the agents cannot observe that what they are doing is not working**, and no amount of model
+capability or step budget repairs a policy that is a function of a state it keeps returning to.
+
+Left unfixed, the RQ1 outcome axis is unusable: 34 of 40 episodes are decided by an artefact of
+memorylessness rather than by the channel, which is the condition under which H1's outcome half
+cannot be measured at all — while H1's *information* half is meanwhile perfectly healthy (+0.243-bit
+C0−C4 CPVI gradient, control at zero, selectivity +0.136).
+
+### Risk reduced
+
+Three. **(i)** Spending the single retune on the wrong lever and arriving at the fallback ladder with
+the actual defect untouched. **(ii)** Reading a structural artefact as a capability result and
+escalating the model tier — a compute decision taken on a misdiagnosis. **(iii)** Reporting the flat
+C0-to-C4 success gradient as a null when it has a known non-random cause.
+
+### Correction path
+
+The step budget was the first candidate and is **rejected on the evidence above and recorded as
+rejected**: at a mean 7.02 remaining, more steps buy more cycling. Raising the model tier is rejected
+because the 4-bit-to-bf16 comparison already shows the wall is not capability. Widening the geometry
+is rung 2 of the *fallback* ladder, available only after the retune fails, and would in any case not
+touch a cycle occurring in open space.
+
+### The fix
+
+**Prompt surface v5** — the state gains one line naming the last four actions, the geodesic distance
+each gained, and their net. Four is the smallest window that shows a period-2 cycle twice.
+
+Three properties are load-bearing and each was chosen against an alternative:
+
+- **Fact, not instruction.** The line reports what happened and leaves the inference to the agent. A
+  directive ("this is not working, try something else") would convert an observability fix into a
+  behavioural intervention, and after the run the two would be indistinguishable in the result.
+- **Appended after `apply_channel`, not inside the serialiser.** The channel must degrade one thing
+  only. C3 restricts B's view of the *world*; B's memory of its own actions is not the world, so the
+  history survives the restriction. Routing it through the serialiser would instead have required a
+  per-form whitelist/window rule and would have made C3-plus-grid behave unlike C3-plus-numeric.
+- **Shared, not A-only.** Giving the history to A alone would create an information asymmetry
+  *outside* the channel and break the standing invariant that `observation == state_str` in
+  C0/C1/C2/C4 — a change to the CPVI conditioning semantics, which is a freeze-level decision, not a
+  retune. **The cost is accepted and named:** a receiver that can self-correct from its own history
+  needs the message less, so this may depress CPVI. G2's CPVI half is the place that will show it,
+  and it currently has +0.243 bits of headroom above a directional threshold.
+
+Two changes ride alongside and are **not** the retune. The cell widens to **seeds 0–9** — a precision
+change that moves no threshold and no estimator, and that cannot be optional stopping because the
+attempt-1 estimate (0.4) sits *below* the 0.5 threshold, so added *n* moves the expected verdict
+toward FAIL. And **`detect_stuck` now measures net displacement across a 5-state window rather than
+span across 3**: the old form scored `stuck=False` for all 18 handoffs of the `N,S,N,S` episode (the
+COM genuinely moves a unit each step and returns) and for the `E×18` wall press (contact jitter
+exceeds the 0.02 threshold), so the field that exists to name a trajectory going nowhere was blind to
+the failure mode that consumed the run. No gate reads `stuck` and nothing terminates on it, so this
+changes what a run records about itself and never what it does.
+
+**A construct boundary v5 forced, found in review before attempt 2 ran.** G3 scores a message's
+numbers against "every number the sender was shown", which was geometry-only until v5 put per-action
+geodesic gains into the same string. With `g3_abs_tol = 0.5` and gains clustering in 0–1.5, a
+fabricated small-magnitude geometric claim then matched a *gain* and scored grounded: on a synthetic
+record, a message asserting an offset of 0.85 that no wall, slit, load or goal coordinate supports
+reads **0.0** against the geometry and **1.0** against geometry-plus-history. G3's truth set now
+excludes the history line.
+
+The decision worth recording is which way to fail. The two available errors are not symmetric.
+Including the history credits fabricated geometry — single-sided inflation of exactly the property
+the gate certifies, and PREREGISTRATION §6 fixes the construct as "match true geometry". Excluding it
+penalises a message that correctly quotes a gain — a stricter gate, and rare, because A's prompt asks
+for position and intent rather than for gains. **A gate should fail closed**, so the history is
+excluded. This also refines the D19 principle: "the truth set is what the sender was shown" was a
+sound rule while everything the sender was shown was geometry, and v5 is the first time that stopped
+being true. The rule is now "what the sender was shown, restricted to the world" — and it is keyed on
+an exported prefix rather than a literal, so the serialiser and the gate cannot drift apart silently.
+
+### Result of the fix
+
+Not yet known — attempt 2 has not run. What *is* fixed by construction: `PROMPT_VERSION` feeds
+`dataset_hash_for`, so v5 resolves to a new dataset (`eddd19c654515bb2`) and attempt 1
+(`1c994b87bbca8257`) can be neither resumed into nor overwritten. The plan costs 80 cells and 4,080
+upper-bound model calls, roughly 45 minutes of sweep at the measured ~1.5 calls/s.
+
+### So-what
+
+Three things worth carrying into the write-up.
+
+**A deterministic multi-agent loop needs memory in the prompt or it is not ergodic.** Greedy decoding
+is chosen here for reproducibility, and reproducibility bought a policy that cannot leave a state it
+re-enters. This is a general property of memoryless deterministic agents in deterministic
+environments, not a quirk of this task, and it is the same argument DSE-045 already makes for the
+gate — the pilot showed it fires without a gate too.
+
+**"Ran out of budget" and "made no progress" look identical in aggregate and are opposite diagnoses.**
+The distinction cost one query over the raw records and would have cost a wasted retune otherwise.
+Any horizon-limited agent benchmark reporting only success rate and step count cannot tell them
+apart.
+
+**Channel degradation is not monotone in outcome when the degraded message can encode a better
+policy.** C1's truncation to a bare direction outperformed the clean channel on one seed. Any
+information-gradient design that assumes "less channel ⇒ worse outcome" needs to check this
+explicitly; here it is the honest mechanism behind a flat success gradient that would otherwise be
+reported as noise.
+
+---
+
 ## 2026-08-24 — The RQ3a substrate, opened: the conditioning state is there, the outcome is not
 
 - **Area:** RQ3a external validity — the substrate, the outcome *Y* on real logs, and the refit

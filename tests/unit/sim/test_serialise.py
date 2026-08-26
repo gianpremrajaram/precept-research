@@ -14,6 +14,7 @@ from preceptx.sim.serialise import (
     GridConfig,
     SceneState,
     deserialise_check,
+    history_line,
     serialise,
 )
 
@@ -128,3 +129,29 @@ def test_serialisers_never_raise_on_valid_or_extreme_poses(
         assert isinstance(serialise(scene, mode), str)  # type: ignore[arg-type]
     assert isinstance(deserialise_check(scene, "numeric"), bool)
     assert isinstance(deserialise_check(scene, "grid"), bool)
+
+
+def test_history_line_is_empty_before_any_action() -> None:
+    line = history_line([])
+    assert line.startswith("recent=()")
+    assert "no actions taken yet" in line
+
+
+def test_history_line_names_each_action_and_its_gain() -> None:
+    line = history_line([("N", 0.34), ("E", 1.01)])
+    assert "(N, +0.34)" in line and "(E, +1.01)" in line
+    assert "net +1.35 over the last 2" in line
+
+
+def test_history_line_surfaces_a_period_two_limit_cycle_as_zero_net() -> None:
+    """The v5 line exists to make N,S,N,S visible as motion that gains nothing."""
+    line = history_line([("N", 0.34), ("S", -0.34), ("N", 0.34), ("S", -0.34)])
+    assert "net +0.00 over the last 4" in line
+
+
+def test_history_line_carries_no_advice() -> None:
+    """It reports fact, never instruction: a directive would make the v5 retune a behavioural
+    change rather than an observability one, and the two are inseparable after the fact."""
+    line = history_line([("ROT+", 0.0), ("ROT-", 0.0)])
+    for word in ("try", "should", "instead", "different", "not working"):
+        assert word not in line.lower()
