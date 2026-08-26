@@ -94,6 +94,30 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
     only asserting the new one is present.
 
 ### Fixed
+- **SGE jobscripts resolve the checkout, not the spool directory** (`scripts/myriad/pilot.sh`,
+  `serve.sh`, `tests/unit/scripts/test_myriad_container.py`, `docs/myriad.md`, DSE-054). The first
+  real `qsub scripts/myriad/pilot.sh` (job 212796, 26 Aug 2026) exited 1 in the same second it
+  started, on `source "$HERE/_common.sh"`.
+  - *Cause.* SGE does not execute the submitted file: it spools a copy to
+    `/var/opt/sge/<node>/job_scripts/<jobid>` and runs that. `${BASH_SOURCE[0]}` therefore names the
+    spool directory, where none of `scripts/myriad/` exists. Every previous invocation had been
+    `bash scripts/myriad/<script>` — run in place — so `qsub` was the first execution of this path.
+  - *Blast radius beyond the source line.* `HERE` also supplies `enter_container "$HERE/pilot.sh"`,
+    which would have re-exec'd a spool path with no bind mount inside the container. `REPO_ROOT`
+    derives from `HERE` too, and with it `VENV`, `PRECEPTX_SERVE_ENV` and the tier-config check.
+  - *Fix.* One line per script: `[[ -f "$HERE/_common.sh" ]] || HERE="$PWD/scripts/myriad"`.
+    `#$ -cwd` lands the job in the submit directory, which is the repo root — an assumption the
+    scripts already make, since `RUNS_ROOT` defaults to the relative `runs`. Running a script in
+    place keeps the first branch, so interactive behaviour is byte-identical. A second guard
+    fails loud when the fallback cannot resolve either — a job submitted from outside the repo
+    root exits 1 naming the fix (`submit from the repo root`) instead of repeating the opaque
+    `_common.sh: No such file or directory`.
+  - `serve.sh` carried the same defect at its own `source` line and is documented as separately
+    submittable (`qsub scripts/myriad/serve.sh`); it is fixed in the same pass rather than left as
+    a second identical incident waiting for its first `qsub`.
+  - *Guard.* `test_a_spooled_jobscript_still_finds_common_sh` copies `pilot.sh` to a spool-shaped
+    directory and runs it from the repo root with a bogus `TIER` — the first exit *after* the
+    source, so reaching it proves the source resolved. Verified to go red with the fix reverted.
 - **Myriad's Intel compiler leaking into the container** (`scripts/myriad/_common.sh`, DSE-053).
   The second cluster serve attempt got vLLM 0.18.1 all the way to engine initialisation on the
   A100 and then died with `InductorError: FileNotFoundError: [Errno 2] No such file or directory:

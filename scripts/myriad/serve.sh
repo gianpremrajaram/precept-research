@@ -2,8 +2,8 @@
 # Myriad SGE jobscript: serve one model behind vLLM's OpenAI-compatible server.
 #
 # The resource directives below are defaults for the bf16 workhorse. Override per tier on the qsub
-# line (resource flags take precedence over the directives) with -v TIER=<group>; -P takes your
-# project code.
+# line (resource flags take precedence over the directives) with -v TIER=<group>. No -P project
+# code is needed - the Free allocation is the default (see the directive note below).
 #
 # The served name and revision come from configs/model/<TIER>.yaml, which is the same file the run
 # manifest records them from. They are deliberately NOT arguments: passed separately they can
@@ -11,13 +11,13 @@
 # compares the served model id, but /v1/models carries no revision, so a wrong one is invisible.
 #
 #   14B (bf16, default):
-#     qsub -P <project> scripts/myriad/serve.sh
+#     qsub scripts/myriad/serve.sh
 #   8B (bf16, V100 class):
-#     qsub -P <project> -ac allow=EF -v TIER=qwen8b scripts/myriad/serve.sh
+#     qsub -ac allow=EF -v TIER=qwen8b scripts/myriad/serve.sh
 #   32B (bf16, 80 GB A100):
-#     qsub -P <project> -ac allow=U -v TIER=qwen32b,GPU_MEM_UTIL=0.95 scripts/myriad/serve.sh
+#     qsub -ac allow=U -v TIER=qwen32b,GPU_MEM_UTIL=0.95 scripts/myriad/serve.sh
 #   70B-AWQ (TP=2), the one tier with no config file yet:
-#     qsub -P <project> -l gpu=2 -v MODEL=<70B-AWQ-repo-id>,REVISION=<sha>,QUANT=awq,TP=2 \
+#     qsub -l gpu=2 -v MODEL=<70B-AWQ-repo-id>,REVISION=<sha>,QUANT=awq,TP=2 \
 #          scripts/myriad/serve.sh
 #     (the 70B repo id is a PLACEHOLDER until DSE-005 verifies and pins it; MODEL/REVISION remain
 #      overridable for exactly this case and log a warning when they diverge from the config)
@@ -39,12 +39,26 @@
 # Node class: L = 40 GB A100, required by the bf16 14B workhorse (~28-30 GB in use). The 8B tier
 # also fits the V100 class (edit to `-ac allow=EF`); 32B bf16 needs an 80 GB A100 (`allow=U`/`V`).
 #$ -ac allow=L
-# Project allocation: pass it on the qsub line (`qsub -P <project> ...`). No usable default
-# exists, and an SGE directive cannot read the environment, so it is deliberately not set here.
+# No -P directive: the Free allocation is Myriad's default for UCL internal users, verified live
+# 25-26 Aug 2026 - jobs 212241 and 212796 were both accepted without one (docs/myriad.md section 10).
+# A paid/priority allocation, if one ever exists, goes on the qsub line; an SGE directive cannot
+# read the environment, so it could not live here anyway.
 
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# SGE runs a SPOOLED COPY of this script (/var/opt/sge/<node>/job_scripts/<jobid>), so BASH_SOURCE
+# names the spool directory, not the checkout, and $HERE/_common.sh does not exist there - job
+# 212796 died on that source line in under a second. `#$ -cwd` puts us in the submit directory,
+# which is the repo root (RUNS_ROOT is already relative to it), so recover the checkout from there.
+# HERE also feeds enter_container, which would otherwise re-exec a spool path the container has no
+# bind mount for. Running the file in place (`bash scripts/myriad/serve.sh`) keeps the first branch.
+[[ -f "$HERE/_common.sh" ]] || HERE="$PWD/scripts/myriad"
+[[ -f "$HERE/_common.sh" ]] || {
+  echo "[serve] cannot find scripts/myriad/_common.sh from the spool directory or \$PWD ($PWD)" >&2
+  echo "[serve] submit from the repo root: cd ~/Scratch/precept-research && qsub scripts/myriad/serve.sh" >&2
+  exit 1
+}
 REPO_ROOT="${REPO_ROOT:-$(cd "$HERE/../.." && pwd)}"
 
 TIER="${TIER:-qwen14b}"             # Hydra model group; configs/model/<TIER>.yaml

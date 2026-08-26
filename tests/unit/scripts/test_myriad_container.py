@@ -248,3 +248,58 @@ def test_serve_env_is_valid_json_with_single_line_fields(cluster: Cluster) -> No
     assert payload["glibc"] == "2.41"
     assert payload["gpu"] == "NVIDIA A100-PCIE-40GB"
     assert payload["driver"] == "550.127.05"
+
+
+def test_a_spooled_jobscript_still_finds_common_sh(cluster: Cluster, tmp_path: Path) -> None:
+    """SGE runs a copy of the jobscript, not the file in the checkout.
+
+    `qsub scripts/myriad/pilot.sh` spools it to /var/opt/sge/<node>/job_scripts/<jobid> and runs
+    that, so ${BASH_SOURCE[0]} names the spool directory. Job 212796 exited 1 in the same second it
+    started, on `source "$HERE/_common.sh"`. Every interactive run had passed because `bash
+    scripts/myriad/pilot.sh` executes the file in place - qsub was the first time this path ran.
+
+    A bogus TIER is the first exit AFTER the source, so reaching it proves the source succeeded.
+    """
+    spool = tmp_path / "job_scripts"
+    spool.mkdir()
+    spooled = spool / "212796"
+    spooled.write_text((SCRIPTS / "pilot.sh").read_text())
+
+    result = subprocess.run(
+        ["bash", str(spooled)],
+        capture_output=True,
+        text=True,
+        env=cluster.env(TIER="no-such-tier"),
+        cwd=REPO_ROOT,  # what `#$ -cwd` gives the job: the submit directory
+        timeout=60,
+    )
+    assert "_common.sh: No such file or directory" not in result.stderr, result.stderr
+    assert "no configs/model/no-such-tier.yaml" in result.stderr, result.stderr
+
+
+def test_a_spooled_jobscript_submitted_from_the_wrong_directory_fails_loud(
+    cluster: Cluster, tmp_path: Path
+) -> None:
+    """The $PWD fallback assumes `#$ -cwd` landed us in the repo root.
+
+    Submitted from anywhere else (e.g. `qsub ~/Scratch/precept-research/scripts/myriad/pilot.sh`
+    from $HOME), $PWD/scripts/myriad does not exist either, and without a guard the job dies with
+    the same opaque `_common.sh: No such file or directory` DSE-054 fixed. Fail-loud is repo
+    policy: the error must name the fix, not the symptom.
+    """
+    spool = tmp_path / "job_scripts"
+    spool.mkdir()
+    spooled = spool / "212797"
+    spooled.write_text((SCRIPTS / "pilot.sh").read_text())
+
+    result = subprocess.run(
+        ["bash", str(spooled)],
+        capture_output=True,
+        text=True,
+        env=cluster.env(),
+        cwd=tmp_path,  # not the repo root: the fallback has nothing to find
+        timeout=60,
+    )
+    assert result.returncode == 1
+    assert "_common.sh: No such file or directory" not in result.stderr, result.stderr
+    assert "submit from the repo root" in result.stderr, result.stderr

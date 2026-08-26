@@ -92,7 +92,15 @@ forever. Both jobscripts here use `-pe smp 8 -l mem=4G` = 32 GB total. Multiply 
 | 2–64 (T nodes) | 48 h |
 
 `pilot.sh` asks for 6 h. Over-asking costs nothing on the Free queue and you cannot extend a running
-job, so round up.
+job, so round up — but not past a maintenance window (below): the scheduler will not start a job
+whose wallclock crosses one.
+
+**The cluster has scheduled downtime.** The second Tuesday of every month is a maintenance day —
+clusters are at risk from 08:00, and jobs that would still be running then may be held until after.
+Check [Planned Outages](https://www.rc.ucl.ac.uk/docs/Planned_Outages/) before queueing anything
+long or planning a sweep week. As of 26 Aug 2026 the page lists a **full Myriad outage on 24–25
+Sept 2026** (network modernisation — no access, jobs drained ahead of it). The RQ1 main sweep and
+its freeze want to be finished before that window, with the 8 Sept maintenance day in the middle.
 
 **Quota is 1 TB, shared between home and Scratch**, and running out does not fail cleanly — the job
 dies creating its `.o`/`.e` files, which looks like a scheduler fault. `gquota` shows usage. The
@@ -430,6 +438,7 @@ A100 rather than a red test. Every case in it guards a defect that actually ship
 | `test_home_is_bound_resolved_and_the_working_directory_survives` | `$HOME` is a symlink into `/myriadfs`; a dropped cwd sends artefacts to a read-only `/runs` |
 | `test_leaked_intel_compiler_is_overridden_inside_the_container` | `CC=icc` from `default-modules/2018` killed vLLM at engine start (DSE-053) |
 | `test_serve_env_is_valid_json_with_single_line_fields` | `head -1` under `pipefail` recorded `"glibc": "2.41\nunknown"` (DSE-052) |
+| `test_a_spooled_jobscript_still_finds_common_sh` | SGE runs a spooled copy, so `BASH_SOURCE` named `/var/opt/sge/.../job_scripts/<jobid>` and `source "$HERE/_common.sh"` failed (DSE-054) |
 
 Two details in there are load-bearing rather than incidental, and deleting either would leave a
 test that passes against broken code:

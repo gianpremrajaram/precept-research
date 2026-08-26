@@ -194,7 +194,7 @@ it to `retune_once` rather than reporting a proceed.
 **Emits.** A pilot report with a verdict of `proceed`, `retune_once` or `fallback`.
 **How the re-gate is run.** Pre-pull on a login node (`bash scripts/myriad/prefetch.sh`), then one
 SGE job, because a login node driving a compute node's `localhost` reaches the wrong machine:
-`qsub -P <project> scripts/myriad/pilot.sh` (DSE-050). It serves, waits for the endpoint, warms the
+`qsub scripts/myriad/pilot.sh` (DSE-050; no `-P` — the Free allocation is the default). It serves, waits for the endpoint, warms the
 embedding encoder, runs the cell and tears the server down on every exit path. Two things the
 command deliberately does not carry: the **revision**, which is read from
 `configs/model/<TIER>.yaml` — the same file the manifest records it from, so the served and recorded
