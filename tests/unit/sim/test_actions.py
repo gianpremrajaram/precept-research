@@ -87,19 +87,45 @@ def test_detect_collision_false_in_open_chamber() -> None:
     assert not detect_collision(read_state(scenario.space, scenario.load))
 
 
+def _body(com_x: float, com_y: float) -> BodyState:
+    return BodyState(
+        com_x=com_x, com_y=com_y, angle=0.41, vx=0.0, vy=0.0, omega=0.0, in_contact=True
+    )
+
+
 def test_detect_stuck_true_when_com_static() -> None:
     # Scripted jam: the COM holds across the window even though the pose is in contact.
-    jammed = BodyState(
-        com_x=3.56, com_y=2.50, angle=0.41, vx=0.0, vy=0.0, omega=0.0, in_contact=True
-    )
-    assert detect_stuck([jammed, jammed, jammed])
+    jammed = _body(3.56, 2.50)
+    assert detect_stuck([jammed] * 5)
+
+
+def test_detect_stuck_true_on_period_two_limit_cycle() -> None:
+    """N,S,N,S returns the COM to where it started - the dominant E3 attempt-1 failure.
+
+    The pre-v5 span form scored this False (the COM moves a full unit every step), so the field
+    that exists to name a trajectory going nowhere missed the failure mode that consumed the run.
+    """
+    cycle = [
+        _body(2.36, 3.0),
+        _body(2.36, 4.0),
+        _body(2.36, 3.0),
+        _body(2.36, 4.0),
+        _body(2.36, 3.0),
+    ]
+    assert detect_stuck(cycle)
+
+
+def test_detect_stuck_true_on_jittering_wall_press() -> None:
+    """E pressed into a wall it cannot pass: per-step contact jitter, zero net displacement."""
+    press = [_body(3.78 + j, 3.0) for j in (0.0, 0.03, -0.02, 0.04, 0.005)]
+    assert detect_stuck(press)
 
 
 def test_detect_stuck_false_when_moving() -> None:
     scenario = make_scenario("easy")
     cfg = StepConfig()
     states: list[BodyState] = []
-    for _ in range(4):
+    for _ in range(6):
         apply_macro_action(scenario.space, scenario.load, "E", cfg)
         states.append(read_state(scenario.space, scenario.load))
     assert not detect_stuck(states)

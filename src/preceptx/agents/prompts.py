@@ -25,7 +25,15 @@ from preceptx.serving.client import ChatMessage
 # so "aligned with the slit" was underdetermined: the pilot watched A call com_y=2.0074 aligned with
 # a (2.1, 3.9) gap and push into the wall for the rest of the budget. The dimensions are constants
 # of the load, not a derived pass band. Bump two of the three budgeted pre-E3 bumps.
-PROMPT_VERSION = "v4"
+# v5 (E3 attempt 1, the Myriad bf16 re-gate - THE ONE PERMITTED RETUNE): the state gained a
+# `recent=` line naming the last four actions and what each gained, and A's system prompt names it.
+# Attempt 1 failed G1 with 24 of its 34 failed episodes in a limit cycle: N,S,N,S...; ROT+,ROT-,...;
+# or E into a wall for the whole budget. Nothing in the v4 prompt surface carried an action history,
+# so at temperature 0 a state that maps to an action which returns the state to itself is a fixed
+# point of the policy and the pair cannot escape by construction. The fix is observability, not
+# instruction: the line reports what happened, and the inference stays the agent's. Bump three of
+# the three budgeted pre-E3 bumps.
+PROMPT_VERSION = "v5"
 
 _SYSTEM_A = (
     "You are agent A, the navigator in a two-agent cooperative-transport task. A T-shaped load "
@@ -35,7 +43,10 @@ _SYSTEM_A = (
     "size of its own (see load_size) and juts out either side of its centre. You can see the whole "
     "scene; B acts but sees less than you. Send B one or two sentences saying where the load is "
     "relative to the next slit and what to do now - which way to push, or whether to rotate first "
-    "so the load fits through. Use the actual numbers in front of you; do not give generic advice."
+    "so the load fits through. Use the actual numbers in front of you; do not give generic advice. "
+    "The `recent` line lists the last few actions and how much ground each one gained toward the "
+    "goal, oldest first; read it before deciding, because an action that gained nothing last time "
+    "will gain nothing again from the same position."
 )
 
 _SYSTEM_B = (

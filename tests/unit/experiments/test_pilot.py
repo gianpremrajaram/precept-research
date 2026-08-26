@@ -216,6 +216,32 @@ def test_g3_credits_geometry_the_sender_was_shown_but_state_does_not_carry() -> 
     assert g3_groundedness([rec], PilotConfig()).value == 1.0
 
 
+def test_g3_truth_set_excludes_the_v5_action_history() -> None:
+    """G3 scores messages against *geometry*, and v5's `recent=` line is not geometry.
+
+    It lists the last four actions and the geodesic distance each gained. Leaving it in the truth
+    set widened the admissible set from geometry to geometry-union-gains: with `g3_abs_tol = 0.5`
+    and gains clustering in 0-1.5, a fabricated small-magnitude claim matched a gain and was scored
+    grounded. The inflation is single-sided, so it degrades exactly what G3 certifies.
+    """
+    history = "recent=((N, +0.30), (E, +0.85), (N, +0.30))  # ... net +1.45 over the last 3"
+    scene = "load=(1.8000, 1.8000)\nslit_y=(2.1000, 3.9000)"
+    # 0.85 is no wall, slit, load or goal coordinate - it appears only as a gain in the history.
+    fabricated = _rec(
+        "e0",
+        0,
+        "C0",
+        success=True,
+        message="the load sits 0.85 below the slit",
+        state={"com_x": 1.8, "com_y": 1.8},
+    ).model_copy(update={"state_str": f"{scene}\n{history}"})
+    assert g3_groundedness([fabricated], PilotConfig()).value == 0.0
+
+    # The geometry half of the same state_str still grounds a true claim.
+    honest = fabricated.model_copy(update={"message_delivered": "the slit starts at 2.10"})
+    assert g3_groundedness([honest], PilotConfig()).value == 1.0
+
+
 def test_g3_grounded_passes_hallucinated_fails() -> None:
     state = {"com_x": 5.0, "com_y": 3.0}
     grounded = [

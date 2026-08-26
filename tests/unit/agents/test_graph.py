@@ -179,3 +179,26 @@ def test_each_role_calls_only_its_own_client() -> None:
     assert route_a.call_count == 2 and route_b.call_count == 2
     assert all(b"structured_outputs" not in c.request.content for c in route_a.calls)
     assert all(b"structured_outputs" in c.request.content for c in route_b.calls)
+
+
+@respx.mock
+def test_history_line_reaches_both_agents_and_grows_with_the_episode() -> None:
+    """v5: the prompt surface carries what the last actions gained, so a greedy policy facing a
+    repeated state is no longer facing a repeated prompt."""
+    respx.post(CHAT).mock(side_effect=_script("E"))
+    records = EpisodeRunner(_client(), max_steps=3).run_episode(_cell(), "ep")
+    assert "recent=()" in records[0].state_str  # step 0: nothing has happened yet
+    assert "recent=()" in records[0].observation
+    assert "(E, +" in records[1].state_str  # step 1: the first push and its gain
+    assert "(E, +" in records[1].observation
+
+
+@respx.mock
+def test_c3_restricts_the_scene_but_never_b_s_own_action_history() -> None:
+    """The channel degrades one thing only. C3 windows B's view of the *world*; B's memory of what
+    it already did is not the world, so the history line survives the restriction intact."""
+    respx.post(CHAT).mock(side_effect=_script("E"))
+    records = EpisodeRunner(_client(), max_steps=3).run_episode(_cell(condition="C3"), "ep")
+    assert "goal=" not in records[1].observation  # the scene is still restricted
+    assert "recent=" in records[1].observation  # the history is not
+    assert records[1].observation.splitlines()[-1] == records[1].state_str.splitlines()[-1]

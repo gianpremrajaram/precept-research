@@ -20,8 +20,9 @@ def test_pilot_dry_run_prints_the_plan_and_issues_no_calls(
 ) -> None:
     assert pilot(["--dry-run", "--model", "qwen8b", "--conditions", "C0,C4"]) == 0
     out = capsys.readouterr().out
-    # 2 conditions x 1 serialisation x 2 difficulties (easy, hard) x 5 seeds (PREREGISTRATION §6)
-    assert "cells:            20" in out
+    # 2 conditions x 1 serialisation x 2 difficulties (easy, hard) x 10 seeds (PREREGISTRATION §6,
+    # widened for attempt 2: at 5 seeds G1 rested on five easy-C0 episodes)
+    assert "cells:            40" in out
     assert "Qwen/Qwen3-8B@" in out
     assert not respx.calls  # no endpoint was constructed, let alone called
 

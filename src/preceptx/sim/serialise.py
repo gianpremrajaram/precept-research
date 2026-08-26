@@ -17,6 +17,7 @@ tests, not by recovering it from a coarse ASCII raster).
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -68,6 +69,40 @@ def serialise(scene: SceneState, mode: Serialisation) -> str:
     if mode == "grid":
         return _grid(scene, _GRID)
     return _nl(scene)
+
+
+# How many past actions the history line shows (v5). Four is the smallest window that displays a
+# period-2 limit cycle twice - the dominant E3 attempt-1 failure (N,S,N,S... and ROT+,ROT-,...),
+# where a memoryless greedy policy alternates forever because each state maps back to the other.
+# A longer window costs prompt tokens and buys nothing: the pathology is visible in four.
+HISTORY_WINDOW = 4
+
+# The line's key. Exported because G3's truth set must exclude it (pilot.py): the history is what
+# the sender was shown, but it is not *geometry*, and G3 scores messages against geometry. A literal
+# "recent=" in both modules would be a coupling nothing announces when the key changes.
+HISTORY_PREFIX = "recent="
+
+
+def history_line(recent: Sequence[tuple[str, float]]) -> str:
+    """Render the last few (action, geodesic gain) pairs as one prompt line (v5).
+
+    Serialisation-independent by construction: the same line is appended to all three forms, so the
+    serialisation axis stays a contrast over *representation* and this adds the same information to
+    every arm of it. It is deliberately a statement of fact, not advice - it reports what was done
+    and what it gained, and leaves "so try something else" as the agent's inference. A directive
+    here would make the retune a behavioural instruction rather than an observability fix, and the
+    two are not separable after the fact.
+    """
+    if not recent:
+        return f"{HISTORY_PREFIX}()  # no actions taken yet"
+    # `or 0.0` normalises -0.0, which formats as a confusing "-0.00" in a prompt a model reads.
+    pairs = ", ".join(f"({action}, {gain or 0.0:+.2f})" for action, gain in recent)
+    net = sum(gain for _, gain in recent)
+    return (
+        f"{HISTORY_PREFIX}({pairs})"
+        "  # (action, distance gained toward the goal), oldest first;"
+        f" net {net:+.2f} over the last {len(recent)}"
+    )
 
 
 def deserialise_check(scene: SceneState, mode: Serialisation) -> bool:
