@@ -19,7 +19,13 @@ from numpy.typing import NDArray
 
 from preceptx.config import ModelConfig
 from preceptx.data.schema import Condition, HandoffRecord
-from preceptx.experiments.rq1 import RQ1Config, analyse_rq1, rq1_sweep, write_rq1
+from preceptx.experiments.rq1 import (
+    RQ1Config,
+    analyse_rq1,
+    rq1_sweep,
+    signal_decomposition,
+    write_rq1,
+)
 from preceptx.experiments.sweep import expand
 from preceptx.measure.featuriser import EncoderConfig, Featuriser
 
@@ -207,3 +213,90 @@ def test_length_matched_control_is_reported_for_every_condition(tmp_path: Path) 
             assert np.isfinite(m.success.delta)
         else:
             assert np.isnan(m.success.delta) and "overlap" in m.success.note
+
+
+def _decomposition_records(y_flags: list[int], n_episodes: int = 2) -> list[HandoffRecord]:
+    """Handoffs in one condition carrying planted progress labels, two episodes deep."""
+    per_ep = len(y_flags) // n_episodes
+    return [
+        HandoffRecord(
+            episode_id=f"C0-s{i // per_ep}",
+            step=i % per_ep,
+            condition="C0",
+            serialisation="numeric",
+            difficulty="hard",
+            model="m",
+            seed=i // per_ep,
+            state={},
+            state_str="s",
+            observation="s",
+            message_raw="m",
+            message_delivered="m",
+            action={},
+            pre_state={},
+            post_state={},
+            progress=0.0,
+            success=False,
+            collision=False,
+            stuck=False,
+            y_binary_progress=bool(flag),
+            y_terminal_success=False,
+        )
+        for i, flag in enumerate(y_flags)
+    ]
+
+
+def test_signal_decomposition_recovers_planted_absent_and_unused_populations() -> None:
+    """DSE-046: the 2x2 and the two rates on a fixture whose cells are known by construction.
+
+    CPVI is passed in rather than estimated, so the test pins the decomposition itself: three
+    absent-signal handoffs (below the within-condition median, no progress) and one unused-signal
+    handoff (above it, no progress) out of eight.
+    """
+    cpvi = np.array([0.9, 0.8, 0.7, 0.6, 0.4, 0.3, 0.2, 0.1], dtype=np.float64)
+    y_flags = [1, 1, 1, 0, 1, 0, 0, 0]
+    records = _decomposition_records(y_flags)
+    y = np.array(y_flags, dtype=int)
+
+    dec = signal_decomposition(records, cpvi, y, _FAST)
+    assert len(dec) == 1
+    d = dec[0]
+    assert d.median_cpvi == 0.5  # within-condition median of the eight scores
+    assert (d.low_cpvi_no_progress, d.low_cpvi_progress) == (3, 1)
+    assert (d.high_cpvi_no_progress, d.high_cpvi_progress) == (1, 3)
+    assert d.absent_signal_rate == 3 / 8
+    assert d.unused_signal_rate == 1 / 8
+    # The two rates decompose the condition's no-progress rate; that is what makes them additive
+    # rather than two conditionals, one of which would be one minus the other.
+    assert d.absent_signal_rate + d.unused_signal_rate == y_flags.count(0) / len(y_flags)
+    for lo, hi in (d.absent_signal_ci, d.unused_signal_ci):
+        assert lo <= hi  # reported with an interval, never as a bare rate
+
+
+def test_signal_decomposition_ties_go_low_and_leave_the_unused_cell_empty() -> None:
+    """Every score equal to the median is a 'low' handoff, so the split stays deterministic."""
+    cpvi = np.full(8, 0.25, dtype=np.float64)
+    y_flags = [1, 0, 1, 0, 1, 0, 1, 0]
+    dec = signal_decomposition(_decomposition_records(y_flags), cpvi, np.array(y_flags), _FAST)[0]
+    assert dec.low_cpvi_no_progress + dec.low_cpvi_progress == 8
+    assert dec.unused_signal_rate == 0.0
+    assert dec.absent_signal_rate == 0.5
+
+
+def test_analyse_rq1_reports_the_decomposition_for_every_condition(tmp_path: Path) -> None:
+    feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "e"), encoder=_MsgEncoder())
+    records = _gradient_records()
+    result, _ = analyse_rq1(records, feat, dataset_hash="d0", cfg=_FAST)
+
+    dec = {d.condition: d for d in result.signal_decomposition}
+    assert list(dec) == ["C0", "C1", "C2", "C3", "C4"]
+    for cond, d in dec.items():
+        cells = (
+            d.low_cpvi_no_progress
+            + d.low_cpvi_progress
+            + d.high_cpvi_no_progress
+            + d.high_cpvi_progress
+        )
+        assert cells == d.n_handoffs  # the 2x2 partitions the condition's handoffs
+        fails = sum(1 for r in records if r.condition == cond and r.y_binary_progress is False)
+        assert d.absent_signal_rate + d.unused_signal_rate == fails / d.n_handoffs

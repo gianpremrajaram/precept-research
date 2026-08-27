@@ -15,6 +15,114 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
+## 2026-08-27 (latest) — What the RQ3a table can honestly contain, and one blind secondary analysis
+
+- **Area:** the RQ3a localisation comparison — which methods enter it, what an empty cell means, and
+  what the MAST arm is allowed to claim (DSE-024); plus a pre-registered RQ1 secondary analysis
+  declared before the rung-2 verdict (DSE-046).
+- **Status:** pre-freeze, and deliberately pre-verdict. Job 227048 (the successor re-gate) is queued;
+  neither piece here reads its result, which is the point of writing both now.
+
+### Trigger
+
+DSE-042 merged, so the RQ3a chain had a loader and an outcome construction but no analysis. Writing
+the analysis forced three questions the tickets state as if they were settled: which corpus supports
+which regime, what the published Who&When baselines mean when they cannot be run against the
+annotator that produced them, and what a "human-agreement audit" is when no human is annotating.
+
+### Finding
+
+**1. Neither CPVI regime can run to completion today, for two different reasons.** The transfer
+regime needs a frozen simulator-trained statistic; the successor task was certified on 2026-08-27
+and has not yet made a model call, so no such probe exists. The refit regime needs the DSE-042
+replay labels, which are a budgeted run that has not happened. Reporting either as a number today
+would require inventing an input.
+
+**2. MAST cannot carry CPVI at all — this is structural, not a sample-size problem.** Its traces are
+published as one unsegmented transcript, so there is no observation/message split and therefore no
+conditioning state. CPVI is *undefined* there rather than small. The earlier reading that MAST is
+"the one corpus where refit CPVI runs at zero replay spend" conflates *a genuine two-class outcome*
+(which MAST has) with *a per-step conditioning state* (which it does not).
+
+**3. The published Who&When baselines were produced by a hosted frontier annotator.** Every model
+call in this project is local or on the Myriad allocation. The procedures can be re-implemented, the
+published numbers cannot be reproduced, and quoting the two side by side as though one beat the
+other would be a comparison across annotators dressed as a comparison across methods.
+
+**4. The ticket's "small human-agreement audit" has no human in it.** Both label series available —
+the judge's selection and the corpus annotation — are already-existing artefacts. Cohen's kappa
+between them is a judge-validity check; calling it a human-agreement audit would overstate a number
+that is defensible under its true name.
+
+### Impact (had it not been caught)
+
+A results table with `0.0` where the transfer probe does not yet exist, a MAST row implying a CPVI
+that cannot be defined, three baseline numbers read as the published ones, and a kappa presented as
+newly collected human agreement. Every one of those survives casual review and none survives a
+reviewer who checks the substrate.
+
+### Risk reduced
+
+- **Empty cells cannot masquerade as measurements.** Every method carries `status` ∈ {`ok`,
+  `unavailable`, `not_applicable`} with a `reason`, and an unavailable method **keeps its row**. A
+  dropped row reads as "never considered"; a zero reads as "measured and failed".
+- **The transfer regime refuses to guess its sign.** Risk = `orientation × raw`, where orientation
+  comes from the calibration that was fitted against realised outcomes. Absent it, the regime is
+  `unavailable` rather than defaulted — a wrong sign inverts every localisation number while looking
+  entirely plausible.
+- **Annotations stay off the scoring path structurally.** `LocalisationStep` has no `annotations`
+  field, mirroring `ReplayStep` and `measure.twin`. The annotation enters only through
+  `trace_targets`, on the evaluator's side.
+- **Judge failures abstain rather than fall back.** A `None` from the backend produces an all-zero,
+  unrankable trace and increments an abstention count. No path lets a failed judge borrow the
+  annotation it is being scored against.
+- **The tie policy is fixed and recorded.** Average ranks over descending risk, top-*k* inclusive:
+  a method that scores every step identically cannot win by input order.
+
+### Correction path
+
+MAST is reported as its own arm with its own metric — the cross-fit information in bits that the
+trace text carries about the inter-agent-misalignment family — with `cpvi_status = not_applicable`
+and the reason carried in the result object, so the limitation travels with the number instead of
+living in a caption. The judge is declared an open-weight re-implementation in `JudgeIdentity`, which
+reaches both the result JSON and the run manifest. The audit is named
+`judge-selected agent vs the corpus's existing annotation`.
+
+### The fix
+
+`experiments/rq3a.py`: annotation-blind scoring view, one `MethodScores` type for every method, both
+regimes with explicit statuses, two probe-free baselines, the three Who&When procedures behind a
+three-question `JudgeBackend`, per-trace metrics with a trace bootstrap, the MAST arm, the agreement
+audit, and a manifest block carrying the judge substitution and the tie policy. 25 unit tests plus an
+integration test chaining corpus JSON → loader → replay labels → comparison table.
+
+**And, on the RQ1 side, one analysis written blind (DSE-046).** Per condition, handoffs split at that
+condition's own median CPVI crossed with realised progress: the **absent-signal rate** (low CPVI, no
+progress — the sender did not encode) and the **unused-signal rate** (high CPVI, no progress — the
+receiver did not act), which sum to the condition's no-progress rate. The within-condition split is
+what keeps it from restating the condition effect. Declared in PREREGISTRATION §8 and
+`ANALYSIS_PROTOCOL` **before** the successor re-gate returns, and declared as *secondary and
+descriptive*: at this sweep's episodes per condition the intervals are wide, so it is a mechanism
+description, never a significance claim and never a rescue of a null on the primary gradient.
+
+### Result of the fix
+
+The RQ3a table is runnable end to end today and every cell it cannot fill says why. The two inputs
+it is waiting on — a frozen simulator statistic and a budgeted replay run — are named in the result
+rather than assumed. The RQ1 secondary analysis is fixed in writing while its data is still unseen.
+
+### So what / takeaways
+
+- **"Not applicable" and "unavailable" are different claims and the table must distinguish them.**
+  One says the corpus cannot support the method; the other says the input does not exist yet. Only
+  the second becomes a number later.
+- **A metric that cannot be computed on a substrate is a finding about the substrate.** MAST's
+  missing observation/message split is worth a row in the design log, not a silent omission.
+- **Re-implementing a baseline under a different annotator produces a different estimator.** Say so
+  in the artefact, not in the prose around it.
+- **The cheapest defence against researcher degrees of freedom is writing the analysis while the
+  data is still in a queue.** Both pieces here were written with job 227048 unfinished, on purpose.
+
 ## 2026-08-27 (later) — The RQ3a arm had no outcome variable, and replay is the only one available
 
 - **Area:** the outcome *Y* for the RQ3a (real-log) arm; the budget discipline for any replay run
