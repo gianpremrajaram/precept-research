@@ -15,6 +15,101 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
+## 2026-08-27 (later) — The RQ3a arm had no outcome variable, and replay is the only one available
+
+- **Area:** the outcome *Y* for the RQ3a (real-log) arm; the budget discipline for any replay run
+  (DSE-042).
+- **Status:** pre-freeze. No replay has been executed; this entry records the design and the guard,
+  not a result.
+
+### Trigger
+
+The DSE-041 counts spike, read back against what CPVI actually needs. The loaders were finished and
+the corpora counted; the question left over was which per-step outcome the estimator would condition
+on, and the counts answer it in the negative.
+
+### Finding
+
+**Two of the three corpora are single-class at trace level, so the cheap outcome is degenerate.**
+TraceElephant is **220 traces, 220 failures**; Who&When is **184, all 184 failures**. A constant
+cannot be predicted, so Y1 (trace success) carries no information on either per-step substrate.
+MAST is genuinely two-class (**405 non-failures of 1,642**) but is trace-level only and confounded
+with system identity, so it cannot supply a *per-step* target at all.
+
+The obvious substitute is the one that is forbidden. Y2 — using the corpus's own `mistake_agent` /
+`mistake_step` annotation as the outcome — makes the localisation claim circular: CPVI would be
+scored against the very labels it is meant to be an independent signal about.
+
+**So the RQ3a arm, which the fired fallback ladder has already elevated to the headline, had no
+usable outcome variable.** That is a stronger statement than "replay would be nice": rung 1 is the
+track that can carry the dissertation alone, and without a two-class per-step target it cannot.
+
+### Impact
+
+Counterfactual replay moves from an upgrade path to a **precondition**. It defines the outcome
+interventionally — re-run the system from step *t* with that step's output substituted, and record
+whether the outcome changes — which is the only construction that yields a within-trace two-class
+target on a corpus that also records the per-step conditioning state. It also has the side benefit
+of putting the external-validity and causal claims on **one epistemology instead of two**.
+
+### Risk reduced
+
+Three, in descending severity:
+
+1. **Circularity.** The labeller consumes `ReplayStep`, a four-field view on which `annotations`
+   does not exist as a field. Not "unused" — absent from the type. A future edit cannot reach the
+   annotations by accident, which is the same structural discipline that stops
+   `prospective_twin` reaching Y.
+2. **An accidental full-corpus replay.** The cap is enforced immediately before every backend
+   invocation, not applied to the forecast. A projection is a prediction about a loop; the loop is
+   what spends the allocation. A dry run cannot issue a call at all, because `project` takes no
+   backend argument.
+3. **A sample that quietly reweights the corpus.** Stratification is over the trace outcome with
+   `None` as a stratum of its own — it is 176 of TraceElephant's 220 traces, so folding it into
+   either class would shift the failure balance the sampling exists to preserve.
+
+### The fix
+
+`experiments/rq3a_replay.py`, plus the discipline around it:
+
+- **Budget in calls and seconds, never currency.** Every model call in this project is local or on
+  the Myriad allocation. A dollar figure would be an invented number that reads as measured once it
+  reaches a table; GPU seconds appear only as an advisory estimate carrying its calibration source,
+  and are `None` when no throughput calibration exists.
+- **Refuse on the projected minimum.** If even the cheapest possible execution exceeds the cap, the
+  run is refused before anything is sent — rather than started and killed part-way, leaving a
+  half-labelled corpus whose base rate has to be explained.
+- **Disagreement is reported, not resolved.** Replay is non-deterministic because the systems are
+  LLM-driven, so determinism here means what it means for the simulator: low-variance and
+  agreement-reported, never bit-exact. Steps below the agreement floor are **flagged and kept**. A
+  dropped step changes every count downstream, and the disagreement is itself the finding that the
+  step's outcome is not well defined.
+- **The cheap label is computed anyway.** `trace_success_labels` runs for every trace regardless of
+  budget, so the refit arm has a fallback if replay is cut. Degenerate on the per-step corpora — that
+  is the whole reason this entry exists — but a present fallback beats a missing one, and MAST is
+  two-class.
+
+### Result of the fix
+
+Code deliverable only; running replay at corpus scale is a budgeted experiment and is deliberately
+not part of this change. The path from corpus JSON to labelled steps to a manifest block is
+exercisable offline against a stubbed backend, with 100% line coverage on the module and no network
+in any test.
+
+### So what
+
+- **A loader that parses is not a substrate that works.** DSE-041 was complete against every
+  acceptance criterion and the arm still had no outcome. The counts, not the code, were the
+  deliverable — and the counts said the obvious *Y* was unavailable.
+- **A spend cap on a forecast is not a spend cap.** The forecast is a statement about the loop you
+  think you wrote. The guard has to sit where the money is actually spent, which is the line before
+  the call.
+- **"Not applicable" is a design answer.** Currency has no place in a budget for local and allocated
+  compute; naming the budget in calls and seconds is more precise *and* more honest than converting
+  to a price nobody pays.
+
+---
+
 ## 2026-08-27 (post-review) — A pre-registered acceptance criterion that no input could fail, and a prompt describing the wrong object
 
 - **Area:** the certification standard's limb 7 (passive self-alignment), the status of
