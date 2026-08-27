@@ -76,6 +76,19 @@ ANALYSIS_PROTOCOL: dict[str, str] = {
         "the length distribution by construction, so the overlap region is a non-random subset of "
         "both arms and the restricted contrast generalises only to lengths both arms reach."
     ),
+    "signal_decomposition": (
+        "Pre-registered secondary analysis (DSE-046): handoffs are split on CPVI at the "
+        "**within-condition** median (low = cpvi <= median) and crossed with realised progress, "
+        "giving a 2x2 per condition. Two rates over that condition's handoffs are reported with "
+        "episode-cluster bootstrap intervals - the absent-signal rate (low CPVI and no progress: "
+        "the sender failed to encode) and the unused-signal rate (high CPVI and no progress: the "
+        "information was there and the receiver did not act). They are an additive decomposition "
+        "of the condition's no-progress rate, which is what separates the two failures a single "
+        "correlational number conflates (Eccles et al. 2019, positive signalling vs positive "
+        "listening). The median split is within condition so it is not a restatement of the "
+        "condition effect, and it is fixed at the observed sample rather than recomputed inside "
+        "the bootstrap: the interval covers the rates *given* the pre-registered split rule."
+    ),
     "H3": "Twin agreement (DSE-022): retrospective-vs-prospective correlation and Bland-Altman.",
     "H4": "Proxy tracking (DSE-022): rank correlation and AUROC of each runtime statistic vs CPVI.",
     "seed_sensitivity": (

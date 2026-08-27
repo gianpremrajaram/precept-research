@@ -69,3 +69,38 @@ def ci_plot(
         fig.savefig(path, bbox_inches="tight")
         plt.close(fig)
     return path
+
+
+def series_plot(
+    labels: list[str],
+    series: dict[str, tuple[list[float], list[tuple[float, float]]]],
+    *,
+    ylabel: str,
+    title: str,
+    path: Path,
+) -> Path | None:
+    """Several named interval series on one axis (e.g. the two DSE-046 rates across C0-C4).
+
+    Same house style and same no-op-without-viz contract as :func:`ci_plot`; the only difference is
+    that the rates being compared belong on one axis, because the question is how they move
+    *relative to each other* across the conditions.
+    """
+    plt = _pyplot()
+    if plt is None:
+        return None
+    x = list(range(len(labels)))
+    with plt.rc_context(_RC):
+        fig, ax = plt.subplots()
+        for name, (means, cis) in series.items():
+            lower = [m - lo for m, (lo, _hi) in zip(means, cis, strict=True)]
+            upper = [hi - m for m, (_lo, hi) in zip(means, cis, strict=True)]
+            ax.errorbar(x, means, yerr=[lower, upper], marker="o", capsize=4, label=name)
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels)
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.legend()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(path, bbox_inches="tight")
+        plt.close(fig)
+    return path

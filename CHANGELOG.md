@@ -8,6 +8,101 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
 ## [Unreleased]
 
 ### Added
+- **RQ3a localisation, baselines and the judge-agreement audit (`experiments/rq3a.py`, DSE-024).**
+  The H5 analysis: does boundary CPVI localise the responsible step in real multi-agent traces
+  better than cheap surface baselines and the published Who&When attribution methods? Consumes the
+  DSE-041 loaders and the DSE-042 replay labels; runs with no served model, because at corpus scale
+  the judge calls are a budgeted experiment.
+  - **`LocalisationStep` / `localisation_steps`.** The six-field scoring view (`trace_id`, `step`,
+    `agent_name`, `observation`, `message`, `is_handoff`). `annotations` is **absent from the type**,
+    the same structural guard as `ReplayStep`: the mistake step and agent are what methods are
+    scored *against*, so no scoring path may reach them. They enter only via `trace_targets`, on the
+    evaluator's side. `handoffs_only=True` filters to inter-agent boundaries **at scoring time** -
+    the intra-agent turns stay in the loaded dataset, where dropping them would move the base rate.
+  - **Orientation convention, applied once.** Every method emits a **risk** where higher = more
+    suspect. CPVI is information, so its risk is the negation; the transfer regime multiplies by the
+    calibrated orientation from `StatisticCalibration` and **refuses to run without one** - guessing
+    that sign silently inverts every localisation number.
+  - **`MethodScores` (one type for every method).** Baselines, judges and both CPVI regimes share
+    it, so the comparison table has one shape and a method that could not run **keeps its row** with
+    `status` ∈ {`ok`, `unavailable`, `not_applicable`} and a `reason`. A table cell reads
+    "unavailable - no frozen simulator statistic", never `0.0` and never a dropped row.
+  - **Two CPVI regimes, both reported.** `transfer_scores` loads a frozen simulator statistic by key
+    (`load_statistic`) and is `unavailable` while the arena track has not produced one - the honest
+    state today, and the reason a stand-in probe was **not** fitted. `refit_scores` refits on the
+    logs, cross-fit **grouped by `trace_id`** so no trace straddles a fold, with Y from the DSE-042
+    replay labels and never from the annotation. Single-class labels (Who&When is 184/184 failures)
+    and a single trace both return `not_applicable` rather than an error or a number.
+  - **Baselines.** `schema_validity_scores` (empty or bracket-unbalanced emission; the cheapest
+    check a practitioner already has) and `cosine_scores` (cosine(observation, message) - a message
+    that restates the state is suspect; probe-free, so it answers the "artefact of the probe"
+    objection the way `CosineStatistic` does at runtime).
+  - **The three published Who&When procedures, re-implemented (`judge_all_at_once`,
+    `judge_binary_search`, `judge_step_by_step`).** The procedure lives in the module and the
+    `JudgeBackend` ABC only answers - three narrow questions (`select_step`, `contains_error`,
+    `is_error`), so no answer parsing leaks into the analysis. `None` is a first-class return: the
+    judge failed or refused, which is recorded as an **abstention with an all-zero, unrankable
+    trace**, never a fallback to the annotation. Binary search costs ceil(log2 n) calls, step-by-step
+    one per step to the hit; both counts reach the manifest.
+  - **`JudgeIdentity`.** The published baselines were run against a hosted frontier annotator and
+    every call here is local or on the Myriad allocation, so the model name, revision and decoding
+    ride the result together with an explicit statement that these are an **open-weight
+    re-implementation and not comparable to the published figures**.
+  - **Metrics and the tie policy.** Step accuracy, agent accuracy, top-*k* (default 3) and MRR, each
+    a **per-trace** value with a trace bootstrap - steps inside a trace share a transcript, so an
+    iid step resample would read an interval far narrower than the data supports. Ranking is by
+    descending risk with **average ranks for ties**, so a method that scores everything identically
+    cannot win by input order; the policy string is carried in the result and the manifest.
+    `n_traces_target_off_boundary` counts traces whose annotated step is not a scored handoff, so a
+    bookkeeping exclusion never reads as a miss.
+  - **MAST arm (`mast_category`).** MAST publishes each trace as one unsegmented transcript, so it
+    has no observation/message split: **CPVI is undefined there, not small**, and the result carries
+    that as `cpvi_status`/`cpvi_reason` rather than leaving an empty cell to interpret. What it does
+    supply is the only genuinely two-class label in the RQ3a substrate, so the arm reports the
+    cross-fit **information in bits** that the trace text carries about the inter-agent-misalignment
+    family (modes `2.x`), one trace per fold group, with an interval - reported apart from the
+    localisation table and never pooled with it.
+  - **`judge_agreement` / `AgreementAudit`.** Cohen's kappa between the judge's top-ranked agent and
+    the corpus's **existing** annotation on a seeded, recorded sample. Named for what it is: a
+    judge-validity check, **not** a newly collected human double-annotation study - a genuine one
+    (two raters, frozen rubric, adjudication) remains outstanding and is not claimed.
+  - **`analyse_rq3a` / `results_table` / `write_rq3a` / `manifest_metrics`.** The driver runs every
+    method on one corpus; an absent judge, absent replay labels or absent MAST traces each leave a
+    visible status rather than silently changing what the table compares. The RQ3a block goes into
+    `RunManifest.metrics` (statuses, unavailability reasons, judge identity, tie policy) rather than
+    widening the manifest schema.
+  - **Tests.** 25 offline unit tests (the annotation-blindness guard, the tie policy, planted-step
+    recovery for all three judge procedures, abstention with no annotation fallback, both regime
+    refusals, the MAST arm) plus an integration test that chains corpus JSON on disk →
+    `load_traceelephant` → `label_by_replay` → `analyse_rq3a` → comparison table.
+- **Absent-versus-unused signal decomposition (`experiments/rq1.py`, DSE-046).** The SocialJax
+  replacement, on data already produced: Eccles et al. (2019) separate a sender that fails to encode
+  from a receiver that fails to act, and one CPVI-outcome correlation conflates them.
+  - **`signal_decomposition` / `SignalDecomposition`.** Per condition, handoffs are split at that
+    condition's **own median** CPVI (ties go low, so the rule is deterministic) and crossed with
+    realised `y_binary_progress`. The within-condition split is what stops the decomposition from
+    restating the condition effect a pooled split would have baked in.
+  - **Two named rates, over all of the condition's handoffs.** `absent_signal_rate` (low CPVI ∧ no
+    progress) and `unused_signal_rate` (high CPVI ∧ no progress) **sum to the condition's
+    no-progress rate** - an additive decomposition rather than two conditionals, one of which would
+    be one minus the other. Both carry episode-cluster bootstrap intervals; the 2×2 counts are
+    persisted so any other conditional is recoverable without re-running the analysis.
+  - **The median is fixed at the observed sample, not re-picked inside the bootstrap**, so the
+    interval covers the rates *given* the pre-registered split rule; that scope is stated in the
+    protocol entry rather than left for a reader to infer.
+  - **Public, not a private helper.** `scores.parquet` persists per-handoff CPVI, so the
+    decomposition can be recomputed from a frozen result without re-fitting probes (a refit would
+    move the scores under it).
+  - **`analysis/figures.series_plot`.** One new house-style figure primitive - several named
+    interval series on one axis - because the question is how the two rates move *relative to each
+    other* across C0→C4. Same no-op-without-`viz` contract as `ci_plot`.
+  - **`ANALYSIS_PROTOCOL["signal_decomposition"]` and PREREGISTRATION §8.** Declared 2026-08-27,
+    **before the rung-2 re-gate returns**, which is what makes it pre-registered rather than chosen
+    after the fact, and declared as **secondary and descriptive**: at the sweep's episodes per
+    condition the intervals are wide, so the rates are a mechanism description, never a significance
+    claim and never a rescue of a null on the primary gradient.
+  - **Tests.** Planted absent/unused populations recovered exactly, the tie rule pinned, and the
+    2×2 shown to partition every condition's handoffs in the full `analyse_rq1` path.
 - **Counterfactual-replay outcome labeller for real logs (`experiments/rq3a_replay.py`, DSE-042).**
   The interventional outcome the RQ3a arm needs: re-run a system from step *t* with that step's
   output substituted, and record whether the trace outcome changes. Load-bearing rather than an

@@ -41,7 +41,7 @@ import statsmodels.formula.api as smf
 from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field
 
-from preceptx.analysis.figures import ci_plot
+from preceptx.analysis.figures import ci_plot, series_plot
 from preceptx.analysis.stats import (
     AnalysisProvenance,
     OverlapRestrictedContrast,
@@ -209,6 +209,37 @@ class ShuffledMessageAudit(BaseModel):
     p_value: float  # (1 + #{null >= real}) / (n_perm + 1)
 
 
+class SignalDecomposition(BaseModel):
+    """Which failure a condition is having: the sender not encoding, or the receiver not acting.
+
+    Eccles et al. (2019) separate positive *signalling* from positive *listening*; a single
+    CPVI-outcome correlation conflates them. Splitting a condition's handoffs at its own median
+    CPVI and crossing that with realised progress separates them on data already produced (DSE-046,
+    the SocialJax replacement).
+
+    ``absent_signal_rate`` and ``unused_signal_rate`` are rates over *all* of the condition's
+    handoffs, so they sum to its no-progress rate - an additive decomposition rather than two
+    conditionals, one of which would be one minus the other. The 2x2 counts are carried so any
+    other conditional can be recovered without re-running the analysis.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    condition: str
+    n_handoffs: int
+    # The split threshold, within condition: low = cpvi <= median. Ties go low, which keeps the
+    # rule deterministic; with heavy ties the two cells are unequal, which the counts expose.
+    median_cpvi: float
+    low_cpvi_no_progress: int  # absent signal: nothing was encoded, and the step went nowhere
+    low_cpvi_progress: int  # progress without information - the receiver did not need the message
+    high_cpvi_no_progress: int  # unused signal: the information was there and was not acted on
+    high_cpvi_progress: int  # the intended cell
+    absent_signal_rate: float
+    absent_signal_ci: tuple[float, float]
+    unused_signal_rate: float
+    unused_signal_ci: tuple[float, float]
+
+
 class RQ1Result(BaseModel):
     """The full RQ1 analysis, ready to persist and to drive the figures/table."""
 
@@ -224,6 +255,7 @@ class RQ1Result(BaseModel):
     selectivity: float  # pooled mean CPVI - control CPVI
     partial_spearman_length: float  # CPVI vs progress, message token length partialled out
     length_matched: list[LengthMatchedContrast]  # the overlap-restricted control (DSE-044)
+    signal_decomposition: list[SignalDecomposition]  # DSE-046 secondary analysis
     seed_sensitivity: SeedSensitivity
     shuffled_message_audit: ShuffledMessageAudit | None = None  # RD-15 manipulation check
     figures: dict[str, str] = Field(default_factory=dict)
@@ -321,6 +353,58 @@ def _condition_summary(
         selectivity=float(cpvi_c.mean() - control_scores[mask].mean()),
         mean_cpvi_sd=float(cpvi_sd[mask].mean()),
     )
+
+
+def signal_decomposition(
+    records: list[HandoffRecord],
+    cpvi_scores: FloatArray,
+    y: IntArray,
+    cfg: RQ1Config | None = None,
+) -> list[SignalDecomposition]:
+    """The per-condition 2x2 with episode-cluster intervals on the two named rates (DSE-046).
+
+    The median is taken **within** condition (the pre-registered rule): a pooled split would put
+    the low-CPVI cell wherever the condition effect already put it, so the decomposition would
+    restate the gradient instead of decomposing it. It is computed once on the observed sample and
+    held fixed inside the bootstrap - the interval covers the rates given that split rule, not the
+    extra variation of re-picking the threshold on every draw.
+
+    Public because ``scores.parquet`` persists per-handoff CPVI: the decomposition can be recomputed
+    from a frozen result without re-fitting probes, which would move the scores under it.
+    """
+    cfg = cfg or RQ1Config()
+    conditions = np.array([r.condition for r in records])
+    episodes = np.array([r.episode_id for r in records])
+    out: list[SignalDecomposition] = []
+    for cond in [c for c in CONDITION_ORDER if (conditions == c).any()]:
+        mask = conditions == cond
+        cpvi_c = cpvi_scores[mask]
+        fail = y[mask] == 0
+        median = float(np.median(cpvi_c))
+        low = cpvi_c <= median
+        absent = (low & fail).astype(np.float64)
+        unused = (~low & fail).astype(np.float64)
+        groups_c = np.unique(episodes[mask], return_inverse=True)[1].astype(int)
+        out.append(
+            SignalDecomposition(
+                condition=cond,
+                n_handoffs=int(mask.sum()),
+                median_cpvi=median,
+                low_cpvi_no_progress=int((low & fail).sum()),
+                low_cpvi_progress=int((low & ~fail).sum()),
+                high_cpvi_no_progress=int((~low & fail).sum()),
+                high_cpvi_progress=int((~low & ~fail).sum()),
+                absent_signal_rate=float(absent.mean()),
+                absent_signal_ci=cluster_bootstrap_ci(
+                    absent, groups_c, n_boot=cfg.n_boot, alpha=cfg.alpha
+                ),
+                unused_signal_rate=float(unused.mean()),
+                unused_signal_ci=cluster_bootstrap_ci(
+                    unused, groups_c, n_boot=cfg.n_boot, alpha=cfg.alpha
+                ),
+            )
+        )
+    return out
 
 
 def _delta_ci(a: FloatArray, b: FloatArray, cfg: RQ1Config) -> tuple[float, float]:
@@ -710,6 +794,7 @@ def analyse_rq1(
         selectivity=float(cpvi_scores.mean() - control_scores.mean()),
         partial_spearman_length=partial_spearman(cpvi_scores, y.astype(np.float64), msg_tokens),
         length_matched=_length_matched(ep_med_df, present, cfg),
+        signal_decomposition=signal_decomposition(records, cpvi_scores, y, cfg),
         seed_sensitivity=seed_sensitivity(seeds_metric),
         shuffled_message_audit=_shuffle_audit(e_s, e_m, y, groups, records, cpvi_scores, cfg),
     )
@@ -795,7 +880,28 @@ def write_rq1(result: RQ1Result, dir: Path | str, *, scores: pd.DataFrame) -> Pa
         title=f"RQ1: CPVI vs condition (selectivity {result.selectivity:+.3f} bits)",
         path=dir / "cpvi_vs_condition.png",
     )
+    dec = result.signal_decomposition
+    dec_table = pd.DataFrame([d.model_dump() for d in dec])
+    dec_table.to_csv(dir / "signal_decomposition.csv", index=False)
+    dec_out = series_plot(
+        [d.condition for d in dec],
+        {
+            "absent signal (low CPVI, no progress)": (
+                [d.absent_signal_rate for d in dec],
+                [d.absent_signal_ci for d in dec],
+            ),
+            "unused signal (high CPVI, no progress)": (
+                [d.unused_signal_rate for d in dec],
+                [d.unused_signal_ci for d in dec],
+            ),
+        },
+        ylabel="share of handoffs",
+        title="RQ1 secondary: absent vs unused signal",
+        path=dir / "signal_decomposition.png",
+    )
     if out is not None and cpvi_out is not None:  # both render or neither (viz extra present)
         result.figures = {"outcome": str(out), "cpvi": str(cpvi_out)}
+        if dec_out is not None:
+            result.figures["signal_decomposition"] = str(dec_out)
         (dir / "rq1.json").write_text(result.model_dump_json(indent=2))  # rewrite with figure paths
     return dir

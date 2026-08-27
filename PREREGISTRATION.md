@@ -439,6 +439,19 @@ retries stay greedy and the content is what changes.
   the protocol also reports the **partial Spearman** of per-handoff CPVI with progress given
   delivered-message token length, and the episode-level mediation reports path *b* both uncontrolled
   and with episode-mean message length as a covariate.
+- **Secondary analysis — absent vs unused signal (declared 2026-08-27, before the rung-2 re-gate
+  returns).** Eccles et al. (2019) separate a sender that fails to encode from a receiver that
+  fails to act; one CPVI-outcome correlation conflates them. Per condition, handoffs are split at
+  that condition's **own median** CPVI (low = `cpvi <= median`, ties low) and crossed with realised
+  `y_binary_progress`, giving a 2×2. Two rates over the condition's handoffs are reported with
+  episode-cluster bootstrap intervals: the **absent-signal rate** (low CPVI ∧ no progress) and the
+  **unused-signal rate** (high CPVI ∧ no progress). They sum to the condition's no-progress rate.
+  The split is within condition so it cannot restate the condition effect, and the threshold is
+  fixed at the observed sample rather than re-picked inside the bootstrap. This is **secondary and
+  descriptive**: at the sweep's episodes-per-condition the intervals are wide, so the two rates are
+  reported as a mechanism description, never as a significance claim, and never as a rescue of a
+  null on the primary gradient. Declared here before the successor task's first re-gate result
+  exists, which is what makes it pre-registered rather than chosen after the fact.
 - **Reproducibility claim.** Seed-pinned, revision-pinned, low-variance. **Exact reproducibility of
   LLM runs is never claimed.**
 
