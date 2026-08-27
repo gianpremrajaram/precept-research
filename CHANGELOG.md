@@ -7,6 +7,61 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
 
 ## [Unreleased]
 
+### Added
+- **Counterfactual-replay outcome labeller for real logs (`experiments/rq3a_replay.py`, DSE-042).**
+  The interventional outcome the RQ3a arm needs: re-run a system from step *t* with that step's
+  output substituted, and record whether the trace outcome changes. Load-bearing rather than an
+  upgrade path - TraceElephant is 220/220 failures at trace level and Who&When 184/184, so Y1
+  (trace success) is degenerate on both per-step corpora and Y2 (annotation-as-Y) is forbidden for
+  circularity. Replay is the only route to a within-trace two-class target on a corpus that also
+  supplies the per-step conditioning state.
+  - **`ReplayStep` / `replay_steps`.** A four-field view (`trace_id`, `step`, `observation`,
+    `message`) built from `LogHandoffRecord`. `annotations` is **absent from the type**, not merely
+    unused, so no call path inside the labeller can reach it - the same structural discipline as
+    `measure.twin.prospective_twin`'s inability to reach Y. The labeller's output is the target the
+    localisation analysis scores the annotations *against*; a labeller that could read them would
+    be scoring a target against itself.
+  - **`ReplayBudget` / `_Meter`.** The cap is counted in **model calls and elapsed seconds, never
+    currency** - every call this repo makes is local or on the Myriad allocation, so a monetary
+    figure would be an invented number dressed as a measurement. `_Meter.may_call()` is consulted
+    **immediately before every backend invocation**, not applied to the forecast: a projection is a
+    prediction, a mis-wired loop is what actually burns an allocation. A replay may cost several
+    calls, so the realised count can exceed the cap by at most one replay's worth; the alternative
+    (reserving a worst-case band up front) would refuse runs that in fact fit.
+  - **`ReplayPlan` / `project` / `ReplayProjection`.** `project` takes **no backend argument**, so
+    "dry run issues no calls" is a property of the signature rather than of a flag someone must
+    remember to pass. `calls_per_replay` is a declared **(min, max) band** because one replay is not
+    one call - an agent run can branch, retry or invoke tools - and refusal is decided on the
+    projected **minimum**: if even the cheapest execution overruns, the run is refused before
+    anything is sent rather than killed part-way with a half-labelled corpus to explain.
+    `estimated_gpu_seconds` is advisory, `None` unless a `seconds_per_call` calibration is declared,
+    and always carries its `calibration_source`.
+  - **`stratified_sample` / `StratifiedSample`.** Proportional allocation over the trace-level
+    outcome with largest-remainder rounding, so the strata sum to exactly *n*. **`None` is a stratum
+    in its own right** - it is 176 of TraceElephant's 220 traces, so folding it into either class
+    would silently reweight the corpus. The rule, the seed and the per-stratum allocation travel
+    with the sample and reach the manifest.
+  - **`label_by_replay` / `StepLabel`.** Majority vote over `n_replays`; strict majority for
+    `failed`, so a tie reads `False` and scores 0.5 agreement - below any sensible floor, therefore
+    **flagged rather than silently resolved**. Steps below `agreement_floor` are **flagged, never
+    dropped**: a removed step changes the base rate of every count downstream, and the disagreement
+    is itself the signal that the step's outcome is not well defined. Steps the budget never reached
+    are emitted with `outcome_failed=None` and `budget_exhausted=True` rather than omitted.
+  - **`ReplayBackend` (ABC) / `ReplayOutcome`.** The seam that keeps the labelling logic testable
+    today while executing TraceElephant's environments stays a budgeted experiment (out of scope
+    here). The backend reports its own `model_calls` so the meter counts actual spend.
+  - **`trace_success_labels`.** The cheap label, computed for every trace unconditionally, so the
+    refit arm survives replay being cut for budget.
+  - **`manifest_metrics` / `render_projection`.** The replay block goes into `RunManifest.metrics`
+    rather than becoming new manifest fields: the manifest schema is this repo's stable
+    reproducibility contract, and a replay run is one experiment's metadata, not a new mandatory
+    field on every run in the project. `render_projection` is the human-readable dry run - the thing
+    a person reads before spending an allocation.
+  - **Tests.** 35 offline unit tests plus a two-test integration pipeline that starts from corpus
+    JSON on disk (so the loader's output shape and the labeller's input shape are checked against
+    each other, not against a shared assumption) and ends in a JSON-serialisable manifest block.
+    100% line coverage on the module. Nothing touches the network or a served model.
+
 ### Changed
 - **The task is now the SUCCESSOR convex-bar channel benchmark (DSE-058).** Result-affecting: it
   re-keys every dataset. Adopted after the T-load benchmark was falsified as a rotation-necessity
