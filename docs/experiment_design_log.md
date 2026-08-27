@@ -15,6 +15,138 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
+## 2026-08-26 (later) — The channel was degrading a wrong instruction, not information
+
+- **Area:** the identification of RQ1 itself — what `apply_channel` actually manipulates — plus the
+  construct boundary of G3 and the task validity of both difficulty cells (E3 attempt 2, DSE-019).
+- **Status:** pre-freeze. F0 is still open. This is the fallback ladder firing, declared before any
+  further compute is spent.
+
+### Trigger
+
+E3 attempt 2 — the re-gate on prompt v5 and seeds 0–9, `eddd19c654515bb2`, 80 episodes on Myriad
+bf16 — returned `fallback`. G1 FAIL 0.300, **G2 FAIL −0.200 with the success gap sign-inverted**,
+G3 PASS 0.999. The retune was spent; under §6 there is no attempt 3, so the question was not "what
+lever next" but "what did this instrument actually measure".
+
+### Finding
+
+**The degraded channel beat the clean one, and the reason is that A's clean message is confidently
+wrong.**
+
+The T's y-extent never exceeds 1.553** at any orientation in the circle (minimum 1.300 at 0°,
+maximum 1.553 at −146.8°), and the easy slit is **1.8**. The load therefore clears the gap head-on
+**from every possible angle**, with at least 0.247 of clearance at its worst orientation — so on easy,
+rotation is not merely unused, it is *geometrically incapable of being necessary*. This is the
+documented design intent (`arena.py`: "easy 1.8 (head-on, trivial)"), not an accident of one starting
+pose. Simulated over the ten jittered pilot seeds, a rotation-free policy — close the y gap, then
+push east — solves **10/10 within budget** (`scripts/check_rotation_need.py`). At medium (1.2) and
+hard (1.1) the same policy solves **0/10**: those slits are below the extent at every angle and do
+require the threading maneuver.
+
+Against that, A's C0 message (95 tokens, mean) reports the
+true pose and concludes *"it may not fit through the slit unless rotated … Rotate the load so it is
+aligned with the slit before pushing east."* Every number in that message is true — which is exactly
+why G3 scores 0.999 — and the inference is false. B complies, and the per-action rotation quantum is
+coarse (measured mean 31.3°, modal 33.7°, damped to 11–19° on wall contact), so "align it vertically"
+is not a command this action set can execute cleanly. B hunts for an angle until the budget runs out.
+
+Truncate that message to 8 tokens (C1) and the instruction never arrives: **all seven C1-easy
+successes are pure `E,E,E,…`, 8–13 consecutive pushes — the oracle optimum.** 7/10 against C0's 3/10.
+Corrupt it (C4, 0.4 dropout, 95 → 56 tokens) and the surviving imperative fragments still point east:
+7/10 again.
+
+**C3 is the control that fixes the direction.** It is the only condition that degrades what B
+*observes* rather than what A *says*, and it is the only degradation that hurts — easy success 1/10,
+worst stuck rate (0.466), lowest progress (0.073), lowest `y_binary_progress` (0.275) in the sweep.
+The same nominal degradation carries **opposite signs depending on which channel it lands on**. Two
+rival explanations die on that contrast: it is not noise-breaks-cycles (C1's truncation is
+deterministic and helps as much as C4's stochastic dropout), and it is not terseness (within C0-easy,
+length does not predict success — successes average 99.7 tokens against failures' 95.6).
+
+Two further defects surfaced, both prior to the channel question:
+
+- **Easy cannot require rotation**, by the geometry above; a rotation-free policy solves 10/10
+  jittered seeds. The cell tests whether B can avoid being talked out of the obvious, not whether the
+  pair can coordinate. The seeds C1-easy succeeded on are *exactly* the pure-push-east success set.
+- **Medium was never run.** The pilot cell is easy and hard, and medium is the only rung that both
+  requires rotation and is less extreme than the hard cell nobody solved.
+- **Hard is solved by nobody — 0/60 episodes** across both attempts, all four conditions, both prompt
+  versions. The hard half contributes no outcome variance at all.
+
+And the retune's own result is informative: v5 hit its target and missed the outcome. C0-easy
+terminal cycling fell **0.667 → 0.143** while success went 0.4 → 0.3. Breaking the fixed point was
+necessary and not sufficient, because the erroneous instruction is regenerated fresh every step.
+
+### Impact (had it not been caught)
+
+The main sweep would have run on a task whose easy cell needs no coordination and whose hard cell is
+unreachable, and would have reported a **negative** information gradient as the headline RQ1 result.
+Every downstream arm inherits it: RQ3b would have calibrated an outcome-thresholded gate against an
+inverted outcome, and the gate would have learned to block the *helpful* (degraded) messages. Worse,
+the result would have looked clean — G3 at 0.999, a well-behaved estimator, a positive CPVI gap and
+a tidy control task all point at a healthy instrument.
+
+### Risk reduced
+
+The largest single threat to this dissertation: publishing a confounded RQ1 whose sign is an artefact
+of the task, defended by gate numbers that could not detect the artefact. It also removes the
+possibility of calibrating RQ3b on an inverted target, which would have been undetectable after the
+fact and would have invalidated the causal arm rather than merely weakening it.
+
+### Correction path
+
+Rejected: a third retune (forbidden by §6, and the mechanism is not a tuning problem). Rejected:
+jumping straight to rung 1 alone — RQ3a needs no GPU, so treating it as a *replacement* for the arena
+track spends nothing and gains nothing. Rejected: changing *Y* to rescue the gate — the primary label
+`y_binary_progress` shows the same inversion (C1 0.932 > C4 0.479 > C0 0.308 > C3 0.275), so the
+defect is in the task, not the label.
+
+Taken: **rungs 1 and 2 in parallel**, because they do not compete for a resource.
+
+### The fix
+
+1. **Rung 1 — RQ3a elevated and started now** (DSE-041, DSE-042). CPU and network only, so it costs
+   the arena track nothing and is the insurance that can carry the thesis alone.
+2. **Rung 2 — one declared task-geometry change, then one re-gate.** The acceptance criterion is
+   checkable on CPU before any GPU time: **the A\* optimum must contain ≥ 1 rotation and finish
+   strictly inside budget, for every jittered seed, at every difficulty.** That makes easy a genuine
+   coordination test and hard reachable in the same change, and it is verifiable by the oracle that
+   found the defect.
+3. **RQ3b deferred behind rung 2**, explicitly, for the calibration reason above.
+4. **G3 gains a correctness limb** at F0, alongside its grounding limb — see takeaway 3.
+
+### Result of the fix
+
+Pending. Rung 2's re-gate has not run; the acceptance criterion is stated in advance and is
+falsifiable without a GPU, which is the point.
+
+### So what / takeaways
+
+1. **V-usable information is sign-blind, and this run separates the signs.** CPVI answers *how much
+   does the message reduce a V-bounded predictor's uncertainty about Y*, not *does acting on it help*.
+   Here the clean channel carries **+0.100 bits more** usable information **and less than half the
+   success rate**, measured on the same 1,925 handoffs by the same estimator, with C3 fixing the
+   direction. A message can be more informative and more harmful at once. This is the project's
+   sharpest result to date and it is on the dissertation's own topic.
+2. **It gives the circularity guard empirical teeth.** §6 already bans calibrating the runtime
+   statistic against CPVI, on principle. This shows what the ban buys: a CPVI-calibrated gate would
+   have scored C0's messages highest and promoted exactly the messages that caused the failures.
+   `CosineStatistic`'s probe-independence and outcome-only calibration are now motivated by data.
+3. **Groundedness is not correctness, and G3 cannot tell them apart.** 0.999 on a corpus whose modal
+   inference was wrong. A check verifying message numbers against true state is by construction blind
+   to a false conclusion drawn from true numbers — and this generalises to any faithfulness-style
+   check on inter-agent messages.
+4. **Instruction-following dominates self-observation.** v5 showed B its own failed rotations and
+   their zero gain; B kept rotating while A kept instructing. Any gate that hopes to change behaviour
+   by re-prompting has to reckon with that ordering.
+5. **The instrument being wrong did not invalidate the findings.** 1–4 rest on the run's *internal*
+   contrasts — C3 against C1/C4, CPVI against outcome, oracle against observed plan — so they survive
+   the task-validity defect that rung 2 exists to fix. Designing the pilot so its controls are
+   internal is what made a failed gate still worth something.
+
+---
+
 ## 2026-08-26 — The retune: a greedy fixed point, not a capability ceiling
 
 - **Area:** the task's action loop and prompt surface — the mechanism behind the G1 failure at the

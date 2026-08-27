@@ -204,6 +204,35 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
   produces one short line; it is fixed identically. Reproduced and verified before and after.
 
 ### Added
+- **`scripts/diagnose_cycles.py` — terminal limit-cycle and confound diagnostic for a pilot dataset.**
+  Written to answer a question `pilot.md` does not: did the v5 retune reduce the pathology it
+  targeted? Takes one or more dataset directories and prints them side by side, so attempt 1 and
+  attempt 2 are compared on one table rather than by eye across two reports.
+  - **Cycle detection** walks back from the last action and measures the trailing period-1 or
+    period-2 repeat. `MIN_CYCLE = 4` repeats, not 3: three would fire on `ROT+,ROT-,ROT+`, which is a
+    plausible two-step correction rather than a policy that has stopped moving. A period-2 run of one
+    repeated action is not double-counted as both periods.
+  - **Per-condition step-level table** (`stuck_rate`, `mean_progress`, `y_binary_rate`) is the part
+    that identifies a *confound* rather than a pathology: if degradation is acting as something other
+    than information loss, the mangled conditions get less stuck and make more progress than the
+    clean one. It does. C3, which degrades the observation rather than the message, moves the other
+    way — that contrast is what the diagnostic exists to expose.
+  - Reproduces the attempt-1 finding it was validated against (62 % of failed episodes ending in a
+    cycle) and is the source of the E3 attempt-2 numbers in `docs/EXPERIMENTS.md`. Its output belongs
+    in a results chapter, which is why it is a committed script and not a shell one-liner.
+- **`scripts/check_rotation_need.py` — the rung-2 acceptance check, on CPU with no model in the loop.**
+  PREREGISTRATION §6 fixes the rung-2 criterion as "the A\* optimum must contain ≥ 1 rotation and
+  finish strictly inside budget, for every jittered seed at every difficulty"; this decides it in
+  seconds, before any GPU time is spent.
+  - **The geometric half** measures the T outline's y-extent over a full turn: **1.300 minimum at 0°,
+    1.553 maximum at −146.8°**. A slit wider than 1.553 admits the load head-on whatever its
+    orientation, which is what makes rotation *incapable of being necessary* rather than merely
+    unused. Easy's 1.8 is such a slit; medium's 1.2 and hard's 1.1 are not.
+  - **The behavioural half** runs a rotation-free policy (close the y gap to within the goal radius,
+    then push east) against the real physics on each jittered seed. Easy: **10/10 solved**.
+    Medium and hard: **0/10**.
+  - Exits non-zero when any difficulty fails the criterion, so it can gate a re-gate submission.
+    It currently returns REJECTED on easy, which is the defect rung 2 exists to close.
 - **A test tier for the Myriad scripts** (`tests/unit/scripts/test_myriad_container.py`, DSE-053).
   Three tickets of container plumbing had been verified only by out-of-band stub harnesses, so
   nothing in the repo would have caught a regression in it. The suite runs the real scripts against

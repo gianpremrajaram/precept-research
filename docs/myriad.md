@@ -237,7 +237,9 @@ bash scripts/myriad/shell.sh -c 'pwd; git rev-parse --short HEAD; ldd --version 
 # 3. Login node: the plan hashes. These go through the container too — the CLI imports pandas and
 #    pyarrow, so even --dry-run cannot run on the bare node.
 bash scripts/myriad/shell.sh -c 'preceptx-pilot --dry-run --model qwen14b'
-#    expect: cells 40, calls 2040, dataset hash 1c994b87bbca8257
+#    expect: cells 80, calls 4080, dataset hash eddd19c654515bb2
+#    (attempt 1 was cells 40, calls 2040, hash 1c994b87bbca8257 - prompt v5 and seeds 0-9
+#     re-key the dataset, so attempt 2 cannot append to or resume attempt 1's data)
 
 #    The serve flag, without a GPU. `vllm serve --help` does NOT work here: building the parser
 #    instantiates VllmConfig's defaults, which raises "Failed to infer device type" on a login
@@ -253,8 +255,8 @@ print(\"structured_outputs_config: present\")"'
 qrsh -l gpu=1,h_rt=2:00:00,mem=4G -pe smp 8 -ac allow=L
 #    ... on the node (see the smoke recipe below)
 
-# 5. Batch: the real re-gate.
-qsub scripts/myriad/pilot.sh
+# 5. Batch: the real re-gate. ATTEMPT=2 is the one permitted retune (PREREGISTRATION SS6).
+qsub -v ATTEMPT=2 scripts/myriad/pilot.sh
 ```
 
 Step 2 is the cheapest possible failure: if the bind, the working directory, git or the wheels are
@@ -292,7 +294,7 @@ C4 is not optional: the pilot analysis contrasts a degraded condition against C0
 smoke runs its episodes and then fails in the report. The G1/G2/G3 numbers this produces are **not
 evidence** — two episodes only prove the analysis path executes. Artefacts land under
 `runs/smoke/05fcef471b8b9726…`, a different dataset hash from the re-gate's
-`1c994b87bbca8257`, so the smoke cannot mix with or resume the real run.
+`eddd19c654515bb2`, so the smoke cannot mix with or resume the real run.
 
 **No `-P <project>` anywhere.** The 25 Aug 2026 session confirmed `qrsh -l gpu=1 -ac allow=L`
 succeeds with no project code; the Free allocation is the default.
