@@ -17,7 +17,7 @@ directory, and there is nothing to mistake for a completed run.
 Deliberately NOT fingerprinted here: ``ScenarioJitter``, ``StepConfig``, ``OutcomeConfig`` and the
 per-difficulty step budgets. They are ``SweepConfig`` fields and are already inside ``sweep_hash``;
 hashing them twice would put one guarantee in two places to keep in step. Derived values
-(``load.HALF_H``, ``load.COG_Y``) are likewise omitted - they are pure functions of the T dimensions
+(``load.LOAD_COG_Y``) are likewise omitted - they are pure functions of the load dimensions
 that *are* hashed, so they cannot change independently.
 """
 
@@ -28,11 +28,11 @@ import json
 
 from pydantic import BaseModel, ConfigDict
 
-from preceptx.sim import arena, load, serialise
+from preceptx.sim import actions, arena, load, serialise
 
 # Bump to force a deliberate re-key when a change cannot be captured structurally - a behavioural
 # change in pymunk's stepping, say, that leaves every constant here identical.
-ENVIRONMENT_SCHEMA_VERSION = 1
+ENVIRONMENT_SCHEMA_VERSION = 2
 
 
 class SimulationFingerprint(BaseModel):
@@ -46,9 +46,15 @@ class SimulationFingerprint(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int
+    # The load's shape family, not a dimension: a 1.4x0.3 bar and a T whose bar is 1.4x0.3 are
+    # different worlds that could otherwise agree on every recorded number (DSE-058).
+    load_shape: str
     slit_widths: dict[str, float]
     arena: dict[str, float]
     load: dict[str, float]
+    # Action-model parameters that change outcomes without being arena or load dimensions - notably
+    # `hold_orientation`, which decides whether contact can rotate the load (DSE-058).
+    actions: dict[str, float]
     grid: dict[str, float]
 
     def digest(self) -> str:
@@ -67,6 +73,7 @@ def simulation_fingerprint() -> SimulationFingerprint:
     geometry = arena.ArenaGeometry().model_dump()
     return SimulationFingerprint(
         schema_version=ENVIRONMENT_SCHEMA_VERSION,
+        load_shape="bar",
         slit_widths={k: float(v) for k, v in arena.slit_widths().items()},
         arena={
             **{k: float(v) for k, v in geometry.items()},
@@ -76,10 +83,14 @@ def simulation_fingerprint() -> SimulationFingerprint:
             "wall_friction": arena.WALL_FRICTION,
         },
         load={
-            "thick": load.T_THICK,
-            "bar": load.T_BAR,
-            "stem": load.T_STEM,
+            "len": load.BAR_LEN,
+            "thick": load.BAR_THICK,
             "friction": load.T_FRICTION,
+        },
+        actions={
+            k: float(v)
+            for k, v in actions.StepConfig().model_dump().items()
+            if isinstance(v, (int, float, bool))
         },
         grid={k: float(v) for k, v in serialise.GridConfig().model_dump().items()},
     )

@@ -929,12 +929,30 @@ gate's arithmetic from what the run actually established:
 |---|---|---|
 | G1 at 3/10 | Wilson 95 % **[0.11, 0.60]** | still spans the 0.5 threshold — underpowered even at *n* = 10 |
 | C0 vs C4, easy, episode success (3/10 vs 7/10) | Fisher **p = 0.179** | the sign inversion that failed G2 is **not** statistically established |
-| C0 vs C4 handoff-level stuck rate (0.350 vs 0.205) | Fisher **p ≈ 10⁻⁷** nominal | the mechanism underneath it is not in doubt |
+| C0 vs C4 handoff-level stuck rate (0.350 vs 0.205) | episode-cluster **p = 0.085**, 95 % CI **[−0.005, +0.294]** | the difference is **not** established either |
 
-The stuck-rate test treats handoffs as independent when they cluster within episodes, so the nominal
-*p* overstates; the effect survives a cluster correction comfortably but the exact figure needs one.
-**The gate failed on an underpowered episode-level statistic while the mechanism beneath it is
-overwhelming** — which is why this entry ends in a design change rather than in a null.
+**Corrected 2026-08-27 (DSE-057).** This row previously read "Fisher *p* ≈ 10⁻⁷ nominal — the
+mechanism underneath it is not in doubt", followed by a sentence asserting that "the effect survives
+a cluster correction comfortably but the exact figure needs one". The figure has now been computed
+and it **contradicts** that assertion. Resampling episodes rather than handoffs (20 episodes per
+condition, 4 000 resamples, seed 0) gives:
+
+| Contrast (handoff stuck rate) | Difference | Episode-cluster 95 % CI | Permutation *p* |
+|---|---|---|---|
+| C0 − C1 | +0.119 | [−0.040, +0.281] | 0.165 |
+| C0 − C3 | −0.116 | [−0.264, +0.037] | 0.152 |
+| C0 − C4 | +0.145 | [−0.005, +0.294] | 0.085 |
+
+Every interval crosses zero. The nominal 10⁻⁷ was **entirely** an artefact of treating ~500
+clustered handoffs as independent when the design has only 20 episodes per condition. No statistical
+claim in this entry rests on the handoff-level contrasts any more.
+
+What survives is not statistical. **The C1-hard signature is categorical**: 10/10 failures are the
+literal action sequence `E,E,E,E,E,E`, with no test required. And the task-validity finding below is
+an *exhaustive search result*, not an estimate. **The gate failed on an underpowered statistic, and
+the reason to change the design is a proof about the task rather than a *p*-value** — which is why
+this entry still ends in a design change rather than in a null, but on different grounds than it
+originally claimed.
 
 #### What the retune did, measured
 
@@ -1001,15 +1019,116 @@ terseness (within C0-easy, message length does not predict success — the three
   the seeds C1-easy actually succeeded on — {1, 3, 5, 6, 7, 8, 9} — are **exactly** the seeds a pure
   push-east policy solves in simulation. Deprived of A's instruction, B converged on push-east and
   inherited its success set precisely.
-- **The pilot cell skipped the only difficulty that might have worked.** `_PILOT_DIFFICULTIES` is
-  easy and hard. **Medium was never run**, and medium (slit 1.2) is the one rung that both *requires*
-  rotation (0/10 rotation-free) and is less extreme than the hard cell nobody solved.
+- **Rotation is not necessary at *any* difficulty — the whole ladder, not just easy (DSE-057).**
+  This entry originally said medium "requires rotation (0/10 rotation-free)" and proposed running it.
+  That was inferred from a hand-written rotation-free policy failing, which proves nothing: a policy
+  that fails shows only that *that* policy fails. Replacing the policy with the A\* oracle restricted
+  to `N/S/E/W` and exhausting it gives the opposite answer. Over 10 jittered seeds × 3 difficulties,
+  **0/30 seeds meet the necessity criterion** — 28 admit a translation-only path to the goal inside
+  budget, and 2 have a full-action optimum containing no rotation at all. On the canonical pose the
+  translation-only optimum is **13 steps at medium (equal to the full-action optimum: rotation buys
+  nothing) and 14 at hard (against 13: rotation saves exactly one step)**.
+
+  The mechanism is the arena's own documented geometry, now followed to its conclusion. The internal
+  walls are `pymunk` segments of radius 0.05 — effectively planes with no depth — so the T never has
+  to fit through the gap all at once. The bar crosses at its 0.3 thickness, then the stem crosses at
+  its 1.0 length, each individually clearing a 1.1 slit. `sim/arena.py` states this outright ("the
+  TIGHTEST threadable slit is the shorter member = the stem = 1.0"); what had not been drawn from it
+  is that the staged crossing is a **translation** manoeuvre, so rotation is redundant everywhere.
+
+  This subsumes and outranks the easy-only defect. DSE-006 calls rotation through the slits "the
+  cognitive core of the task"; that core is absent from every rung of the shipped ladder, and no
+  choice of slit width restores it, because the band is bounded below by the shorter member however
+  the widths are set. It also explains the `ROT+,ROT-,ROT+,ROT-` oscillation that consumes up to
+  30 of 33 steps in the hard cell: the pair is hunting an angle that never needed finding.
+- **The pilot cell skipped medium**, which was proposed as the diagnostic rung. On the corrected
+  criterion it is not a rung worth running: it fails necessity exactly as easy and hard do.
 - **Hard is solved by nobody: 0/60 episodes across both attempts** (0/20 in attempt 1, 0/40 here),
   all four conditions, both prompt versions. The entire hard half of the sweep contributes no
   outcome variance, so G2's contrast rests on the easy cell alone.
 
 Neither cell is currently a coordination test. That is a task-validity defect discovered by running
 the instrument, and it is independent of — and prior to — the channel question.
+
+#### The headline methodological finding (dissertation-facing)
+
+*This subsection is written to be cited directly. It states the finding, its evidence, its scope and
+its limits, and it deliberately rests on nothing that a reviewer can contest as a statistic.*
+
+> **A coordination benchmark can appear to require a capability while its simulator admits
+> degenerate, policy-independent solutions that never exercise it — and when it does, the
+> information-theoretic read of the communication channel inverts. Restricted-action oracle checks
+> and collision-fidelity checks are therefore necessary before task success can be treated as
+> evidence about communication or coordination.**
+
+**The evidence is a proof and an observation, not a test.**
+
+1. **Exhaustive search (proof).** The task is built around threading a T-shaped load through narrow
+   slits; DSE-006 calls that rotation "the cognitive core of the task". Running the same A\* oracle
+   that certified the step budgets, but with the action set restricted to `N/S/E/W`, finds a
+   translation-only path to the goal at **every shipped difficulty**: easy in 7 steps (its
+   full-action optimum is itself rotation-free), medium in 13 (**equal** to the full-action optimum —
+   rotation buys nothing) and hard in 15 (against 13 — rotation saves one step). Stable at 4, 16 and
+   64 collision substeps. Rotation is never necessary; the cognitive core is absent from the whole
+   ladder.
+2. **Categorical observation.** Under the 8-token cap (C1) at hard, **10/10** failures are the
+   literal action sequence `E,E,E,E,E,E` — the cap deletes A's rotate instruction and B falls back to
+   pushing east. At easy the same deletion *raises* success to 7/10, and the seeds C1-easy succeeds
+   on — {1, 3, 5, 6, 7, 8, 9} — are **exactly** the seeds a pure push-east policy solves in
+   simulation. No test is involved in either statement.
+
+**Why the inversion follows.** A's message is grounded (G3 = 0.999) and *inferentially wrong*: it
+reports the true pose and concludes the load must be rotated before it can thread. B complies and
+spends its budget hunting an orientation that the coarse rotation quantum cannot hit and that was
+never required. Degrading the **message** (C1, C4) deletes the erroneous instruction and improves
+outcomes; degrading the **observation** (C3) removes true state and worsens them (1/10, stuck rate
+0.466). Same nominal degradation, opposite signs by channel — which is what identifies the mechanism
+as instruction content rather than noise.
+
+**What this finding does *not* claim.**
+
+- It does **not** claim the agents cannot rotate, or that this model tier is incapable. The task did
+  not ask for rotation, so the run contains no evidence either way.
+- It does **not** rest on the handoff-level statistics. Every episode-clustered contrast in this
+  entry crosses zero (see the correction above); the nominal *p* ≈ 10⁻⁷ was a clustering artefact.
+- It is a statement about **this simulator at its recorded, versioned settings**, not about
+  continuum physics. Feasibility verdicts here are properties of a discrete macro-action model with
+  a specified integrator.
+
+**Three distinct degeneracy mechanisms were found, and they generalise beyond this arena.** Each is
+a way a task can admit a solution that bypasses its stated cognitive core, and each needs a different
+check to detect:
+
+| # | Mechanism | Why a clearance heuristic misses it | Detected by |
+|---|---|---|---|
+| 1 | **Staged crossing.** Thin walls constrain an instantaneous cross-section, not a swept volume, so a non-convex load crosses one member at a time. | The load's collision-free configuration space through the gap is not characterised by a single bounding y-extent: the bar and stem can occupy different longitudinal positions relative to the wall, admitting paths a whole-outline clearance calculation excludes. | Restricted-action oracle, exhausted |
+| 2 | **Integration squeeze.** At coarse collision resolution a macro impulse can drive the load through an aperture narrower than its own outline before contact resolves. | It is not a geometric property at all — the verdict moves with the integrator. | Re-certification at higher `substeps`; verdict must be invariant |
+| 3 | **Passive self-alignment.** Macro impulses are applied at the COM, but contact torque at the aperture mouth rotates the load anyway, so it aligns itself without any rotate action. | "Translation-only in the action space" is not "rotation-free in the state space". | Restricted-action oracle *plus* inspection of the realised angle trajectory |
+
+Mechanism 2 is the one most likely to be reproduced elsewhere unnoticed: a candidate geometry was
+solvable at the shipped `substeps = 4` and unsolvable at 8. **A feasibility verdict that moves with
+the integrator cannot gate an experiment.** Every frozen E3 certificate was re-checked and is stable
+from 4 to 64, so no result already recorded is affected — but the default is not a certification
+standard, and `CERTIFICATION_STEP_CONFIG` (substeps = 64) now exists for that purpose.
+
+**Reusable prescription.** Before treating task success as evidence about communication or
+coordination: (a) run the oracle with the capability's actions removed and require exhaustion, not a
+failing hand-written policy; (b) require the verdict to be invariant to collision resolution; and
+(c) check the realised state trajectory, not just the action sequence, for the capability appearing
+without being commanded.
+
+**A fourth lesson, from getting (c) wrong twice.** The state-trajectory check was implemented, was
+pre-registered as a criterion, passed on every seed — and could not have failed on any input. It sat
+in the branch where the action-set check had *already* rejected the seed, so it could only refine a
+failure's label; and it measured under a configuration that pins the quantity it measures to
+identically zero, because the same task change that created the degeneracy also introduced a
+structural guard against it. Both defects are invisible from the criterion's wording and both
+survived a green test suite, because the test asserted that the check's constants existed rather
+than that the check could fire. **A degeneracy check needs its own falsification test: construct an
+input it must reject, and confirm it does.** Where the guard is structural, the honest report is not
+a per-seed pass but the *counterfactual magnitude* — here, up to 103° of uncommanded rotation with
+the guard removed, which is what makes the guard a declared modelling assumption rather than an
+implementation detail.
 
 #### What is *not* broken
 

@@ -64,10 +64,21 @@ def _completion(content: str) -> dict[str, object]:
     }
 
 
+# Since DSE-058 the load starts broadside in a channel, so pushing east alone never advances the
+# geodesic and every handoff lands in the same y_binary_progress class - which starves the grouped
+# folds. Cycling rotate-then-push mixes the classes, which is all this fixture needs.
+_ACTION_CYCLE = ("ROT+", "E", "E", "ROT+", "E", "E", "E")
+
+
 def _east_script(request: httpx.Request) -> httpx.Response:
     if b"structured_outputs" in request.content:
-        return httpx.Response(200, json=_completion(json.dumps({"action": "E"})))
+        action = _ACTION_CYCLE[_east_script.i % len(_ACTION_CYCLE)]  # type: ignore[attr-defined]
+        _east_script.i += 1  # type: ignore[attr-defined]
+        return httpx.Response(200, json=_completion(json.dumps({"action": action})))
     return httpx.Response(200, json=_completion("push the load east toward the goal"))
+
+
+_east_script.i = 0  # type: ignore[attr-defined]
 
 
 @respx.mock

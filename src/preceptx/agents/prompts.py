@@ -33,14 +33,25 @@ from preceptx.serving.client import ChatMessage
 # point of the policy and the pair cannot escape by construction. The fix is observability, not
 # instruction: the line reports what happened, and the inference stays the agent's. Bump three of
 # the three budgeted pre-E3 bumps.
-PROMPT_VERSION = "v5"
+# v6 (DSE-058, the successor task): the load is a convex 1.4 x 0.3 bar, so every prompt-surface
+# sentence calling it a T is now simply false, and each internal wall is a CHANNEL of depth
+# `wall_depth` rather than a threshold, which the state forms never named. Both system prompts and
+# the NL serialiser described a T; the numeric and NL forms gave one x per wall; the grid drew a
+# one-cell stripe where 1.5 world-units of solid geometry stand. This does NOT consume a fourth
+# retune of the T task - it is the prompt surface of a DIFFERENT benchmark, and describing the T
+# arena's object and obstacle to agents manipulating a bar through a channel would reintroduce the
+# exact grounded-but-inferentially-wrong defect DSE-057 was spent falsifying. Landed before the
+# first successor model call, so no dataset is re-keyed.
+PROMPT_VERSION = "v6"
 
 _SYSTEM_A = (
-    "You are agent A, the navigator in a two-agent cooperative-transport task. A T-shaped load "
-    "must be pushed rightward (+x) through a slit in each vertical wall to reach the goal region. "
-    "+y is north, -y is south. The load only passes a wall when the WHOLE load fits inside that "
-    "wall's slit - its centre being inside the slit's y-range is not enough, because the load has "
-    "size of its own (see load_size) and juts out either side of its centre. You can see the whole "
+    "You are agent A, the navigator in a two-agent cooperative-transport task. A straight "
+    "bar-shaped load must be pushed rightward (+x) through a slit in each wall to reach the goal "
+    "region. +y is north, -y is south. Each wall is a channel with depth along x, not a thin line, "
+    "so the load must be aligned before it enters and stay aligned all the way through. The load "
+    "only passes a wall when the WHOLE load fits inside that wall's slit - its centre being inside "
+    "the slit's y-range is not enough, because the load has size of its own (see load_size) and "
+    "juts out either side of its centre. You can see the whole "
     "scene; B acts but sees less than you. Send B one or two sentences saying where the load is "
     "relative to the next slit and what to do now - which way to push, or whether to rotate first "
     "so the load fits through. Use the actual numbers in front of you; do not give generic advice. "
@@ -52,8 +63,8 @@ _SYSTEM_A = (
 _SYSTEM_B = (
     "You are agent B, the actuator in a two-agent cooperative-transport task. You receive a "
     "partial observation of the scene and one instruction from agent A, who can see more of the "
-    "scene than you. Choose exactly one macro-action that best advances the T-load toward the "
-    "goal, following A's instruction unless your own observation plainly contradicts it."
+    "scene than you. Choose exactly one macro-action that best advances the bar-shaped load "
+    "toward the goal, following A's instruction unless your own observation plainly contradicts it."
 )
 
 _ACTION_HINT = (

@@ -20,11 +20,15 @@ import pandas as pd
 
 # Four repeats of the pattern: three would fire on ROT+,ROT-,ROT+ , which is a plausible two-step
 # correction rather than a policy that has stopped moving.
-MIN_CYCLE = 4
+# Threshold in trailing ACTIONS, not repetitions: 4 actions is 4 repeats at period 1 but only 2
+# alternations at period 2 (`ROT+,ROT-,ROT+,ROT-`). Named for what it counts, after the CHANGELOG
+# was found claiming "4 repeats" for a constant that has always counted actions (DSE-057). The
+# reported fractions are unchanged - only the wording was ever wrong.
+MIN_CYCLE_ACTIONS = 4
 
 
 def terminal_cycle(actions: list[str]) -> int:
-    """Length of the trailing period-1 or period-2 repeat, 0 if shorter than MIN_CYCLE."""
+    """Trailing period-1/period-2 repeat length in actions, 0 if under MIN_CYCLE_ACTIONS."""
     best = 0
     for period in (1, 2):
         if len(actions) < period * 2:
@@ -39,7 +43,7 @@ def terminal_cycle(actions: list[str]) -> int:
         if period == 2 and tail[0] == tail[1]:
             continue
         best = max(best, run)
-    return best if best >= MIN_CYCLE else 0
+    return best if best >= MIN_CYCLE_ACTIONS else 0
 
 
 def episodes(path: Path) -> pd.DataFrame:

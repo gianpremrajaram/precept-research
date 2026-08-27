@@ -263,16 +263,105 @@ a resource: rung 1 needs no GPU.
 - **Rung 1 — RQ3a elevated to the headline** (DSE-041, DSE-042), started immediately.
 - **Rung 2 — one declared task-geometry change, then exactly one re-gate.** Like the retune, this is
   one coherent package applied once. Its acceptance criterion is **fixed here, before the change is
-  designed, and is checkable on CPU with no model in the loop**: the A\* optimum must contain
-  **≥ 1 rotation** and finish **strictly inside budget**, for **every jittered seed at every
-  difficulty**. Equivalently and more cheaply, the necessary condition is that **every slit be
-  narrower than the load's maximum y-extent of 1.553** — easy's 1.8 is not, which is why rotation
-  there is geometrically incapable of being necessary. `scripts/check_rotation_need.py` decides both
-  halves on CPU in seconds and currently returns REJECTED. This is what makes easy a coordination
-  test and hard reachable (today it is 0/60 across both attempts). **Medium enters the pilot cell**:
-  `_PILOT_DIFFICULTIES` was easy and hard, so the one rung that already requires rotation (0/10
-  rotation-free) and is less extreme than the unsolved hard cell was never run. A rung-2 re-gate that still fails ends
-  the arena track and rung 3 becomes the headline; there is no second rung-2 attempt.
+  designed, and is checkable on CPU with no model in the loop**, and it has **three limbs**, all of
+  which must hold for **every jittered seed at every difficulty**:
+
+  1. the full-action A\* optimum is **solvable** and finishes **strictly inside the certified budget**;
+  2. that optimum contains **≥ 1 rotation**; and
+  3. the **same search restricted to translations alone is exhausted without reaching the goal**.
+
+  Limb 3 is the load-bearing one, and it replaces an earlier formulation that was **wrong**. That
+  version offered "every slit narrower than the load's maximum y-extent of 1.553" as an equivalent
+  cheap test. It is not equivalent: being narrower than the *maximum* extent shows only that *some*
+  orientations do not fit, never that a given start pose cannot cross without turning. Nor can a
+  hand-written rotation-free policy establish it — a policy that fails shows only that *that* policy
+  failed. Only exhausting the restricted search proves no translation-only path exists.
+
+  **Amended 2026-08-27 (DSE-057), before any rung-2 change was designed or any further compute was
+  spent.** The corrected instrument returns REJECTED at **every** difficulty, not just easy: a
+  translation-only oracle reaches the goal at medium and hard as well, because the walls are thin
+  segments and the bar and stem cross the gap at different instants. Rotation is therefore not
+  necessary anywhere in the shipped arena, so **medium does not enter the pilot cell** — the earlier
+  claim that it "already requires rotation (0/10 rotation-free)" rested on the falsified policy test.
+  A rung-2 re-gate that still fails ends the arena track and rung 3 becomes the headline; there is no
+  second rung-2 attempt.
+- **Rung 2 is a declared successor task, not a repair (amended 2026-08-27, pre-compute).** A CPU
+  spike established that **no** aperture and **no** wall depth makes rotation necessary for the
+  T: the load is non-convex, so its collision-free configuration space through a channel is not
+  characterised by a bounding y-extent, and start-angle exclusion yields impossible cells rather
+  than rotation-required ones. Rung 2 therefore adopts a **convex 1.4 × 0.3 bar in a finite-depth
+  channel**, labelled throughout as *a successor rotation-control benchmark, adopted after the
+  T-load benchmark was falsified as a rotation-necessity manipulation*. It is not presented as a
+  repair of the T arena, and not as the primary result unless it clears certification with time for
+  one clean re-gate. The change of embodied object is a **protocol deviation driven by a
+  physics-engine limitation** and is logged as such: it alters the load's affordances, the spatial
+  representation agents see, the difficulty mechanism and the task fingerprint.
+
+  **Certification standard, fixed here before any candidate is adopted.** Every declared seed at
+  every difficulty must satisfy all seven: (1) full-action search solvable at
+  `CERTIFICATION_STEP_CONFIG` (substeps = 64); (2) translation-restricted search **exhausted**
+  without reaching the goal at the same fidelity; (3) the full-action solution contains ≥ 1
+  rotation; (4) replay of that solution succeeds at 16, 32 **and** 64 substeps; (5) a strict,
+  pre-declared budget margin, not success on the final permitted action; (6) the verdict is
+  invariant to a conservative collision-margin perturbation, wall radius included; (7) the realised
+  **angle trajectory** under the restricted search shows no passive self-alignment large enough to
+  substitute for a commanded rotation. Limb 7 exists because contact torque at the aperture mouth
+  rotates the load with no rotate action issued — "translation-only in the action space" is not
+  "rotation-free in the state space". The measured rotation quantum (**exactly 33.7°,
+  deterministic**) is a candidate generator and early-rejection screen only; a band half-width
+  ≥ 17° is **not** an acceptance criterion, since 33.7° does not divide 360°, the band centre must
+  be lattice-reachable from the declared start, and in-contact rotation differs from open-space
+  rotation.
+
+  **Certified and adopted 2026-08-27 (DSE-058), before any successor model call.** Ladder
+  **easy 1.20 / medium 0.80 / hard 0.50**, channel depth 1.5, broadside starts (80–100°), budgets
+  20/25/25. **30/30 seeds per rung** pass every limb at the frozen budgets. Two corrections were
+  forced during implementation and both are recorded because they generalise:
+
+  - The **budget is part of the criterion.** A ladder certified at budget 25 leaked at 28 — a longer
+    budget admits longer degenerate paths. The check is re-run after any budget change.
+  - **Certification uses 30 seeds against the pilot's 10.** Aperture 0.48 gave 10/10 on seeds 0–9
+    and 12/20 on seeds 10–29; certifying on the declared seed set alone would have adopted a task
+    that leaks on ~27% of instances. The certification sample is deliberately strictly larger than
+    the evaluation sample.
+
+  Limb 7 (passive self-alignment) is closed **structurally**, not by tuning:
+  `StepConfig.hold_orientation` holds the load's angle through non-rotate actions, on the grounds
+  that two grips carrying a rigid load hold its orientation. Friction was tested and rejected as the
+  lever — the effect survived friction 0.2, 0.6 and 1.5 — so **no friction constant was changed**.
+
+  **`hold_orientation` is a declared modelling assumption of this task, and it is load-bearing.**
+  Recorded here rather than left to be discovered in the source, because the rung-2 claim depends
+  on it. With the hold disabled, ten straight eastward pushes rotate the load by up to **103°
+  (easy), 98° (medium), 20° (hard)** across the 30 certification seeds — enough for the bar to
+  align itself with the aperture completely, with no rotate action issued. **Every rung exceeds the
+  15° limb-7 limit without the guard**, so the hold is load-bearing at all three. The ordering is
+  the opposite of the naive one: the drift is largest at the *widest* aperture, because a wide
+  channel admits the bar and lets contact turn it, while the hard aperture is too narrow to enter
+  and the load jams instead of aligning. The claim this
+  pre-registration makes is therefore *"rotation is operationally necessary given that the carriers
+  hold the load's orientation through a push"*, and `unheld_drift_deg` prints that counterfactual
+  alongside every certification verdict so the assumption travels with the certificate.
+
+  **Correction to the adoption record above (2026-08-27, post-review).** Limb 7 as first
+  implemented could not fail on any input: it ran only in the branch where limb 3 had already
+  rejected the seed, and it measured under the shipped config, where the hold pins the drift to
+  identically zero. The "30/30 seeds pass every limb" claim therefore rested on six limbs when it
+  was written. Limb 7 now runs on seeds that **pass** limbs 1–3, under the config being certified;
+  certification was re-run and is **30/30 at every rung** with the repaired limb. Logged as a
+  deviation rather than silently corrected.
+
+  **Pre-registered directional prediction for the successor re-gate.** The C0 < C4 inversion in E3
+  was attributed to A instructing a rotation that was unnecessary. Rotation is now operationally
+  necessary at every rung, so that instruction becomes correct, and **degrading the message (C1, C4)
+  should reduce success relative to C0** — the direction RQ1 predicts and the opposite of what E3
+  measured. This is fixed here before the first successor model call, and it is a
+  mechanism-discriminating test rather than a retry: if the inversion persists, the instruction
+  account is wrong and rung 3 stands as the finding.
+
+- **Both tracks run in parallel; the arena is not abandoned.** Rung 1 (RQ3a) and rung 2 (the
+  successor task) are funded together — rung 1 needs no GPU, so they do not compete. Rung 3 (report
+  the absent gradient as the finding) is already written up and does not depend on either.
 - **RQ3b is deferred behind the rung-2 re-gate.** The gate is calibrated against realised outcomes;
   on a task where degrading the message improves outcomes, that calibration inherits the inversion.
 

@@ -57,9 +57,8 @@ def test_the_payload_is_json_primitives_only() -> None:
         (arena, "LOAD_MASS", 2.0),
         (arena, "GOAL_RADIUS", 1.1),
         (arena, "WALL_FRICTION", 0.9),
-        (load, "T_THICK", 0.4),
-        (load, "T_BAR", 1.6),
-        (load, "T_STEM", 1.2),
+        (load, "BAR_THICK", 0.4),
+        (load, "BAR_LEN", 1.6),
         (load, "T_FRICTION", 0.9),
     ],
 )
@@ -103,7 +102,7 @@ def test_grid_resolution_changes_the_digest(monkeypatch: pytest.MonkeyPatch) -> 
 def test_the_schema_version_is_an_escape_hatch(monkeypatch: pytest.MonkeyPatch) -> None:
     """A behavioural change with no constant to point at still has a way to force a re-key."""
     before = simulation_fingerprint().digest()
-    monkeypatch.setattr("preceptx.sim.fingerprint.ENVIRONMENT_SCHEMA_VERSION", 2)
+    monkeypatch.setattr("preceptx.sim.fingerprint.ENVIRONMENT_SCHEMA_VERSION", 99)
     assert simulation_fingerprint().digest() != before
 
 

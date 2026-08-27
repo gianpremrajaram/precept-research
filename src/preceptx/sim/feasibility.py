@@ -4,7 +4,12 @@ Without a solvability proof, a pilot G1 failure is ambiguous - "the models can't
 "nobody can within the budget", the most expensive misdiagnosis available. A search over the macro
 actions on the deterministic simulator finds a short oracle solution per difficulty; the step budget
 is set to a multiple of that length so a capable pair has real slack (the single default of 12 was
-almost certainly too small for hard, which must rotate the T to thread the narrow slit).
+almost certainly too small for hard, whose slit is far below the load's head-on y-extent).
+
+Rotation is *not* required at any shipped difficulty: the walls are thin segments, so the bar and
+the stem cross the gap at different instants and a translation-only path threads every slit down to
+the shorter member (1.0). DSE-057's restricted-action search proves this by exhaustion. The claim
+that hard "must rotate" was an inference from the head-on extent, never a search result.
 
 The search is Markovian on the load *pose*: quasi-static settling zeroes velocity after every
 action (``StepConfig.quasi_static``), so a node is fully described by ``(origin x, origin y,
@@ -33,11 +38,12 @@ from preceptx.sim.arena import (
     LOAD_MASS,
     ArenaGeometry,
     Goal,
+    Scenario,
     build_arena,
     make_scenario,
     slit_width_for,
 )
-from preceptx.sim.load import add_t_load
+from preceptx.sim.load import add_load
 from preceptx.sim.outcomes import geodesic_distance, reached_goal
 
 logger = logging.getLogger(__name__)
@@ -65,15 +71,41 @@ DEFAULT_MAX_DEPTH = 40  # cap on solution length explored (hard needs rotate-thr
 # start-pose jitter (P0-2) and LLM suboptimality (review P1-4: "~2-3x the found optimum").
 BUDGET_MULTIPLIER = 2.5
 
-# Certified per-difficulty step budgets (P1-4), FROZEN from ``certify()`` on the retuned geometry
-# (slits 1.8/1.2/1.1, angular_impulse 0.5): easy solves in 7 steps, medium and hard in 13 each; the
-# budget is ceil(2.5 x optimum). tests/unit/sim/test_feasibility.py re-derives and certifies these
-# (budget >= the found optimum) so a physics change that breaks feasibility fails loudly rather than
-# silently starving the pilot. Regenerate with ``python -m preceptx.sim.feasibility``.
+# Two-tier collision fidelity (DSE-057). `StepConfig.substeps` is a pure resolution knob: the total
+# simulated time of a macro action is `settle_steps * dt` regardless of it, so raising it changes
+# only how finely contacts are resolved. The shipped default of 4 is an anti-tunnelling setting for
+# the *experiment*, and every frozen E3 certificate (easy 7, medium 13, hard 13) is stable from 4 up
+# to 64 - so nothing already run is invalidated and the default is deliberately left alone.
+#
+# It is NOT sufficient to certify NEW geometry. A candidate tunnel path was found solvable at 4 and
+# died at 8: at coarse resolution a macro impulse can drive the load through an aperture narrower
+# than its own outline before contact resolves. A feasibility verdict that moves with the integrator
+# cannot gate a GPU run, so every new-geometry acceptance check runs at this profile instead.
+# E3's results are results for the recorded, versioned default simulator - not claims about a
+# continuum-physics benchmark.
+CERTIFICATION_STEP_CONFIG = StepConfig(substeps=64)
+
+# Certified per-difficulty step budgets, FROZEN from ``certify()`` on the SUCCESSOR geometry
+# (DSE-058: convex 1.4x0.3 bar, channel depth 1.5, apertures 1.20/0.80/0.50, broadside canonical
+# pose, orientation held through non-rotate actions). Easy solves in 8 steps with ONE rotation;
+# medium and hard in 10 with two. Budget is ceil(2.5 x optimum), so 20/25/25.
+#
+# Budget width is part of the certification, not a free parameter bolted on afterwards: a longer
+# budget admits longer degenerate paths, and an earlier ladder that certified 10/10 at budget 25
+# leaked as soon as the budget rose to 28. Re-run the acceptance check after ANY budget change.
+#
+# Difficulty separates in the certificate itself (easy needs one rotation, medium and hard two) and
+# again in tolerance: the band of orientations that clears the channel narrows as the aperture does,
+# which an exact oracle barely feels and an imprecise agent feels a great deal.
+#
+# tests/unit/sim/test_feasibility.py re-derives and
+# certifies these (budget >= the found optimum) so a physics change that breaks feasibility fails
+# loudly rather than silently starving the pilot. Regenerate with
+# ``python -m preceptx.sim.feasibility``.
 STEP_BUDGETS: dict[Difficulty, int] = {
-    "easy": 18,
-    "medium": 33,
-    "hard": 33,
+    "easy": 20,
+    "medium": 25,
+    "hard": 25,
 }
 
 
@@ -115,7 +147,7 @@ def _apply(
 ) -> tuple[_Pose, tuple[float, float], bool]:
     """Restore ``pose`` in a fresh arena, apply one action, return (new pose, new COM, reached)."""
     space = build_arena(slit, geometry)
-    body = add_t_load(space, (pose.x, pose.y), LOAD_MASS)
+    body = add_load(space, (pose.x, pose.y), LOAD_MASS)
     body.angle = pose.theta
     space.reindex_shapes_for_body(body)
     apply_macro_action(space, body, action, step_cfg)
@@ -132,17 +164,26 @@ def solve(
     *,
     step_cfg: StepConfig | None = None,
     max_depth: int = DEFAULT_MAX_DEPTH,
+    actions: tuple[MacroAction, ...] | None = None,
+    scenario: Scenario | None = None,
 ) -> FeasibilityResult:
-    """A* over macro actions from the canonical fixed start to the goal for one difficulty.
+    """A* over macro actions from a start pose to the goal for one difficulty.
 
-    Uses the fixed (un-jittered) start pose - the nominal instance the budget multiplier then pads
-    for jitter and model suboptimality. Sound by construction (the path is real physics); the
+    Defaults to the fixed (un-jittered) start pose - the nominal instance the budget multiplier then
+    pads for jitter and model suboptimality. Sound by construction (the path is real physics); the
     heuristic makes it near-optimal, which is all the budget needs.
+
+    ``actions`` restricts the action set and ``scenario`` supplies a jittered start (DSE-057). Both
+    default to the frozen behaviour, so ``certify()`` and the budget test are unaffected.
+    Restricting the set turns the search into a *necessity* proof: exhausting it without reaching
+    the goal shows no path of that kind exists, which a failing hand-written policy never can.
     """
     step_cfg = step_cfg or StepConfig()
+    actions = actions or _SEARCH_ACTIONS
     geometry = ArenaGeometry()
     slit = slit_width_for(difficulty)
-    scenario = make_scenario(difficulty)  # canonical fixed start + goal (reuse real construction)
+    # canonical fixed start + goal (reuse real construction) unless the caller supplied one
+    scenario = scenario or make_scenario(difficulty)
     goal = scenario.goal
     start = _Pose(
         float(scenario.load.position.x), float(scenario.load.position.y), float(scenario.load.angle)
@@ -169,7 +210,7 @@ def solve(
                 f"feasibility search for {difficulty!r} exceeded {_MAX_EXPANSIONS} expansions "
                 "without reaching the goal; the search space blew up (check the physics/geometry)"
             )
-        for action in _SEARCH_ACTIONS:
+        for action in actions:
             new_pose, com, reached = _apply(pose, action, slit, geometry, goal, step_cfg)
             new_path = [*path, action]
             if reached:

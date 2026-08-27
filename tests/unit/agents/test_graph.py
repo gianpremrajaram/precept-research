@@ -52,12 +52,18 @@ def _completion(content: str) -> dict[str, object]:
     }
 
 
-def _script(action: str):  # type: ignore[no-untyped-def]
-    """Route A's chat to a fixed instruction and B's structured call to ``action``."""
+def _script(action: str, *, prefix: tuple[str, ...] = ()):  # type: ignore[no-untyped-def]
+    """Route A's chat to a fixed instruction and B's structured call to ``action``.
+
+    ``prefix`` emits a leading action sequence before settling on ``action`` - needed since
+    DSE-058, because the load starts broadside and pure east never threads the channel.
+    """
+    remaining = list(prefix)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if b"structured_outputs" in request.content:  # B's action call carries the schema
-            return httpx.Response(200, json=_completion(json.dumps({"action": action})))
+            nxt = remaining.pop(0) if remaining else action
+            return httpx.Response(200, json=_completion(json.dumps({"action": nxt})))
         return httpx.Response(200, json=_completion("push the load east"))
 
     return handler
@@ -74,10 +80,11 @@ def test_episode_runs_to_budget_when_action_never_succeeds() -> None:
 
 @respx.mock
 def test_episode_terminates_on_success() -> None:
-    respx.post(CHAT).mock(side_effect=_script("E"))  # 7 east pushes reach the easy goal
-    records = EpisodeRunner(_client(), max_steps=12).run_episode(_cell(), "ep")
+    # The oracle's easy opening: rotate into line, then push east (DSE-058, broadside start).
+    respx.post(CHAT).mock(side_effect=_script("E", prefix=("ROT+", "E", "ROT+")))
+    records = EpisodeRunner(_client(), max_steps=20).run_episode(_cell(), "ep")
     assert records[-1].success  # reached the goal
-    assert len(records) < 12  # stopped early, before the budget
+    assert len(records) < 20  # stopped early, before the budget
     assert records[-1].y_terminal_success  # labelled true after the episode
 
 

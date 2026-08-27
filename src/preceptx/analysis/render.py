@@ -1,7 +1,7 @@
 """Episode renderer and transcript dumper (review section 7-2).
 
 Two views of a recorded episode, both reconstructed from the persisted ``HandoffRecord``s alone (no
-live sim): ``render_episode`` draws the arena, goal and T-load pose per step as a PNG grid, and
+live sim): ``render_episode`` draws the arena, goal and load pose per step as a PNG grid, and
 ``render_transcript`` emits a markdown transcript pairing each state with its message and action.
 These are what prompt iteration and G1 debugging need - eyes on messages next to states - and they
 satisfy DSE-029's "a committed demonstration trace renders", which no other ticket builds. The
@@ -10,7 +10,7 @@ line; the markdown transcript (pure text) is always available.
 
 Pose -> world geometry: a record's ``com_x/com_y`` is the body origin (``center_of_gravity`` is the
 origin), so the T polygons are ``com + R(angle) . local_vert`` with no COG offset - the same
-``load.t_shape_verts`` the physics body is built from, so the drawing cannot drift from the sim.
+``load.load_polys`` the physics body is built from, so the drawing cannot drift from the sim.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from typing import Any
 
 from preceptx.data.schema import HandoffRecord
 from preceptx.sim.arena import GOAL_RADIUS, ArenaGeometry, Goal, slit_width_for
-from preceptx.sim.load import t_shape_verts
+from preceptx.sim.load import load_polys
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ def _t_world(com_x: float, com_y: float, angle: float) -> list[list[Vert]]:
     ca, sa = math.cos(angle), math.sin(angle)
     return [
         [(com_x + ca * x - sa * y, com_y + sa * x + ca * y) for x, y in poly]
-        for poly in t_shape_verts()
+        for poly in load_polys()
     ]
 
 

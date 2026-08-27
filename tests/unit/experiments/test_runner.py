@@ -117,7 +117,7 @@ def test_manifest_records_substrate_endpoint_and_result_knobs(
     manifest = json.loads((run_dir / "manifest.json").read_text())
     assert manifest["serving_substrate"] == "interim-test"  # §7-7: interim data stays labelled
     assert manifest["endpoint_base_url"] == BASE_URL
-    assert manifest["sweep"]["jitter"]["x_range"] == [1.2, 2.8]  # P0-2 knob is audit-visible
+    assert manifest["sweep"]["jitter"]["x_range"] == [1.2, 2.4]  # P0-2 knob is audit-visible
     assert manifest["sweep"]["outcome"]["k"] == 3  # P1-6: the label horizon is manifested
     assert manifest["sweep"]["step"]["linear_impulse"] == 3.0
 
@@ -285,4 +285,4 @@ def test_the_manifest_records_the_world_and_its_digest(tmp_path: Path) -> None:
     simulation = manifest["simulation"]
     assert isinstance(simulation, dict)
     # The payload, not only the digest: a digest says identity changed, the payload says why.
-    assert simulation["slit_widths"] == {"easy": 1.8, "medium": 1.2, "hard": 1.1}
+    assert simulation["slit_widths"] == {"easy": 1.20, "medium": 0.80, "hard": 0.50}

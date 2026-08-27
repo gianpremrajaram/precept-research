@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from preceptx.config import ConfigError
 from preceptx.data.schema import Difficulty
-from preceptx.sim.load import add_t_load
+from preceptx.sim.load import add_load
 
 # Quasi-static regime: strong damping so the load settles rather than coasts (roadmap §2.1).
 DAMPING = 0.2
@@ -24,16 +24,36 @@ LOAD_MASS = 1.0
 GOAL_RADIUS = 0.8
 WALL_FRICTION = 0.6
 
-# Difficulty maps to slit width. Threading geometry (see sim/feasibility.py + the experiment log):
-# the T is a bar (T_BAR=1.4) perpendicular to a stem (T_STEM=1.0); whichever member is aligned with
-# travel crosses a thin-wall gap at its 0.3 thickness while the OTHER presents its full length, so
-# the TIGHTEST threadable slit is the shorter member = the stem = 1.0 (rotation cannot beat this),
-# and a slit >= the full y-extent (T_THICK+T_STEM=1.3) clears head-on with no maneuver. The ladder
-# grades across those regimes: easy 1.8 (head-on, trivial), medium 1.2 and hard 1.1 (both need a
-# threading maneuver - decoupling the bar and stem wall-crossings - tightening as it hardens).
-# The original 1.0/0.7 for medium/hard put medium at zero clearance and hard below the 1.0 threshold
-# (geometrically impossible); corrected pre-freeze after the feasibility search caught it (P1-4).
-_DIFFICULTY_SLITS: dict[Difficulty, float] = {"easy": 1.8, "medium": 1.2, "hard": 1.1}
+# Difficulty maps to channel aperture (DSE-058, the successor task). The load is a convex 1.4 x 0.3
+# bar and each internal wall is a CHANNEL of depth `wall_depth`, not a thin segment. Fit through a
+# channel is governed by the body's extent - a convex body has no staged-crossing escape - so an
+# aperture below the bar length forces an explicit rotation. The rotation-required band is
+# [BAR_THICK, BAR_LEN) = [0.3, 1.4); the effective aperture is `nominal - 2 * wall_radius`.
+#
+# The ladder's lower edge is physical: below 0.40 the effective aperture (nominal - 2*wall_radius
+# = nominal - 0.1) falls under BAR_THICK and nothing fits at any angle. Its upper edge is the bar
+# length: at 1.40 nominal the bar passes broadside and no rotation is required.
+#
+# 1.20/0.80/0.50 is certified 30/30 seeds per rung at CERTIFICATION_STEP_CONFIG (effective
+# clearances 1.10/0.70/0.40 against a 0.30-thick, 1.40-long bar). Certification uses 30 seeds
+# against the pilot's 10 deliberately: an earlier 0.48/0.45/0.42 candidate passed 10/10 on seeds
+# 0-9 and leaked on 8 of seeds 10-29. Difficulty grades by ALIGNMENT PRECISION - narrower apertures
+# admit a narrower band of passing orientations - and the certificate separates the rungs directly:
+# easy needs 1 rotation, medium and hard need 2.
+#
+# That band exists only because `StepConfig.hold_orientation` holds the load's angle through
+# non-rotate actions. Without it the bar aligns ITSELF against the channel mouth under contact
+# torque and a translation-only path reappears (0.80 leaked in 7 of 10 seeds), which is what
+# collapsed an earlier ladder to 0.48/0.45/0.42. Friction was tested and rejected as the lever -
+# the leak survived wall friction 0.2, 0.6 and 1.5 - so no friction constant was tuned.
+# `hold_orientation` is a load-bearing modelling assumption here, not an incidental default.
+#
+# If G1 fails on precision rather than on reasoning, the lever is BAR_THICK: the usable window
+# scales with it, so a thicker bar buys absolute clearance without giving up rotation-necessity.
+#
+# The predecessor T ladder (1.8/1.2/1.1 against thin segment walls) was falsified: rotation was
+# unnecessary at every rung. It is preserved in the design log, not here.
+_DIFFICULTY_SLITS: dict[Difficulty, float] = {"easy": 1.20, "medium": 0.80, "hard": 0.50}
 
 
 def slit_widths() -> dict[Difficulty, float]:
@@ -53,6 +73,10 @@ class ArenaGeometry(BaseModel):
     chamber_h: float = Field(default=6.0, gt=0)
     wall_radius: float = Field(default=0.05, gt=0)
     slit_y: float = Field(default=3.0, gt=0)
+    # Depth of each internal wall along x. > 0 builds a CHANNEL (two faces plus a floor and ceiling)
+    # and is what makes orientation binding; 0.0 builds the legacy thin segment, retained so the
+    # falsification of the T task stays reproducible from source (DSE-058).
+    wall_depth: float = Field(default=1.5, ge=0)
 
 
 class Goal(BaseModel):
@@ -70,18 +94,29 @@ class ScenarioJitter(BaseModel):
 
     Without it, greedy decoding + a fixed scenario + deterministic physics make same-cell episodes
     at different seeds nominally identical trajectories (pseudo-replication). The default region
-    keeps the body origin >= 1.2 world units from every chamber-one wall - the T's farthest vertex
-    sits ~0.955 from the origin, so any angle is collision-free by construction; ``make_scenario``
-    still rejection-checks as a belt-and-braces guard. Geometry (slit widths, arena, goal) stays
+    keeps the body origin >= 1.2 world units from every chamber-one wall - the bar's farthest vertex
+    sits ~0.716 from the origin, so any angle is collision-free by construction; ``make_scenario``
+    still rejection-checks as a belt-and-braces guard. Geometry (apertures, arena, goal) stays
     fixed: jittering the pose varies the problem instance without confounding difficulty. A
     zero-width range (e.g. ``x_range=(2.0, 2.0)``) recovers a fixed value for that axis.
+
+    **theta is concentrated near perpendicular (80-100 deg), not spread over +/-90 (DSE-058).** The
+    bar's extent is symmetric about 90 deg, so this band starts every episode broadside to the
+    channel - maximally misaligned, and outside the passing band at every rung, so an explicit
+    rotation is required from every seed. It is also the region where passive self-alignment fails:
+    a broadside bar meets the channel mouth flat-on and gets no aligning torque, whereas oblique
+    starts (~45-75 deg) are funnelled into line by contact alone and need no rotate action. The
+    narrow theta band is therefore load-bearing for task validity, not a convenience.
+
+    **x_range stops at 2.4** so the bar's farthest vertex (2.4 + 0.7 = 3.1) clears the channel mouth
+    at x = chamber_w - wall_depth/2 = 3.25; the old 2.8 would have started some poses inside it.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    x_range: tuple[float, float] = (1.2, 2.8)
+    x_range: tuple[float, float] = (1.2, 2.4)
     y_range: tuple[float, float] = (1.5, 4.5)
-    theta_range: tuple[float, float] = (-math.pi / 2.0, math.pi / 2.0)
+    theta_range: tuple[float, float] = (math.radians(80.0), math.radians(100.0))
 
 
 _MAX_JITTER_ATTEMPTS = 100  # rejection-sampling cap; unreachable with the default safe region
@@ -117,10 +152,19 @@ def build_arena(slit_width: float, geometry: ArenaGeometry) -> pymunk.Space:
     _wall(space, (0.0, 0.0), (0.0, ch), r)
     _wall(space, (width, 0.0), (width, ch), r)
 
-    # Two internal walls, each split into a lower and upper segment around the slit gap.
+    # Two internal walls. With `wall_depth` > 0 each is a channel: two faces at x +/- depth/2 plus
+    # the floor and ceiling joining them, so the load is constrained over an x-interval rather than
+    # at a single threshold. That sustained constraint is what a thin segment cannot impose, and it
+    # is why the aperture governs orientation here and did not before (DSE-058).
+    d = geometry.wall_depth
     for x in (cw, 2.0 * cw):
-        _wall(space, (x, 0.0), (x, sy - half), r)
-        _wall(space, (x, sy + half), (x, ch), r)
+        x0, x1 = x - d / 2.0, x + d / 2.0
+        for face in (x0, x1) if d > 0.0 else (x,):
+            _wall(space, (face, 0.0), (face, sy - half), r)
+            _wall(space, (face, sy + half), (face, ch), r)
+        if d > 0.0:
+            _wall(space, (x0, sy - half), (x1, sy - half), r)
+            _wall(space, (x0, sy + half), (x1, sy + half), r)
     return space
 
 
@@ -141,12 +185,18 @@ def make_scenario(
     space = build_arena(_DIFFICULTY_SLITS[difficulty], geometry)
     goal = Goal(center_x=2.5 * geometry.chamber_w, center_y=geometry.slit_y, radius=GOAL_RADIUS)
     if rng is None:
-        load = add_t_load(space, (geometry.chamber_w / 2.0, geometry.slit_y), LOAD_MASS)
+        load = add_load(space, (geometry.chamber_w / 2.0, geometry.slit_y), LOAD_MASS)
+        # Canonical pose is BROADSIDE (DSE-058). At angle 0 the bar is already aligned with the
+        # channel and the instance is trivial - E,E,E... with no rotation - which would derive a
+        # step budget from a pose no jittered episode ever sees. pi/2 is the centre of the shipped
+        # theta band, so the certificate and the budget describe the modal instance.
+        load.angle = math.pi / 2.0
+        space.reindex_shapes_for_body(load)
         return Scenario(space=space, load=load, goal=goal)
     jit = jitter or ScenarioJitter()
     for _ in range(_MAX_JITTER_ATTEMPTS):
         pos = (rng.uniform(*jit.x_range), rng.uniform(*jit.y_range))
-        load = add_t_load(space, pos, LOAD_MASS)
+        load = add_load(space, pos, LOAD_MASS)
         load.angle = rng.uniform(*jit.theta_range)
         space.reindex_shapes_for_body(load)
         if not _overlaps_other(space, load):
@@ -168,8 +218,8 @@ def _overlaps_other(space: pymunk.Space, load: pymunk.Body) -> bool:
 
 
 def slit_width_for(difficulty: Difficulty) -> float:
-    """The slit width for a difficulty (the load's y-extent is 1.3); the graph needs it to build the
-    ``SceneState`` for serialisation, which ``make_scenario`` does not return."""
+    """The channel aperture for a difficulty; the graph needs it to build the ``SceneState`` for
+    serialisation, which ``make_scenario`` does not return."""
     return _DIFFICULTY_SLITS[difficulty]
 
 

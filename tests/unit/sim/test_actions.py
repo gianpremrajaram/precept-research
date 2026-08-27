@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -154,7 +156,10 @@ def test_force_handles_equal_translate_opposed_rotate() -> None:
     t0 = read_state(s.space, s.load)
     apply_force_handles(s.space, s.load, (0.0, 3.0), (0.0, 3.0), cfg)
     t1 = read_state(s.space, s.load)
-    assert t1.com_y - t0.com_y > 1e-3
+    # Impulses are BODY-frame, and the canonical pose is broadside (DSE-058), so body +y is world
+    # -x. Assert on displacement magnitude rather than a world axis: the property under test is
+    # "equal forces translate and do not rotate", which holds at any start orientation.
+    assert math.hypot(t1.com_x - t0.com_x, t1.com_y - t0.com_y) > 1e-3
     assert abs(t1.angle - t0.angle) < 1e-2
 
     # Opposed forces on the two grips: a couple, so rotation.

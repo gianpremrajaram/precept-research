@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from preceptx.data.schema import Serialisation
 from preceptx.sim.actions import BodyState
 from preceptx.sim.arena import ArenaGeometry, Goal, chamber_of
-from preceptx.sim.load import COG_Y, T_BAR, T_STEM, T_THICK, point_in_t_local
+from preceptx.sim.load import LOAD_COG_Y, LOAD_EXTENT_X, LOAD_EXTENT_Y, point_in_load_local
 
 
 class SceneState(BaseModel):
@@ -44,8 +44,8 @@ class SceneState(BaseModel):
 
 
 class GridConfig(BaseModel):
-    """Resolution of the ASCII occupancy grid. ``cell=0.25`` keeps the T's thin members (~0.3 wide)
-    about one cell wide so the rotate-to-clear-the-slit affordance is visible; ``0.5`` aliases them
+    """Resolution of the ASCII occupancy grid. ``cell=0.25`` keeps the bar's 0.3 thickness
+    about one cell wide so the rotate-to-clear-the-slit affordance is visible; ``0.5`` aliases it
     away. The pilot may retune this before the Phase-2 serialisation freeze."""
 
     model_config = ConfigDict(extra="forbid")
@@ -59,6 +59,10 @@ _GRID = GridConfig()
 # matrix and the serialisation A/B measures legend absence, not representation. Constant text across
 # cells preserves the information-isomorphism argument. NOTE: the line contains a literal "T", so
 # grid consumers that locate load rows (channel C3 windowing, the centroid check here) must skip it.
+# ponytail: the glyph stays "T" although the load is a convex bar (DSE-058). The legend DEFINES it
+# as "T=load", so it is a symbol, not a shape claim - unlike the prose forms, which did assert a T
+# and were corrected in v6. Renaming it would touch the C3 row-finder, the centroid check and their
+# tests to buy nothing a reader of the legend does not already have.
 GRID_LEGEND = "legend: T=load G=goal #=wall .=free | top row = north (+y)"
 
 
@@ -140,6 +144,9 @@ def _numeric(scene: SceneState) -> str:
     # underdetermined, and the pilot watched a model call com_y=2.0074 aligned with a (2.1, 3.9)
     # gap and push into the wall. The dimensions are constants of the load, not a derived pass
     # band - deriving the threading band from them is still the agent's inference to make.
+    # `wall_depth` is v6: DSE-058 made each wall a CHANNEL with x-extent, and this form named one x
+    # per wall, so the state understated the obstacle that makes orientation binding. C3 strips it
+    # for free - the restrictor whitelists `load=`/`contact=` rather than blacklisting layout keys.
     s, g, geo = scene.load, scene.goal, scene.geometry
     half = scene.slit_width / 2.0
     return (
@@ -147,11 +154,12 @@ def _numeric(scene: SceneState) -> str:
         f"contact={s.in_contact}\n"
         f"goal=({g.center_x:.4f}, {g.center_y:.4f}, {g.radius:.4f})"
         "  # (center_x, center_y, radius)\n"
-        f"walls_x=({geo.chamber_w:.4f}, {2.0 * geo.chamber_w:.4f})  # vertical walls to pass\n"
+        f"walls_x=({geo.chamber_w:.4f}, {2.0 * geo.chamber_w:.4f})  # centre x of each wall\n"
+        f"{_wall_depth_line(geo)}"
         f"slit_y=({geo.slit_y - half:.4f}, {geo.slit_y + half:.4f})  "
         f"# the only gap in each wall (width {scene.slit_width:.4f})\n"
-        f"load_size=({T_BAR:.4f}, {T_THICK + T_STEM:.4f})  "
-        "# (bar length, height across bar+stem) - the WHOLE load must clear the gap, not its centre"
+        f"load_size=({LOAD_EXTENT_X:.4f}, {LOAD_EXTENT_Y:.4f})  "
+        "# (length, thickness) - the WHOLE load must clear the gap, not its centre"
     )
 
 
@@ -162,7 +170,7 @@ def _grid(scene: SceneState, cfg: GridConfig) -> str:
     half = scene.slit_width / 2.0
     ca, sa = math.cos(s.angle), math.sin(s.angle)
     # Body origin from the COM: com = origin + R(angle)·(0, COG_Y), so origin = com - R(angle)·cog.
-    ox, oy = s.com_x + sa * COG_Y, s.com_y - ca * COG_Y
+    ox, oy = s.com_x + sa * LOAD_COG_Y, s.com_y - ca * LOAD_COG_Y
 
     rows: list[str] = []
     for r in range(n_rows - 1, -1, -1):  # +y up: print the top row first
@@ -171,7 +179,7 @@ def _grid(scene: SceneState, cfg: GridConfig) -> str:
         for c in range(n_cols):
             cx = (c + 0.5) * cell
             dx, dy = cx - ox, cy - oy
-            if point_in_t_local(ca * dx + sa * dy, -sa * dx + ca * dy):  # world -> load-local
+            if point_in_load_local(ca * dx + sa * dy, -sa * dx + ca * dy):  # world -> load-local
                 line.append("T")
             elif math.hypot(cx - goal.center_x, cy - goal.center_y) <= goal.radius:
                 line.append("G")
@@ -184,14 +192,32 @@ def _grid(scene: SceneState, cfg: GridConfig) -> str:
 
 
 def _is_wall(cx: float, cy: float, geo: ArenaGeometry, half: float, cell: float) -> bool:
+    """Occupancy of the static geometry at a cell centre.
+
+    Fills the whole channel footprint, not just its two faces (v6). ``build_arena`` seals the strip
+    between the faces above and below the aperture with the cap segments, so that region is an
+    enclosed void the load can never reach: for a planner reading an occupancy raster it is
+    impassable, and drawing free space there contradicted the physics. At ``wall_depth = 0`` this
+    reduces to the legacy one-cell stripe, so the falsified T arena still renders as it did.
+    """
     h = cell / 2.0
     width = 3.0 * geo.chamber_w
     if cx <= h or cx >= width - h or cy <= h or cy >= geo.chamber_h - h:
         return True  # outer boundary ring
-    # ponytail: internal walls can render ~2 cells thick at a cell boundary; faithful enough.
+    if geo.slit_y - half < cy < geo.slit_y + half:
+        return False  # the aperture band is the passage through every internal wall
     return any(
-        abs(cx - x) <= h and not (geo.slit_y - half <= cy <= geo.slit_y + half)
-        for x in (geo.chamber_w, 2.0 * geo.chamber_w)
+        abs(cx - x) <= geo.wall_depth / 2.0 + h for x in (geo.chamber_w, 2.0 * geo.chamber_w)
+    )
+
+
+def _wall_depth_line(geo: ArenaGeometry) -> str:
+    """The numeric form's channel-depth line; empty for a legacy thin-segment arena."""
+    if geo.wall_depth <= 0.0:
+        return ""
+    return (
+        f"wall_depth={geo.wall_depth:.4f}  # each wall is a solid channel spanning its centre "
+        f"+/-{geo.wall_depth / 2.0:.4f} in x - the load must stay aligned across the whole depth\n"
     )
 
 
@@ -202,14 +228,20 @@ def _nl(scene: SceneState) -> str:
     direction = "east" if goal.center_x >= s.com_x else "west"
     if chamber < goal_chamber:  # there is a slit ahead to thread
         sx, sy = geo.chamber_w * chamber, geo.slit_y
+        depth_clause = (
+            f" each wall is a {geo.wall_depth:.2f}-deep channel, not a thin line, so the load must "
+            "be aligned before it enters and stay aligned all the way through;"
+            if geo.wall_depth > 0.0
+            else ""
+        )
         slit_clause = (
             f" the nearest slit centre is at ({sx:.2f}, {sy:.2f}), "
-            f"{math.hypot(sx - s.com_x, sy - s.com_y):.2f} away;"
+            f"{math.hypot(sx - s.com_x, sy - s.com_y):.2f} away;{depth_clause}"
         )
     else:
         slit_clause = ""
     return (
-        f"The T-load is in chamber {chamber} at ({s.com_x:.2f}, {s.com_y:.2f}), "
+        f"The bar-shaped load is in chamber {chamber} at ({s.com_x:.2f}, {s.com_y:.2f}), "
         f"angle {s.angle:.2f} rad ({_orientation(s.angle)}). The goal is at "
         f"({goal.center_x:.2f}, {goal.center_y:.2f}), radius {goal.radius:.2f}, lying {direction} "
         f"beyond {n_slits} slit(s);{slit_clause} the load is "
