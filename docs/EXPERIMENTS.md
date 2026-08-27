@@ -16,7 +16,7 @@
 > path, and a written result paragraph in §5's format. A run whose result was never written down is a
 > run that has to be done again.
 >
-> **Last revised:** 24 August 2026.
+> **Last revised:** 26 August 2026.
 
 ---
 
@@ -25,20 +25,21 @@
 The task is certified and the first real model calls have been made. E0 passed on 24 August 2026 and
 S1 is under way on the local substrate; **no headline data exists** — every episode recorded so far is
 interim `local-lmstudio` data, permanently labelled as such and never pooled with cluster data. E3 has
-run once locally and returned `retune_once`; the one-retune ledger is **not** open, because a 4-bit local
-verdict is indicative by pre-registration and the ledger starts at the Myriad bf16 re-gate.
+run twice on Myriad bf16. **The one-retune ledger is now spent**: attempt 1 returned `retune_once`,
+the retune was declared as prompt v5, and attempt 2 returned `fallback`. The ladder has fired — rung 1
+(RQ3a, no GPU) and rung 2 (one declared task-geometry change, then one re-gate) run in parallel.
 
 | ID | Experiment | Stage | Needs | Status |
 |---|---|---|---|---|
 | E0 | Task certification (CPU only, no model) | S0 | Nothing | **Passed 24 Aug 2026** |
 | E1 | Serving smoke test and transcript read | S1 | A served model | **Run 24 Aug 2026 (v2, then v3)** |
 | E2 | Model-ladder benchmark (DSE-005) | S1 / S2 | A served model | **Local row 24 Aug 2026; cluster rows open** |
-| E3 | Formal pilot gate run — G1/G2/G3 (DSE-019) | S1 → re-gate S2 | E1, the driver | **Attempt 1 of record run on Myriad bf16, 26 Aug 2026 (job 214590, exit 0): `retune_once`. G1 FAIL 0.400; G2 PASS (success half by zero margin, CPVI gap +0.243 bits, selectivity +0.136); G3 PASS 0.986. 53% of failures end in a period-1/2 limit cycle. Retune spent as prompt v5; attempt 2 pending — no attempt 3** |
-| E4 | RQ1 information-gradient main sweep (DSE-020) | S3 | E3 verdict = proceed; the freeze | **Not run** |
+| E3 | Formal pilot gate run — G1/G2/G3 (DSE-019) | S1 → re-gate S2 | E1, the driver | **Attempt 2 (re-gate) run on Myriad bf16, 26 Aug 2026 (`eddd19c654515bb2`, 80 episodes): `fallback`. G1 FAIL 0.300; G2 FAIL −0.200 — *success gap sign-inverted*, CPVI half PASS +0.100 bits; G3 PASS 0.999. Cause diagnosed: A's message is grounded but inferentially wrong (the load clears the easy slit head-on at every angle, so rotation cannot be required there), so degrading the *message* helps and degrading the *observation* (C3) hurts. Ladder fired: rung 1 (RQ3a) and rung 2 (task geometry) in parallel; no attempt 3** |
+| E4 | RQ1 information-gradient main sweep (DSE-020) | S3 | **rung-2 re-gate = proceed**; the freeze | **Not run — blocked behind the rung-2 task-geometry change** |
 | E5 | RQ1 robustness cells (DSE-021) | S3 | E4; per-role client refactor | **Not run** |
 | E6 | RQ2 measurement primitive (DSE-022) | S4 | E4 episodes (no new compute) | **Not run** |
 | E7 | Gate calibration (DSE-017 run) | S4 | E4 episodes | **Not run** |
-| E8 | RQ3b causal gate + controls (DSE-025) | S5 | E7 threshold; DSE-018, DSE-045 | **Not run** |
+| E8 | RQ3b causal gate + controls (DSE-025) | S5 | E7 threshold; DSE-018, DSE-045 | **Not run — explicitly deferred behind rung 2**: calibrating an outcome-thresholded gate on a task where degrading the message improves outcomes inherits the inversion |
 | E9 | RQ3a corpus spike and counts (DSE-041) | S6, parallel | Nothing but network | **Run 24 Aug 2026.** Conditioning state confirmed (220 traces, 5,960 steps, 2,488 handoffs, recorded input contexts); **trace outcome falsified — 0 non-failures on the primary corpus**. Promotes DSE-042 to load-bearing |
 | E10 | RQ3a replay labelling (DSE-042) | S6 | E9; a spend cap | **Not run — now the only route to a two-class step-level *Y*** (E9) |
 | E11 | RQ3a localisation and baselines (DSE-024, rescoped) | S6 | E9, E10, E4 probes | **Not run** |
@@ -307,9 +308,9 @@ raw accuracy.
 | S1 | **A structured-output mode for non-vLLM endpoints** (DSE-032): `ServingConfig.structured_mode`, `guided_json` vs `response_format.json_schema` | S | **Built 24 Aug 2026** |
 | S1 | **A model-ladder benchmark** (DSE-005): throughput, TTFT, peak memory, schema adherence, C0 smoke, into one accumulating table | M | **Built 24 Aug 2026** |
 | S3 | **A pinned encoder revision** (DSE-033): both encoders pinned to commit SHAs; the real load path refuses an unpinned one | S | **Built 24 Aug 2026** |
-| S3 | Control-task selectivity and repeated cross-fits (DSE-043, DSE-044) | M | Open — **blocks F0** |
+| S3 | Control-task selectivity and repeated cross-fits (DSE-043, DSE-044) | M | **Built 24 Aug 2026** — F0 is now gated on the rung-2 re-gate, not on these |
 | S3 | Per-role clients on the runner (`client_a`, optional `client_b`) (DSE-049) | S | **Built 24 Aug 2026** |
-| S5 | Gate integration and controls (DSE-018) and the retry feedback template (DSE-045) | M | Open |
+| S5 | Gate integration and controls (DSE-018) | M | Open. DSE-045 (retry feedback template) **built 24 Aug 2026** |
 | S6 | Corpus loaders and the replay labeller (DSE-041, DSE-042) | L | Open |
 
 ---
@@ -886,3 +887,199 @@ can be neither resumed into nor overwritten. **Attempt 1 is preserved as evidenc
 Parquet, manifest, report and job log — and remains a valid result even though it does not clear the
 gate. If attempt 2 still fails, the fallback ladder fires and RQ3a becomes the headline; there is no
 attempt 3.
+
+---
+
+### E3 — Formal pilot gate run, Myriad bf16 — **attempt 2, the re-gate; verdict `fallback`** — 2026-08-26
+
+- **Run id / manifest:** `eddd19c654515bb2` · `runs/eddd19c654515bb2-run/manifest.json` · report
+  `runs/eddd19c654515bb2-report/pilot.{md,json}` · diagnostic `runs/cycles-a1-vs-a2.txt`
+- **Substrate:** `myriad-nvidia-a100-pcie-40gb` · **Model + revision:**
+  `Qwen/Qwen3-14B`@`40c069824f4251a91eefaf281ebe4c544efd3e18` (bf16, vLLM 0.18.1, torch 2.10.0,
+  guided JSON)
+- **Encoder + revision:** `BAAI/bge-base-en-v1.5`@`a5beb1e3e68b9ab74eb54cfd186867f64f240e1a` ·
+  **Prompt version:** v5 · **Git SHA:** `a327080` · **Simulation digest:** `aea80c8ea9faf072`
+- **Sweep hash:** `abdb854838992a87` · **Seeds:** 0–9 · **Episodes:** 80 (1,925 handoffs,
+  2,199.7 s of sweep) · **Timestamp:** 2026-08-26T21:19:15Z
+- **Command:** `qsub -v ATTEMPT=2 scripts/myriad/pilot.sh`
+
+**What was asked.** The re-gate after the one permitted retune (PREREGISTRATION §6), on prompt v5
+and the widened seeds 0–9 cell. A second failure fires the fallback ladder; there is no attempt 3.
+
+**What came back.** Verdict `fallback`. Two gates failed.
+
+| Gate | Value | Threshold | Verdict |
+|---|---|---|---|
+| G1 capability (easy-C0 episode success) | 0.300 (3/10) | ≥ 0.5 | **FAIL** |
+| G2 signal — success half (C0 − C4) | **−0.200** (0.150 − 0.350) | ≥ 0.1 | **FAIL, sign inverted** |
+| G2 signal — CPVI half (C0 − C4) | **+0.100 bits** (0.153 − 0.053) | > 0 (directional) | **PASS** |
+| G3 groundedness | 0.999 (1,923/1,925 records cite numbers) | ≥ 0.8 | **PASS** |
+
+Control-task CPVI **−0.002**, **selectivity +0.128** — the probe did not manufacture the score.
+Episode success by cell: C0 easy 3/10, C1 easy **7/10**, C3 easy 1/10, C4 easy **7/10**;
+**every hard cell 0/10**.
+
+#### The verdict is procedurally correct and its stated reason is wrong
+
+Both gates failed as pre-registered and the ladder fires as written. But the failure is **not** the
+absence of an information gradient, and it is not a capability ceiling. Three numbers separate the
+gate's arithmetic from what the run actually established:
+
+| Statistic | Value | Reading |
+|---|---|---|
+| G1 at 3/10 | Wilson 95 % **[0.11, 0.60]** | still spans the 0.5 threshold — underpowered even at *n* = 10 |
+| C0 vs C4, easy, episode success (3/10 vs 7/10) | Fisher **p = 0.179** | the sign inversion that failed G2 is **not** statistically established |
+| C0 vs C4 handoff-level stuck rate (0.350 vs 0.205) | Fisher **p ≈ 10⁻⁷** nominal | the mechanism underneath it is not in doubt |
+
+The stuck-rate test treats handoffs as independent when they cluster within episodes, so the nominal
+*p* overstates; the effect survives a cluster correction comfortably but the exact figure needs one.
+**The gate failed on an underpowered episode-level statistic while the mechanism beneath it is
+overwhelming** — which is why this entry ends in a design change rather than in a null.
+
+#### What the retune did, measured
+
+v5 was aimed at the greedy fixed point diagnosed in attempt 1. **It hit its target and missed the
+outcome.** Terminal period-1/2 cycling among failed episodes, `scripts/diagnose_cycles.py`:
+
+| Cell | attempt 1 (v4) | attempt 2 (v5) |
+|---|---|---|
+| C0 easy — cycled | 0.667 | **0.143** |
+| C0 hard — cycled | 0.600 | 0.600 |
+| C0 easy — success | 0.4 (2/5) | 0.3 (3/10) |
+| whole run — failures ending in a cycle | 21/34 = 62 % | 28/62 = **45 %** |
+
+C0-easy periodicity collapsed and the success rate did not follow. Breaking the fixed point was
+**necessary and not sufficient**, and the reason is the next section: the erroneous instruction that
+drove the cycle is regenerated fresh at every step, so B keeps receiving it however much of its own
+history it can see. v5 converted clean limit cycles into aperiodic rotational wandering
+(`ROT-,ROT-,ROT-,ROT-,S,E`) without making the policy goal-directed.
+
+#### The mechanism: the channel degrades a wrong instruction, not information
+
+The T's **y-extent never exceeds 1.553** at any orientation in the circle (minimum 1.300 at 0°,
+maximum 1.553 at −146.8°), and the easy slit is **1.8**. The load therefore clears the gap head-on
+**from every possible angle**, with at least 0.247 of clearance at its worst orientation — so on easy,
+rotation is not merely unused, it is *geometrically incapable of being necessary*. This is the
+documented design intent (`arena.py`: "easy 1.8 (head-on, trivial)"), not an accident of one starting
+pose. Simulated over the ten jittered pilot seeds, a rotation-free policy — close the y gap, then
+push east — solves **10/10 within budget** (`scripts/check_rotation_need.py`). At medium (1.2) and
+hard (1.1) the same policy solves **0/10**: those slits are below the extent at every angle and do
+require the threading maneuver.
+
+Against that ground truth:
+
+1. **A's clean message is grounded and wrong.** A representative C0 delivered message (95 tokens
+   mean) reports the true pose and then concludes: *"the load is oriented at an angle, it may not fit
+   through the slit unless rotated … Rotate the load so it is aligned with the slit (i.e. vertical)
+   before pushing east."* Every number in it is true — which is exactly why **G3 scores 0.999**.
+   The inference drawn from those numbers is false.
+2. **B complies.** C0's failed easy episodes are rotation-dominated; C0's three *successes* burn
+   10–18 steps of an 18-step budget hunting for an angle (`ROT+,E,ROT+,ROT+,ROT+,E,E,ROT+,ROT-,…`).
+   The per-action rotation quantum is coarse — measured mean 31.3°, modal 33.7°, damped to 11–19° on
+   wall contact — so "align it vertically" is not a command this action set can execute cleanly.
+3. **Truncating the message removes the instruction and leaves the coordinates.** C1 delivers 8
+   tokens against a 103-token raw message. **All seven C1-easy successes are pure `E,E,E,…`,
+   8–13 consecutive pushes — the A\* optimum.** 7/10 against C0's 3/10.
+4. **Corrupting it (C4, 0.4 dropout, 95 → 56 tokens) leaves the numbers and the imperative
+   fragments** — *"Push the load to moving toward goal"* survives the word-salad — and also gets 7/10.
+5. **C3 is the control that identifies the direction.** C3 is the only condition that degrades what
+   B **observes** rather than what A **says**, and it is the only degradation that *hurts*: easy
+   success 1/10, the worst stuck rate in the sweep (0.466), the lowest mean progress (0.073) and the
+   lowest `y_binary_progress` rate (0.275). The same nominal "degradation" carries **opposite signs
+   depending on which channel it lands on.**
+
+That dissociation is the finding. It is not explicable by noise-breaks-cycles alone (C1's truncation
+is deterministic and helps as much as C4's stochastic dropout), and it is not explicable by
+terseness (within C0-easy, message length does not predict success — the three successes average
+99.7 tokens against the failures' 95.6, and the single longest episode succeeded).
+
+#### Both difficulty cells fail task validity, independently of the channel
+
+- **Easy cannot require rotation at all**, by the geometry above, and a rotation-free policy solves
+  **10/10** jittered seeds within budget. The cell does not test coordination; it tests whether B can
+  avoid being talked out of the obvious. The strongest single piece of evidence in the run is that
+  the seeds C1-easy actually succeeded on — {1, 3, 5, 6, 7, 8, 9} — are **exactly** the seeds a pure
+  push-east policy solves in simulation. Deprived of A's instruction, B converged on push-east and
+  inherited its success set precisely.
+- **The pilot cell skipped the only difficulty that might have worked.** `_PILOT_DIFFICULTIES` is
+  easy and hard. **Medium was never run**, and medium (slit 1.2) is the one rung that both *requires*
+  rotation (0/10 rotation-free) and is less extreme than the hard cell nobody solved.
+- **Hard is solved by nobody: 0/60 episodes across both attempts** (0/20 in attempt 1, 0/40 here),
+  all four conditions, both prompt versions. The entire hard half of the sweep contributes no
+  outcome variance, so G2's contrast rests on the easy cell alone.
+
+Neither cell is currently a coordination test. That is a task-validity defect discovered by running
+the instrument, and it is independent of — and prior to — the channel question.
+
+#### What is *not* broken
+
+Worth stating plainly, because the two failed gates make the run look worse than it is.
+
+- **The CPVI estimator works.** C0 +0.153 bits, C4 +0.053, gap +0.100 in the predicted direction,
+  control task −0.002, selectivity +0.128, over 1,925 handoffs. It orders the conditions correctly
+  and does not fit nuisance structure.
+- **The gradient is not an entropy artefact.** C4 carries the *highest* label entropy in the sweep
+  (H(Y) = 0.983 bits at a 0.479 base rate, against C0's 0.872 at 0.308) and the *lowest* CPVI — more
+  headroom, less of it used. The base-rate objection does not explain the gap.
+- **The infrastructure is sound.** Job clean, 2,199 s, manifest complete, substrate labelled,
+  dataset re-keyed by `PROMPT_VERSION` so attempt 1 could be neither resumed into nor overwritten.
+- **The A\* certification is sound.** `_SEARCH_ACTIONS` includes ROT± and the oracle applies the
+  real physics to a freshly placed load, so E0 certified against the same action set the agents use.
+  The oracle is what exposed the easy cell's zero-rotation optimum.
+
+#### What it changes
+
+This fires the fallback ladder. Both rungs are taken, in parallel, because they do not compete for
+the same resource — see the design-log entry of the same date for the reasoning and
+PREREGISTRATION §6 for the declaration.
+
+1. **Rung 1 — RQ3a is elevated and started now.** It needs no GPU (S6), so it costs the arena track
+   nothing and it is the insurance that can carry the dissertation alone (DSE-041, DSE-042).
+2. **Rung 2 — one declared task-geometry change, then one re-gate.** The acceptance criterion is
+   checkable before any GPU time is spent: **the A\* optimum must contain ≥ 1 rotation and finish
+   strictly inside budget, for every jittered seed, at every difficulty.** That makes easy a
+   coordination test and hard reachable at the same time.
+3. **RQ3b is explicitly deferred behind rung 2.** The gate blocks low-information handoffs and is
+   calibrated against realised outcomes; on a task where degrading the message *improves* outcomes,
+   that calibration inherits the inversion wholesale.
+
+**Null result recorded as such.** If the rung-2 re-gate also fails, the headline is rung 3 — and the
+methodological findings below stand on their own regardless of which rung carries the thesis.
+
+#### Methodological findings, which do not depend on the gate ever passing
+
+**1. V-usable information is sign-blind.** CPVI answers *"how much does the message reduce a
+V-bounded predictor's uncertainty about Y?"* It does not answer *"does acting on the message improve
+Y?"* This run separates them cleanly: the clean channel carries **+0.100 bits more usable
+information** about the outcome label than the degraded one **and produces less than half the
+success rate**. The message is genuinely more informative *and* genuinely harmful, and the two facts
+are measured on the same 1,925 handoffs by the same estimator. The literature routinely treats
+message informativeness as a proxy for message quality; this is a mechanistically-explained
+counterexample with an internal control (C3) fixing the direction.
+
+**2. That gives the pre-registered circularity guard empirical teeth.** PREREGISTRATION §6 already
+bans calibrating the runtime gate against CPVI, on principle. This run shows what the ban buys: a
+gate calibrated on CPVI would have scored C0's messages *highest* and **promoted precisely the
+messages that caused the failures**. The outcome-only calibration rule and `CosineStatistic`'s
+probe-independence are now motivated by data rather than by argument — which is a stronger position
+than the pre-registration could claim on its own.
+
+**3. Groundedness is not correctness, and G3 cannot tell them apart.** G3 scored **0.999** on a
+message corpus whose modal inference was wrong. A check that verifies message numbers against true
+state is *by construction* blind to a false conclusion drawn from true numbers. This is a construct
+gap in a gate this project pre-registered and then ran — and it generalises: hallucination-style
+faithfulness checks on inter-agent messages will pass confidently-wrong-but-faithful reasoning. Any
+future G3 needs a correctness limb (e.g. agreement with the oracle's next action) alongside the
+grounding limb.
+
+**4. Instruction-following dominates self-observation in a two-agent loop.** v5 gave B the last four
+actions and the geodesic each gained — including explicit evidence that rotating gained nothing —
+and B kept rotating while A kept telling it to. Cycling fell (0.667 → 0.143 on C0-easy) and the
+outcome did not. A receiver that can see its own failed history still weights the sender's
+instruction above it. That is a measured statement, not a speculation, and it bears directly on any
+gate that hopes to change behaviour by re-prompting.
+
+**5. Negative results survive the instrument being wrong.** Findings 1–4 are established by the
+run's *internal* contrasts — C3 against C1/C4, CPVI against outcome, oracle against observed plan —
+so they do not depend on G1 or G2 ever passing, and they are not invalidated by the task-validity
+defect that rung 2 exists to fix. That is the property that makes them safe to write up now.

@@ -246,6 +246,46 @@ and is appended after `apply_channel` so the channel still degrades one thing on
 is explicitly NOT the retune and stays at 2.5 × the oracle optimum**: failed episodes ended a mean
 geodesic 7.02 from a goal of radius 0.8 and only 1 of 34 within 1.5, so more steps buy more cycling.
 There is no attempt 3.
+
+**The ladder fired on 2026-08-26 (attempt 2, `eddd19c654515bb2`): `fallback`.** G1 FAIL 0.300,
+G2 FAIL −0.200 with the success gap **sign-inverted**, G3 PASS 0.999. The diagnosed cause is not an
+absent gradient: the T's y-extent never exceeds **1.553** at any orientation against an easy slit of
+**1.8**, so easy clears head-on from every angle and a rotation-free policy solves **10/10** jittered
+seeds — while A's clean message, grounded (hence G3 0.999), concludes that the load must be rotated
+before it can thread.
+Degrading the *message* (C1, C4) removes that erroneous instruction and doubles success to 7/10;
+degrading the *observation* (C3) removes true state and collapses it to 1/10. Evidence in
+`docs/EXPERIMENTS.md` (E3 attempt 2) and `docs/experiment_design_log.md` (2026-08-26, later).
+
+**Rungs 1 and 2 are both taken, declared here before any further compute.** They do not compete for
+a resource: rung 1 needs no GPU.
+
+- **Rung 1 — RQ3a elevated to the headline** (DSE-041, DSE-042), started immediately.
+- **Rung 2 — one declared task-geometry change, then exactly one re-gate.** Like the retune, this is
+  one coherent package applied once. Its acceptance criterion is **fixed here, before the change is
+  designed, and is checkable on CPU with no model in the loop**: the A\* optimum must contain
+  **≥ 1 rotation** and finish **strictly inside budget**, for **every jittered seed at every
+  difficulty**. Equivalently and more cheaply, the necessary condition is that **every slit be
+  narrower than the load's maximum y-extent of 1.553** — easy's 1.8 is not, which is why rotation
+  there is geometrically incapable of being necessary. `scripts/check_rotation_need.py` decides both
+  halves on CPU in seconds and currently returns REJECTED. This is what makes easy a coordination
+  test and hard reachable (today it is 0/60 across both attempts). **Medium enters the pilot cell**:
+  `_PILOT_DIFFICULTIES` was easy and hard, so the one rung that already requires rotation (0/10
+  rotation-free) and is less extreme than the unsolved hard cell was never run. A rung-2 re-gate that still fails ends
+  the arena track and rung 3 becomes the headline; there is no second rung-2 attempt.
+- **RQ3b is deferred behind the rung-2 re-gate.** The gate is calibrated against realised outcomes;
+  on a task where degrading the message improves outcomes, that calibration inherits the inversion.
+
+**What is *not* changed by the ladder firing.** *Y* stays `y_binary_progress` — it shows the same
+inversion (C1 0.932 > C4 0.479 > C0 0.308 > C3 0.275), so re-choosing it would rescue the gate
+without touching the defect, which is the forbidden move. *V*, the encoder, the conditioning
+semantics, the C1/C3/C4 parameters and the G1/G2/G3 thresholds are all untouched. **Rung 2 changes
+the task, and nothing else.**
+
+**G3 gains a correctness limb at F0.** G3 scored 0.999 on a corpus whose modal inference was wrong,
+because a check that verifies message numbers against true state cannot detect a false conclusion
+drawn from true numbers. F0 fixes a second limb — agreement with the oracle's next action — reported
+beside the grounding limb, never replacing it. This is declared now, before the rung-2 data exists.
 **The retune ledger starts at the Myriad bf16 re-gate.** Local 4-bit results are indicative:
 a local G1 pass is not the verdict of record, and a local G1 *failure* does not spend the retune
 until it is reproduced at bf16.
