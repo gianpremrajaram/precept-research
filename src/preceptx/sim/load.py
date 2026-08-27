@@ -1,8 +1,18 @@
-"""The T-shaped dynamic load: one rigid body carrying two box shapes forming a T.
+"""The dynamic load. Two shapes live here: the active convex bar, and the legacy T.
 
-The T's long axis must rotate to clear a narrow slit (DSE-006); the geometry below is constructed
-so the body's vertical extent is symmetric about its position, i.e. placing the body at a slit's
-y-centre centres the load on the gap. Dimensions are module constants (the task uses one load).
+**The bar is the active load (DSE-058).** It is the *successor* task's body, adopted after the
+T-load benchmark was falsified as a rotation-necessity manipulation: because the T is non-convex,
+its collision-free configuration space through a gap is not characterised by a bounding y-extent,
+so the bar and the stem cross at different instants and a translation-only path exists at every
+slit width. A convex body has no such escape - fit is governed by extent - which is what makes an
+explicit rotation necessary. See `docs/experiment_design_log.md` (2026-08-27) for the falsification.
+
+**The T is retained deliberately**, not as dead code: it is the subject of a published finding, and
+`scripts/check_rotation_need.py` plus the unit tests reproduce that falsification from source. Do
+not delete it without also retiring the finding.
+
+Both bodies are symmetric in y about the body origin, so placing the body at a slit's y-centre
+centres the load on the gap. Dimensions are module constants (the task uses one load).
 """
 
 from __future__ import annotations
@@ -27,6 +37,19 @@ _AREA_BAR = T_BAR * T_THICK
 _AREA_STEM = T_STEM * T_THICK
 COG_Y = (_AREA_BAR * _BAR_CY + _AREA_STEM * _STEM_CY) / (_AREA_BAR + _AREA_STEM)
 
+# Convex bar geometry (world units) - the ACTIVE load. Same footprint as the T's crossbar, so the
+# arena scale and the grip span are unchanged; what changes is that there is no second member to
+# cross the gap independently. Rotation-required aperture band is [BAR_THICK, BAR_LEN) = [0.3, 1.4),
+# against the T's empty band. The shipped ladder sits at 1.20/0.80/0.50 (see sim/arena.py).
+BAR_LEN = 1.4
+BAR_THICK = 0.3
+
+# The bar is symmetric about its origin, so its centre of gravity IS the origin. Serialisers read
+# back a COM and need the offset to recover the body origin; for the bar that offset is zero.
+LOAD_COG_Y = 0.0
+LOAD_EXTENT_X = BAR_LEN  # x-extent at angle 0
+LOAD_EXTENT_Y = BAR_THICK  # y-extent at angle 0
+
 Vert = tuple[float, float]
 
 
@@ -49,8 +72,38 @@ def t_shape_verts() -> tuple[list[Vert], list[Vert]]:
     return bar, stem
 
 
+def bar_shape_verts() -> list[Vert]:
+    """Local-frame vertices of the convex bar, centred on the body origin."""
+    return _box_verts(0.0, 0.0, BAR_LEN, BAR_THICK)
+
+
+def load_polys() -> list[list[Vert]]:
+    """Every polygon of the ACTIVE load, for renderers and any outline consumer.
+
+    A list because the legacy T needed two; the bar returns one. Consumers iterate rather than
+    unpack, so swapping the active shape does not ripple outward.
+    """
+    return [bar_shape_verts()]
+
+
+def add_load(space: pymunk.Space, pos: tuple[float, float], mass: float) -> pymunk.Body:
+    """Add the ACTIVE load (the convex bar) at ``pos`` as a single dynamic polygon."""
+    verts = bar_shape_verts()
+    body = pymunk.Body(mass, pymunk.moment_for_poly(mass, verts))
+    body.position = pos
+    shape = pymunk.Poly(body, verts)
+    shape.friction = T_FRICTION
+    space.add(body, shape)
+    return body
+
+
+def point_in_load_local(lx: float, ly: float) -> bool:
+    """Whether a local-frame point lies inside the ACTIVE load's footprint (the grid serialiser)."""
+    return abs(lx) <= BAR_LEN / 2.0 and abs(ly) <= BAR_THICK / 2.0
+
+
 def add_t_load(space: pymunk.Space, pos: tuple[float, float], mass: float) -> pymunk.Body:
-    """Add a dynamic T-load at ``pos``; mass is split by area and moment summed over both boxes."""
+    """Add the dynamic load at ``pos``; mass is split by area and moment summed over its boxes."""
     bar, stem = t_shape_verts()
     area_bar, area_stem = T_BAR * T_THICK, T_STEM * T_THICK
     area = area_bar + area_stem

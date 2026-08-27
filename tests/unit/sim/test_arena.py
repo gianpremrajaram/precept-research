@@ -41,10 +41,19 @@ def test_build_arena_has_outer_and_two_split_internal_walls() -> None:
     geo = ArenaGeometry()
     space = build_arena(0.7, geo)
     segs = [s for s in space.static_body.shapes if isinstance(s, pymunk.Segment)]
-    assert len(segs) == 8  # 4 outer + 2 internal walls each split into 2 around the slit
+    # 4 outer + per internal wall: 2 faces x 2 segments around the aperture, plus a channel
+    # floor and ceiling = 6 each. Channels, not thin segments, are what bind orientation.
+    assert len(segs) == 16
 
     half = 0.7 / 2.0
-    for x in (geo.chamber_w, 2.0 * geo.chamber_w):
+    # Each internal wall is a channel, so its vertical segments sit on the two FACES at
+    # x +/- wall_depth/2 rather than on a single threshold at x (DSE-058).
+    faces = [
+        x + sign * geo.wall_depth / 2.0
+        for x in (geo.chamber_w, 2.0 * geo.chamber_w)
+        for sign in (-1.0, 1.0)
+    ]
+    for x in faces:
         pair = _internal_segments(space, x)
         assert len(pair) == 2
         tops = sorted(max(s.a.y, s.b.y) for s in pair)
@@ -69,10 +78,17 @@ def test_make_scenario_reconstructs_identically() -> None:
     assert va == vb
 
 
-def test_easy_slit_load_passes_under_nudge() -> None:
-    # Wide slit: a straight head-on nudge clears the first internal wall (x = chamber_w).
-    scenario = make_scenario("easy")
-    assert _push_east(scenario) > ArenaGeometry().chamber_w
+def test_broadside_load_jams_at_every_aperture_without_rotating() -> None:
+    """The successor task's defining property: pushing east alone never threads the channel.
+
+    This inverts the predecessor's test, which asserted the easy slit *passed* under a head-on
+    nudge. That was the defect - easy admitted a rotation-free solution and so tested nothing. Here
+    the canonical pose is broadside and the load is convex, so no aperture in the ladder lets it
+    through on translation alone (DSE-058).
+    """
+    wall_x = ArenaGeometry().chamber_w
+    for difficulty in ("easy", "medium", "hard"):
+        assert _push_east(make_scenario(difficulty)) < wall_x, difficulty
 
 
 def test_hard_slit_load_jams_without_rotation() -> None:

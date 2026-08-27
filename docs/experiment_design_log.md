@@ -15,6 +15,455 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
+## 2026-08-27 (post-review) — A pre-registered acceptance criterion that no input could fail, and a prompt describing the wrong object
+
+- **Area:** the certification standard's limb 7 (passive self-alignment), the status of
+  `hold_orientation` as a modelling assumption, and the successor task's prompt surface (DSE-058).
+- **Status:** pre-freeze, pre-compute. Still no model call against the successor task.
+
+### Trigger
+
+An independent multi-agent code review of the DSE-058 branch. Two of its findings were symptoms of
+one thing: the successor task was implemented in the physics and the solver, and *not* propagated to
+the two surfaces a reviewer reads the method through — the acceptance check and the prompt.
+
+### Finding
+
+**Limb 7 was vacuous in two independent ways, and it is a pre-registered criterion.** It was
+declared as one of seven conditions "every declared seed at every difficulty must satisfy", and the
+adoption record claims 30/30 seeds passed every limb. Neither half of it could ever fail:
+
+1. **It ran in the wrong branch.** The drift check sat inside the branch where limb 3 had *already*
+   found a translation-only path — that is, where the seed was rejected regardless. It could refine
+   a failure's label; it could not cause one. The case it was written for — a seed that passes
+   limbs 1–3 and is nonetheless degenerate — never reached it.
+2. **It measured the wrong world.** It replayed under the shipped `StepConfig`, in which
+   `hold_orientation` restores the pre-action angle after every non-rotate action. The measured
+   drift was therefore **identically 0.0** on every input it ever saw, on every candidate geometry
+   ever tested. The number in the certification record was an artefact of the guard, not evidence
+   about the geometry.
+
+**`hold_orientation` is doing far more work than "closes a degeneracy by construction" conveys.**
+With the hold disabled, ten straight eastward pushes rotate the load by up to **103° (easy), 98°
+(medium), 20° (hard)** across 30 seeds — enough to align the bar with the aperture completely,
+with no rotate action issued. **All three rungs exceed limb 7's own 15° limit without the guard**,
+so it is load-bearing everywhere, and the ordering is the inverse of the naive one — drift is
+largest at the *widest* aperture, which admits the bar and lets contact turn it, while the hard
+aperture is too narrow to enter and the load jams instead. The first estimate of this quantity,
+taken on seeds 0–2, was **9°**.
+
+**Every prompt surface still described a T.** Not only the `nl` serialiser: both system prompts said
+"T-shaped load" and "the T-load", so *all three* serialisation arms told the model it was
+manipulating a T while the physics carried a convex bar. Separately, the numeric and NL forms named
+one x per wall while each wall spans 1.5 units of it, and the grid drew a one-cell stripe through
+1.5 world-units of solid geometry.
+
+### Impact
+
+Had this shipped: the adoption record would have claimed a seven-limb certification that was a
+six-limb one; the dependence of the headline rotation-necessity result on a modelling assumption
+would have been undisclosed and unquantified; and the successor task's first model call would have
+carried the *exact* defect DSE-057 was spent falsifying — a prompt grounded in correct numbers and
+wrong about the object — for a second time, on a task adopted specifically to escape it.
+
+### Risk reduced
+
+The dissertation's rung-2 claim is "rotation is operationally necessary on the successor task". The
+honest form of that claim is "…given that two grips hold the load's orientation through a push".
+The 103° figure is what a reviewer would have asked for and what the record could not have supplied.
+
+### Correction path (and what was rejected)
+
+- **Rejected: delete limb 7 as redundant.** Defensible — the property *is* guaranteed by
+  construction — but it would quietly drop a pre-registered criterion and leave the assumption
+  undisclosed. The disclosure is the valuable part.
+- **Rejected: certify with `hold_orientation` off.** That would certify a world the episodes do not
+  run in. Limbs 1–3 must reflect shipped physics or they gate nothing.
+- **Adopted: gate on the certifying config, report the counterfactual.** Limb 7 now runs on seeds
+  that *pass* limbs 1–3, under the config being certified. `unheld_drift_deg` prints the guard-off
+  drift alongside the verdict, so the assumption travels with the certificate rather than being
+  discoverable only by reading the source.
+- **Prompt surface bumped to v6.** This does **not** consume a fourth retune of the T task: it is
+  the prompt surface of a different benchmark, and the arithmetic of "which retune is this" applies
+  to the T arena, which is retired. It landed before the first successor model call, so no dataset
+  is re-keyed.
+
+### Result of the fix
+
+Certification re-run at `--certify --seeds 30`: **30/30 at every rung**, unchanged, now with a limb
+7 that can fail. Regression tests pin that limb 7 can reject an otherwise-clean seed, and that the
+drift instrument reads 0 under the hold and non-zero without it — the test that would have caught
+this. Full suite 359 passed, 1 skipped.
+
+### So-what
+
+**A pre-registered check that cannot fail is worse than no check.** It converts an untested
+assumption into a documented result, and the documentation is what a reader trusts. The failure was
+not a wrong threshold; it was a check wired where nothing could reach it, measuring a quantity a
+later change had pinned to zero. Neither is visible from the criterion's wording, and both survived
+a green test suite, because the test asserted the constants existed rather than that the check
+could fire.
+
+**Small samples lied a third time on this task.** 10 seeds hid the aperture-0.48 leak; 3 seeds put
+the guard-off drift at 9° when it is 103°. The 30-seed rule was adopted for the first and would have
+prevented the third had it been applied to a diagnostic rather than only to the gate.
+
+**A task change is not done when the physics is done.** The bar shipped in the simulator, the
+solver, the fingerprint and the difficulty ladder, and stayed a T in the two places that decide what
+a model is told and what a reviewer is shown. Those surfaces need to be on the change's checklist
+explicitly, because nothing in the type system connects them to the load's geometry.
+
+---
+
+## 2026-08-27 (later still) — The successor task ships, and two certification traps nearly let a broken one through
+
+- **Area:** the successor task's implementation (load shape, wall topology, difficulty ladder, start
+  distribution) and, more importantly, two failure modes of the acceptance procedure itself (DSE-058).
+- **Status:** pre-freeze, pre-compute. Implemented and certified on CPU; no model call has been made
+  against it.
+
+### Trigger
+
+The entry below selected a convex bar in a finite-depth channel and reported apertures 0.55-0.80 as
+passing certification. Implementing it for real - on the actual jittered seeds, at the actual frozen
+budgets - broke that result twice over.
+
+### Finding
+
+**Trap 1: the certification was budget-dependent, and the budget moved underneath it.** A ladder that
+certified 10/10 at step budget 25 leaked as soon as the budget was re-derived to 28. A longer budget
+admits longer degenerate paths, so the restricted search finds one where it previously exhausted.
+Budget width is part of the acceptance criterion, not a parameter set afterwards; the check must be
+re-run after any budget change.
+
+**Trap 2: certifying on the declared ten seeds passed a task that leaks on a quarter of instances.**
+Aperture 0.48 gave a clean **10/10 on seeds 0-9** - and **12/20 on seeds 10-29**, for 22/30 overall.
+The pilot's own seed set would have certified a manipulation that fails ~27% of the time. Widening
+the sample is what caught it, and no amount of care on the declared seeds would have.
+
+**The mechanism behind both is passive self-alignment, and it is chaotic.** Contact at the channel
+mouth rotates the load with no rotate action issued, up to 114 deg of it. Its incidence is not a
+smooth function of aperture (0.44 gave 6/10 where 0.46 gave 10/10) nor of the y-jitter width, so no
+choice of widths tunes it away - any 10/10 found by search is a draw, not a property.
+
+### Impact
+
+The earlier 0.55-0.80 recommendation was wrong, and wrong in the direction that matters: it would
+have shipped. Both traps are procedural rather than geometric, so both generalise - any benchmark
+certified on its own evaluation seeds, at a budget chosen after the fact, inherits them.
+
+### Correction path (and what was rejected)
+
+- **Rejected - pick the aperture that gives 10/10.** That is fitting the geometry to the seed set,
+  and the 30-seed check shows it does not generalise.
+- **Rejected - narrow the y-jitter** so off-centreline starts stop being funnelled. Tested at
+  (2.4, 3.6) and (2.7, 3.3): results stayed chaotic and no combination reached 10/10 cleanly.
+- **Rejected - tune wall friction**, the obvious lever for a contact effect. Aperture 0.45 held
+  10/10 at friction 0.2, 0.6 **and** 1.5, so the mechanism is not friction-driven and tuning it
+  would have been a constant changed for no reason. **No friction value was altered.**
+- **Taken - hold the load's orientation through non-rotate actions** (`StepConfig.hold_orientation`,
+  default on). Two grips carrying a rigid load hold its orientation as well as its position; the
+  angle changes only when the pair deliberately rotates it. It is the same class of abstraction as
+  the existing quasi-static velocity zeroing, and it matches the cooperative-transport referent the
+  roadmap names.
+
+### The fix
+
+`hold_orientation` restores the pre-action angle after any action other than ROT+/ROT-. It closes
+the degeneracy **by construction rather than by tuning**: every aperture from 0.45 to 1.10 certifies
+**30/30**, where before the whole band leaked chaotically.
+
+That reopened the design space the leak had collapsed, so the ladder could spread properly:
+
+| Rung | Aperture | Optimum | Rotations | Budget |
+|---|---|---|---|---|
+| easy | 1.20 | 8 steps | **1** | 20 |
+| medium | 0.80 | 10 steps | 2 | 25 |
+| hard | 0.50 | 10 steps | 2 | 25 |
+
+Difficulty now separates in the certificate itself - easy needs one rotation, medium and hard two -
+and again in tolerance, since the band of clearing orientations narrows with the aperture.
+
+Also implemented: the convex bar as the active load with the T retained (it is the subject of a
+published falsification and deleting it would orphan the finding); channel walls via
+`ArenaGeometry.wall_depth = 1.5`, with 0.0 still building the legacy thin segment; a broadside
+canonical pose, since at angle 0 the bar is already aligned and would have derived a budget from an
+instance no episode ever sees; a start-angle band of 80-100 deg; `x_range` shortened to 2.4 so no
+pose starts inside the channel mouth; and fingerprint schema v2, which gains a `load_shape` field
+and an `actions` group so a change to `hold_orientation` re-keys the dataset.
+
+### Result of the fix
+
+**30/30 seeds at every rung**, at the frozen budgets, with the translation-only search exhausted and
+the full optimum containing an explicit rotation. Full suite green at 354 passed.
+
+### So-what
+
+**The transferable lesson is about acceptance procedures, not geometry.** A benchmark certified on
+the seeds it will be evaluated on, at a budget fixed after the certificate, can pass while failing a
+quarter of the time - and the failure is invisible precisely where it is measured. Certify on a
+strictly larger sample than the study will use, and treat the budget as part of the criterion.
+
+**And the right fix for a degeneracy is usually structural, not a tuned constant.** Friction was the
+obvious lever and would have been the wrong one: the effect survived a factor of seven in friction.
+Holding orientation removed the mechanism instead of suppressing its symptom, and it is defensible
+from the task's own referent rather than from what made the numbers work.
+
+---
+
+## 2026-08-27 (later) — No width and no depth restores rotation for a non-convex load; the successor task is a convex bar
+
+- **Area:** task geometry, the load's shape, the simulator's collision-fidelity contract, and the
+  fallback-ladder decision (rung 2 vs rung 3). Follows directly from the DSE-057 entry below.
+- **Status:** pre-freeze, pre-compute. The CPU spike lives outside the repository; no arena constant,
+  load shape, prompt or macro action has been changed by this entry. It records what the spike
+  established and the design decision taken on it.
+
+### Trigger
+
+The entry below established that rotation is unnecessary at every shipped difficulty and closed with
+"whatever rung 2 becomes must change what the wall *is* — a channel with depth". Before implementing
+that, it was tested on CPU, as the corrected instrument now makes possible in minutes.
+
+### Finding
+
+**Wall depth does not fix it, and the reason is the load, not the wall.** A grid over channel depth
+∈ {1.5, 2.5} × aperture ∈ {1.35, 1.40, 1.45} × start angle ∈ {0°, 30°, 60°} contains **no
+rotation-required cell**. Every cell is either impossible or translation-only feasible. Two causes:
+
+- The effective aperture is `nominal − 2 × wall_radius`, i.e. 0.1 narrower than the declared width.
+- **The T is non-convex, so its collision-free configuration space through a channel is not
+  characterised by a single bounding y-extent.** The bar and the stem can occupy different
+  longitudinal positions relative to the channel faces, admitting translation-only paths that a
+  whole-outline clearance calculation excludes. This is a configuration-space property, not a
+  physics-engine artefact: it survives re-certification at 16 collision substeps.
+
+The start-angle exclusion proposed as the rescue does not rescue it. Starts whose orientation is
+infeasible for the channel come back **impossible**, not rotation-required: the load cannot reach a
+feasible orientation and cannot pass in the one it has.
+
+**Two further mechanisms were found, and both are general.**
+
+- **Integration squeeze.** A candidate tunnel path was solvable at the shipped `substeps = 4` and
+  died at 8: at coarse collision resolution a macro impulse drives the load through an aperture
+  narrower than its own outline before contact resolves. Every frozen E3 certificate was re-checked
+  and is stable from 4 to 64, so nothing recorded is affected — but **a feasibility verdict that
+  moves with the integrator cannot gate an experiment**, and the shipped default is therefore not a
+  certification standard.
+- **Passive self-alignment.** Macro impulses are applied at the COM and carry no torque, yet contact
+  at the aperture mouth rotates the load anyway. "Translation-only in the action space" is not
+  "rotation-free in the state space": at apertures ≥ 0.90 a convex bar aligns itself against the
+  channel and passes with no rotate action ever issued. This is the subtlest of the three, because
+  the action log shows no rotation while the state trajectory contains one.
+
+### Impact
+
+Rung 2 cannot be a parameter change of any kind — not width, not depth, not the start distribution.
+The T-load arena is falsified as a rotation-necessity manipulation, and the falsification is
+structural rather than a mis-set constant.
+
+A **convex** load does work: fit is then governed by extent, with no configuration-space escape. A
+1.4 × 0.3 bar in a depth-1.5 channel at aperture 0.80 is certified rotation-required at start angles
+80°, 85° and 90° — translation-only search exhausted, full optimum 9–10 steps containing 1–2
+rotations, replay stable at 16, 32 and 64 substeps.
+
+### Risk reduced
+
+Implementing a channel for the T — a real change touching the arena, the grid serialiser, the
+geodesic and the budgets — that the spike shows would not have worked. And, separately, certifying
+any future geometry at a fidelity that had already been demonstrated to give a wrong answer.
+
+### Correction path (and what was rejected)
+
+- **Rejected — tune widths again.** Falsified by the entry below.
+- **Rejected — depth alone, or depth plus start-angle exclusion.** Falsified above.
+- **Rejected — an L-bend corridor (true piano-movers).** It is the most faithful fix, but it changes
+  the geodesic, and `y_binary_progress` is built on a monotone x-geodesic. That is an outcome-variable
+  change, which §6 forbids at this stage, and it would not be one coherent package applied once.
+- **Rejected — raising the shipped `substeps` default to 16.** Result-affecting for no benefit: the
+  frozen certificates are already stable, and it would re-key every dataset.
+- **Taken — a convex bar in a finite-depth channel, declared as a successor task, plus a separate
+  certification fidelity profile.**
+
+### The fix (decided, not yet implemented)
+
+**Two tracks in parallel, both funded; the arena is not abandoned.**
+
+- **Track C — rung 3 and RQ3a**, starting immediately, needing no GPU and no arena. The methodological
+  finding is written up in `docs/EXPERIMENTS.md` ("The headline methodological finding").
+- **Track A — the convex-bar successor task.** Labelled honestly: *a successor rotation-control
+  benchmark, adopted after the original T-load benchmark was falsified as a rotation-necessity
+  manipulation*. It is **not** presented as a repair of the T arena and **not** as the primary
+  dissertation result unless it clears certification with time for one clean re-gate. The change of
+  embodied object is logged here as a protocol deviation driven by a physics-engine limitation, since
+  it alters the load's affordances, the spatial representation agents see, the difficulty mechanism
+  and the task fingerprint.
+- **`CERTIFICATION_STEP_CONFIG` (substeps = 64)** is added to `sim/feasibility.py`. `StepConfig.substeps`
+  is a pure resolution knob — total simulated time is `settle_steps × dt` regardless of it — so the
+  shipped default of 4 is left untouched for reproducibility while all new-geometry acceptance runs at 64.
+
+### The certification standard (fixed before any candidate is adopted)
+
+Every declared seed at every difficulty must satisfy **all** of:
+
+1. full-action search solvable at `CERTIFICATION_STEP_CONFIG`;
+2. translation-restricted search **exhausted** without reaching the goal, same fidelity;
+3. the full-action solution contains ≥ 1 rotation;
+4. replay of that solution succeeds at 16, 32 **and** 64 substeps;
+5. a strict, pre-declared budget margin — not success on the final permitted action;
+6. the verdict is invariant to a conservative collision-margin perturbation, wall radius included;
+7. the realised **angle trajectory** under the translation-restricted search shows no passive
+   alignment large enough to substitute for a commanded rotation.
+
+Limb 7 is new and exists solely because of the passive-alignment mechanism. The measured rotation
+quantum — **exactly 33.7°, deterministic** (min = max over 72 applications) — is used as a candidate
+generator and early-rejection screen only. A band half-width of ≥ 17° is **not** an acceptance
+criterion: 33.7° does not divide 360°, the band *centre* must be reachable on the lattice from the
+declared start, and in-contact rotation differs from open-space rotation. Physics certification is
+the criterion; the lattice is the screen.
+
+### So-what
+
+**Three independent degeneracy mechanisms turned up in one task, and each needed a different check
+to see.** Staged crossing needs an exhausted restricted search; integration squeeze needs invariance
+to collision resolution; passive self-alignment needs the realised state trajectory, because the
+action log looks clean. That triple is the transferable content of this project's arena work,
+independent of whether the successor task ever runs.
+
+**The arena is not abandoned, and the reason is not sunk cost.** The convex bar is a genuinely
+different manipulation with a rotation-required band of **[0.4, 1.5)** in nominal aperture against
+the T's empty band — an order of magnitude more design room, certified rather than assumed. It is
+worth one properly gated attempt. What has changed is that it is now a *declared successor task*
+with a published falsification behind it, not a quiet retune, and it runs alongside a fallback that
+no longer depends on it.
+
+---
+
+## 2026-08-27 — Rotation is not necessary anywhere: the task's cognitive core is absent
+
+- **Area:** task geometry and difficulty semantics — whether the arena tests what DSE-006 says it
+  tests — plus the acceptance criterion for the fallback ladder's rung 2 (DSE-057).
+- **Status:** pre-freeze, pre-compute. No arena constant, prompt or macro action was changed by this
+  entry; it repairs the *instrument* that was to decide the rung-2 change, and reports what the
+  repaired instrument says.
+
+### Trigger
+
+The 2026-08-26 entry below closed with a rung-2 acceptance criterion and a script,
+`scripts/check_rotation_need.py`, said to "decide both halves on CPU in seconds". Before spending
+any GPU time behind that gate, the script was reviewed against its own claim. It did not meet it: it
+never called the feasibility solver. It decided "is rotation necessary?" by running **one
+hand-written policy** — close the y gap, then push east — and reading its failure as necessity.
+
+### Finding
+
+**A policy that fails proves nothing, and this one was hiding the largest task-validity defect in
+the project.**
+
+Replacing the policy with the existing A\* oracle restricted to the translation actions `N/S/E/W`,
+and exhausting that search, inverts the answer at both difficulties the old script "passed":
+
+| Difficulty | Slit | Full-action optimum | Translation-only optimum |
+|---|---|---|---|
+| easy | 1.8 | 7 steps, **0 rotations** | 7 steps |
+| medium | 1.2 | 13 steps, 2 rotations | **13 steps** — rotation buys nothing |
+| hard | 1.1 | 13 steps, 1 rotation | **14 steps** — rotation saves one step |
+
+Over 10 jittered seeds × 3 difficulties, **0/30 meet the necessity criterion**: 28 admit a
+translation-only path inside budget and 2 have a full-action optimum with no rotation at all.
+
+The cause is the arena's own geometry, already written down and not followed through. The internal
+walls are `pymunk` segments of radius 0.05 — planes with no depth — so the load never has to fit the
+gap all at once. The bar crosses at its 0.3 thickness; the stem then crosses at its 1.0 length; each
+clears a 1.1 slit alone. `sim/arena.py` says as much ("the TIGHTEST threadable slit is the shorter
+member = the stem = 1.0 (rotation cannot beat this)"). What had not been drawn from that sentence is
+that the staged crossing is a **translation** manoeuvre — so rotation is redundant at every slit
+width, and no choice of widths can restore it.
+
+### Impact
+
+DSE-006 calls rotation through the slits **"the cognitive core of the task"**. That core is absent
+from every rung of the shipped ladder. Three earlier readings are superseded:
+
+- *"Easy is the invalid cell"* — easy is invalid, but so are medium and hard, for a deeper reason.
+- *"Medium is the untested rung that requires rotation"* — it does not require rotation; running it
+  would have bought a third measurement of the same defect at full GPU cost.
+- *"Widen the band via `T_THICK`"* — the band `[stem, thick+stem)` describes **head-on single-shot
+  clearance**, not necessity. Widening it changes which slits clear in one shot and leaves staged
+  translation untouched. It would have been a real change that fixed nothing.
+
+It also explains the failure signature the channel analysis could not: the `ROT+,ROT-,ROT+,ROT-`
+oscillation consuming up to 30 of 33 steps in the hard cell is the pair hunting an angle that never
+needed finding.
+
+### Risk reduced
+
+The largest available: a rung-2 geometry change, and a GPU re-gate behind it, chosen against a
+criterion that could not detect the defect it was written to detect. Under the old script the
+`T_THICK` widening would have returned ACCEPTED, the re-gate would have run, and it would have failed
+for a reason the instrument was blind to — spending the last rung of the ladder on a non-fix. The
+same script would also have returned ACCEPTED for a **geometrically impossible** arena, since it
+never checked solvability at all.
+
+### Correction path (and what was rejected)
+
+- **Rejected — soften the wording and proceed.** The criterion was not imprecise, it was invalid.
+- **Rejected — keep the policy and add more policies.** Any finite set of policies still cannot
+  establish necessity; only exhausting a restricted search can.
+- **Rejected — carry the monotone-rotation probe** proposed as a way to separate "action space
+  inadequate" from "agents will not commit". A rotation-free path is trivially monotone, so limb 3
+  subsumes it; building it would have measured nothing new.
+- **Taken — make the criterion a proof.** Three limbs, all per jittered seed: the full-action optimum
+  is solvable inside the certified budget; it contains ≥ 1 rotation; and the same search restricted
+  to translations is exhausted without reaching the goal.
+
+### The fix
+
+`solve()` gains two keyword arguments, `actions` and `scenario`, both defaulting to the frozen
+behaviour so `certify()` and the budget certificate are bit-for-bit unchanged. Restricting the action
+set turns the oracle into a necessity proof; supplying a scenario runs it per jittered seed rather
+than only on the canonical pose. `scripts/check_rotation_need.py` is rewritten around the three
+limbs and reports a named reason per seed (`unsolvable`, `over_budget`, `zero_rotation_optimum`,
+`translation_only_feasible`). `tests/unit/scripts/test_rotation_instrument.py` pins the falsifying
+facts, including the false-accept on an unsolvable arena.
+
+### Result of the fix
+
+REJECTED at **every** difficulty — easy, medium and hard — where the previous version rejected easy
+alone. Two claims elsewhere were falsified by the same pass and corrected in place:
+
+- **The handoff-level statistics do not survive episode clustering.** `docs/EXPERIMENTS.md` asserted
+  that the C0-vs-C4 stuck-rate effect "survives a cluster correction comfortably but the exact figure
+  needs one". Computed: difference +0.145, episode-cluster 95 % CI **[−0.005, +0.294]**, permutation
+  *p* = **0.085**. C0−C1 and C0−C3 also cross zero. The nominal *p* ≈ 10⁻⁷ was entirely an artefact
+  of treating ~500 clustered handoffs as independent across 20 episodes.
+- **`MIN_CYCLE = 4` counted actions, not repetitions**, as the changelog claimed. Renamed
+  `MIN_CYCLE_ACTIONS`; no reported fraction changes.
+
+### So-what
+
+**The rung-3 finding is now stronger, and it is a different finding.** It was going to rest on a
+handoff-level *p*-value that has just evaporated. What replaces it is not an estimate at all: an
+exhaustive search showing that a task built to require a spatial-reasoning manoeuvre does not require
+it, that the two-agent pair spends its budget attempting the manoeuvre anyway because the sender
+keeps instructing it, and that degrading the channel improves outcomes precisely by deleting that
+instruction. The methodological contribution — *a coordination benchmark can look like it exercises
+a capability while admitting a degenerate solution, and the information-theoretic read of the channel
+inverts when it does* — is a proof plus a categorical observation (10/10 C1-hard failures are the
+literal sequence `E,E,E,E,E,E`), not a contested test.
+
+**Two general lessons, both cheap and both nearly missed.** A necessity claim needs an exhaustive
+search over a restricted action set, never a policy that failed; and a clustered design needs its
+clustered test computed rather than asserted — the correction here did not shrink a *p*-value, it
+removed the finding it was attached to.
+
+**The open question is no longer "which slit widths".** No width restores necessity while the walls
+are depthless planes. Whatever rung 2 becomes must change what the wall *is* — a channel with depth,
+which forces the whole body through a swept volume and makes orientation binding — or the arena track
+ends and rung 3 carries the result. That decision is not taken here.
+
+---
+
 ## 2026-08-26 (later) — The channel was degrading a wrong instruction, not information
 
 - **Area:** the identification of RQ1 itself — what `apply_channel` actually manipulates — plus the

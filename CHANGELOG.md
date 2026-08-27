@@ -8,6 +8,149 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
 ## [Unreleased]
 
 ### Changed
+- **The task is now the SUCCESSOR convex-bar channel benchmark (DSE-058).** Result-affecting: it
+  re-keys every dataset. Adopted after the T-load benchmark was falsified as a rotation-necessity
+  manipulation (DSE-057) - it is a declared successor task, **not** a repair of the T arena, and is
+  labelled as such wherever it is reported.
+  - **Load (`sim/load.py`).** The active load is a convex **1.4 x 0.3 bar** (`add_load`,
+    `bar_shape_verts`, `point_in_load_local`, `load_polys`). Convexity is the point: fit through a
+    channel is then governed by extent, with no staged-crossing escape. **The T is retained
+    deliberately** - it is the subject of a published finding and the tests pin its extent envelope
+    (min 1.300, max 1.553) so it cannot be quietly deleted.
+  - **Arena (`sim/arena.py`).** `ArenaGeometry.wall_depth` (default **1.5**) turns each internal
+    wall into a **channel** - two faces plus a floor and ceiling - so the load is constrained over
+    an x-interval instead of at a threshold. `wall_depth = 0.0` still builds the legacy thin
+    segment, keeping the predecessor geometry constructible.
+  - **Ladder.** Apertures **easy 1.20 / medium 0.80 / hard 0.50**. Effective aperture is
+    `nominal - 2 x wall_radius`; it must exceed `BAR_THICK` for anything to pass and stay under
+    `BAR_LEN` or the load clears broadside. Difficulty separates in the certificate (**easy needs
+    one rotation, medium and hard two**) and again in alignment tolerance.
+  - **Start distribution.** `theta_range` is **80-100 deg** (broadside), so every episode begins
+    maximally misaligned and outside the passing band at every rung. `x_range` shortened to
+    **(1.2, 2.4)** so no jittered pose starts inside the channel mouth. The canonical un-jittered
+    pose is now broadside too: at angle 0 the bar is already aligned, and a budget derived there
+    would describe an instance no episode ever sees.
+  - **`StepConfig.hold_orientation` (default `True`).** Restores the pre-action angle after any
+    non-rotate action - two grips carrying a rigid load hold its orientation as well as its
+    position, the same class of abstraction as the existing quasi-static velocity zeroing. This
+    closes the passive-self-alignment degeneracy **by construction**: contact at the channel mouth
+    was rotating the load up to 114 deg with no rotate action issued, threading the channel on ~27%
+    of jittered starts. **No friction constant was tuned** - the effect survived friction 0.2, 0.6
+    and 1.5 unchanged, so friction was not its cause.
+  - **Budgets re-certified: 20 / 25 / 25** (`ceil(2.5 x optimum)` on optima of 8/10/10). Budget
+    width is part of the acceptance criterion: a ladder certified at budget 25 leaked at 28, because
+    a longer budget admits longer degenerate paths. Re-run the check after any budget change.
+  - **Fingerprint schema v2** (`sim/fingerprint.py`): adds `load_shape` (a 1.4x0.3 bar and a T whose
+    bar is 1.4x0.3 would otherwise agree on every recorded number) and an `actions` group, so a
+    change to `hold_orientation` re-keys the dataset.
+  - **Certification result: 30/30 seeds at every rung**, translation-only search exhausted, full
+    optimum containing an explicit rotation, at the frozen budgets. Certified on **30** seeds
+    against the pilot's **10**: aperture 0.48 gave 10/10 on seeds 0-9 and 12/20 on seeds 10-29, so
+    certifying on the declared seed set alone would have shipped a task that leaks a quarter of the
+    time.
+  - **`scripts/check_rotation_need.py`** gains the `passive_self_alignment` verdict, a
+    `--certify` flag running searches at `CERTIFICATION_STEP_CONFIG`, and `passive_drift_deg`, which
+    measures the realised **angle** trajectory. "Translation-only" is a claim about the action set;
+    the body angle is a separate construct and the two must not be conflated.
+  - **Prompt surface bumped to `PROMPT_VERSION` v6 (`agents/prompts.py`, `sim/serialise.py`).**
+    Both system prompts and the NL serialiser still called the load a **T**, so every arm - not
+    only `nl` - described a T-shaped object to agents manipulating a convex bar. That is the
+    grounded-but-inferentially-wrong prompt defect DSE-057 was spent falsifying, reintroduced by
+    omission. v6 **does not consume a fourth retune** of the T task: it is the prompt surface of a
+    different benchmark, and it landed before the first successor model call, so no dataset is
+    re-keyed.
+    - Both forms also named **one x per wall** while the wall spans 1.5 units of it. `_numeric`
+      gains a `wall_depth=` line (suppressed at depth 0) and `_nl` a channel clause; the C3
+      restrictor strips both for free because it **whitelists** `load=`/`contact=` rather than
+      blacklisting layout keys - the fail-closed design paying off as intended.
+    - The grid drew each wall as a **one-cell stripe** where 1.5 world-units of geometry stand.
+      `_is_wall` now fills the channel footprint and its aperture caps. `build_arena` seals the
+      strip between the faces, so it is an enclosed void the load can never reach and `#` is the
+      correct occupancy; at `wall_depth = 0` the rule reduces to the legacy stripe, keeping the
+      falsified T arena reproducible from source.
+    - The grid legend keeps its literal **`T=load`** glyph deliberately: the legend *defines* the
+      symbol, so it is not a shape claim, and renaming it would touch the C3 row-finder and the
+      centroid check to buy nothing.
+
+### Fixed
+- **Limb 7 of the certification standard could not fail on any input
+  (`scripts/check_rotation_need.py`, DSE-058).** It is a **pre-registered acceptance criterion**,
+  and as shipped it was vacuous twice over, so "30/30 seeds pass every limb" rested on six limbs.
+  - **Wrong branch.** The drift check ran only where limb 3 had *already rejected* the seed, so it
+    could relabel a failure but never cause one. It now runs on seeds that **pass** limbs 1-3 -
+    the case limbs 1-3 cannot see - replaying the optimum's translations alone.
+  - **Wrong world.** It measured under the shipped `StepConfig`, where `hold_orientation` restores
+    the pre-action angle after every non-rotate action, so the drift was **identically 0.0** on
+    every input ever passed to it. It now takes the config it is certifying at.
+  - **`unheld_drift_deg` reports the sensitivity the gate cannot.** Passive self-alignment is
+    impossible under the shipped physics *by construction* - a stronger guarantee than any per-seed
+    check, but only as good as the assumption behind it. The counterfactual is now printed with the
+    verdict: with the hold disabled, ten straight pushes rotate the load by up to **103 deg (easy)
+    / 98 deg (medium) / 20 deg (hard)** across 30 seeds. `hold_orientation` is therefore a
+    **load-bearing modelling assumption** of the successor task, declared as such, not an
+    incidental default.
+  - The first estimate of that drift, taken on seeds 0-2, was **9 deg** - a third instance of the
+    small-sample trap the 30-seed certification rule exists for.
+  - Regression tests pin both halves: that limb 7 can reject an otherwise-clean seed, and that the
+    instrument reads 0 under the hold and non-zero without it.
+
+- **The rung-2 acceptance check did not test its own criterion, and certified a false premise
+  (`sim/feasibility.py`, `scripts/check_rotation_need.py`, DSE-057).** It gated a GPU re-gate and a
+  task-geometry change, so a wrong answer was expensive; it gave one.
+  - `solve()` gains **`actions`** (restrict the search's action set) and **`scenario`** (start from a
+    supplied, e.g. jittered, pose). Both default to the frozen behaviour, so `certify()` and the
+    budget certificate are **bit-for-bit unchanged** — pinned by a test. Restricting the set is what
+    turns the oracle into a *necessity proof*: exhausting `N/S/E/W` without reaching the goal shows no
+    translation-only path exists, which a hand-written policy failing can never establish.
+  - `check_rotation_need.py` is rewritten around **three limbs**, evaluated per jittered seed: the
+    full-action optimum is solvable and inside the certified budget; it contains ≥ 1 rotation; and the
+    translation-restricted search is exhausted without reaching the goal. Each seed reports a named
+    reason (`unsolvable`, `over_budget`, `zero_rotation_optimum`, `translation_only_feasible`).
+  - **Two defects closed.** The old version could print `ACCEPTED` for a **geometrically impossible**
+    arena — it never checked solvability, and read its policy's failure as necessity. And its
+    "necessary condition" (every slit narrower than the load's 1.553 maximum y-extent) is not
+    necessary: being under the *maximum* extent shows only that *some* orientations do not fit. The
+    extent calculation is retained as report context, explicitly outside the criterion.
+  - **Result: REJECTED at every difficulty, not just easy.** Over 10 seeds × 3 difficulties, 0/30 meet
+    the criterion. Translation-only optima are 13 steps at medium (equal to the full-action optimum)
+    and 14 at hard (against 13). The walls are radius-0.05 segments, so the bar and stem cross the gap
+    at different instants and rotation is redundant at every slit width. No monotone-rotation probe
+    was added: a rotation-free path is trivially monotone, so limb 3 subsumes it.
+  - The module docstring's claim that hard "must rotate the T to thread the narrow slit" is corrected;
+    it was an inference from the head-on extent, never a search result.
+- **`docs/EXPERIMENTS.md` asserted a cluster correction it had not computed (DSE-057).** The E3
+  attempt-2 entry read "the effect survives a cluster correction comfortably but the exact figure
+  needs one". Computed over 20 episodes per condition (4 000 resamples, seed 0), it does not:
+  C0−C4 +0.145, 95 % CI **[−0.005, +0.294]**, permutation *p* = **0.085**; C0−C1 and C0−C3 also cross
+  zero. The nominal *p* ≈ 10⁻⁷ was an artefact of treating ~500 clustered handoffs as independent.
+  The row, the paragraph and the entry's conclusion are rewritten; the surviving evidence is
+  categorical (10/10 C1-hard failures are the literal sequence `E,E,E,E,E,E`) and the search result
+  above, neither of which is a *p*-value.
+- **`MIN_CYCLE` counted trailing actions while the changelog called them repetitions (DSE-057).**
+  Renamed `MIN_CYCLE_ACTIONS` and both docstring and changelog entry corrected. Four actions is four
+  repeats at period 1 but two alternations at period 2. No reported cycling fraction changes.
+
+### Added
+- **`CERTIFICATION_STEP_CONFIG` (substeps = 64) in `sim/feasibility.py` (DSE-057).** A second,
+  higher-fidelity collision profile for certifying **new** geometry, separate from the shipped
+  experiment default.
+  - `StepConfig.substeps` is a pure resolution knob: total simulated time is `settle_steps * dt`
+    regardless of its value, so raising it changes only how finely contacts resolve.
+  - **The shipped default of 4 is deliberately unchanged.** Every frozen E3 certificate (easy 7,
+    medium 13, hard 13) was re-checked and is stable from 4 through 64, so no recorded result is
+    affected, and raising it would re-key every dataset for no benefit.
+  - **Why it is needed:** a candidate tunnel geometry was solvable at substeps 4 and unsolvable at 8
+    — at coarse resolution a macro impulse drives the load through an aperture narrower than its own
+    outline before contact resolves. A feasibility verdict that moves with the integrator cannot gate
+    a GPU run. E3's results are results for the recorded, versioned default simulator, not claims
+    about a continuum-physics benchmark.
+- **`tests/unit/scripts/test_rotation_instrument.py` (DSE-057).** Pins the falsifying facts so the
+  original error cannot return: a translation-only path exists at medium and hard; easy's optimum is
+  `E`×7 with no rotation; `solve()`'s defaults still yield the frozen 7-step/18-budget easy
+  certificate; an unsolvable arena is rejected rather than accepted; and `terminal_cycle` fires on
+  four trailing actions but not on `ROT+,ROT-,ROT+`.
+
+### Changed
 - **Prompt surface v5 — the state carries an action history (`PROMPT_VERSION` v4 → v5, DSE-055).**
   The one retune PREREGISTRATION §6 permits, spent on the E3 attempt-1 failure. Result-affecting: it
   re-keys every dataset.
@@ -209,8 +352,9 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
   targeted? Takes one or more dataset directories and prints them side by side, so attempt 1 and
   attempt 2 are compared on one table rather than by eye across two reports.
   - **Cycle detection** walks back from the last action and measures the trailing period-1 or
-    period-2 repeat. `MIN_CYCLE = 4` repeats, not 3: three would fire on `ROT+,ROT-,ROT+`, which is a
-    plausible two-step correction rather than a policy that has stopped moving. A period-2 run of one
+    period-2 repeat. `MIN_CYCLE_ACTIONS = 4` trailing *actions*, not 3: three would fire on
+    `ROT+,ROT-,ROT+`, which is a plausible two-step correction rather than a policy that has stopped
+    moving. Four actions is four repeats at period 1 but two alternations at period 2. A period-2 run of one
     repeated action is not double-counted as both periods.
   - **Per-condition step-level table** (`stuck_rate`, `mean_progress`, `y_binary_rate`) is the part
     that identifies a *confound* rather than a pathology: if degradation is acting as something other

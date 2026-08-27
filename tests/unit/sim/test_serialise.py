@@ -6,6 +6,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from preceptx.agents.prompts import _SYSTEM_A, _SYSTEM_B
 from preceptx.sim.actions import BodyState
 from preceptx.sim.arena import ArenaGeometry, Goal
 from preceptx.sim.load import COG_Y
@@ -62,14 +63,40 @@ def test_grid_occupancy_on_known_pose() -> None:
     assert _char_at(grid, 1.0, 5.0) == "."  # open chamber-one cell
 
 
+def test_grid_draws_the_channel_body_not_just_its_faces() -> None:
+    """The raster must not show free space where 1.5 world-units of wall stand (v6).
+
+    DSE-058 made each internal wall a channel spanning `wall_depth` in x, and `_is_wall` still drew
+    a one-cell stripe at the centre - so the grid arm was handed a thin threshold while the physics
+    imposed a deep passage. `build_arena` seals the strip between the faces with the cap segments,
+    making it an enclosed void the load can never enter, so `#` is the correct occupancy for it.
+    """
+    scene = _scene(2.0, 3.0 + COG_Y, angle=0.0)
+    grid = serialise(scene, "grid")
+    for x in (3.4, 4.0, 4.6):  # near face, centre, far face - all inside the 1.5-deep channel
+        assert _char_at(grid, x, 1.0) == "#", x
+    assert _char_at(grid, 2.8, 1.0) == "."  # clear of the channel on the chamber-one side
+    assert _char_at(grid, 4.6, 3.0) == "."  # the aperture band stays open across the whole depth
+
+    thin = SceneState(
+        load=scene.load,
+        geometry=ArenaGeometry(wall_depth=0.0),
+        goal=scene.goal,
+        slit_width=scene.slit_width,
+    )
+    # The legacy thin-segment arena must still render as it did, or the falsified T task stops
+    # being reproducible from source.
+    assert _char_at(serialise(thin, "grid"), 4.6, 1.0) == "."
+
+
 def test_grid_draws_the_active_slit_width() -> None:
-    # The hard slit (0.7) leaves a narrower gap than the easy slit (1.8) in the internal wall.
+    # The hard slit (0.5) leaves a narrower gap than the easy slit (1.2) in the internal wall.
     def gap_cells(slit: float) -> int:
         grid = serialise(_scene(2.0, 3.0 + COG_Y, slit=slit), "grid").splitlines()[1:]
         col = int(ArenaGeometry().chamber_w / _CELL)
         return sum(1 for row in grid if row[col] != "#")
 
-    assert gap_cells(0.7) < gap_cells(1.8)
+    assert gap_cells(0.5) < gap_cells(1.2)
 
 
 def test_grid_carries_a_constant_legend_header() -> None:
@@ -86,8 +113,44 @@ def test_numeric_names_the_load_size_alongside_the_slit() -> None:
     # v4: naming the gap without naming the object leaves "aligned with the slit" underdetermined -
     # the threading band is +/-0.25 about the centre for a 1.8 gap and a 1.3-tall load, not +/-0.9.
     text = serialise(_scene(2.0, 3.0, slit=1.8), "numeric")
-    assert "load_size=(1.4000, 1.3000)" in text
+    assert "load_size=(1.4000, 0.3000)" in text
     assert "slit_y=(2.1000, 3.9000)" in text  # the gap is still stated as its own interval
+
+
+def test_numeric_and_nl_name_the_channel_depth() -> None:
+    """Both prose forms named one x per wall while the wall spanned 1.5 units of it (v6).
+
+    PREREGISTRATION SS2 claims the three serialisations are information-isomorphic. Depth is what
+    makes orientation binding on the successor task, so a form that omits it is not carrying the
+    same information as the grid, which draws it.
+    """
+    scene = _scene(2.0, 3.0 + COG_Y)
+    assert "wall_depth=1.5000" in serialise(scene, "numeric")
+    assert "1.50-deep channel" in serialise(scene, "nl")
+
+    thin = SceneState(
+        load=scene.load,
+        geometry=ArenaGeometry(wall_depth=0.0),
+        goal=scene.goal,
+        slit_width=scene.slit_width,
+    )
+    assert "wall_depth" not in serialise(thin, "numeric")  # no channel to name
+    assert "channel" not in serialise(thin, "nl")
+
+
+def test_no_prompt_surface_calls_the_load_a_t() -> None:
+    """The load is a convex bar; every sentence that still called it a T was factually wrong (v6).
+
+    This is the defect DSE-057 was spent falsifying, in its purest form: a prompt that is grounded
+    in the numbers and wrong about the object. The grid legend keeps a literal "T" deliberately -
+    it DEFINES the glyph as "T=load", so it is a symbol rather than a shape claim - and is excluded.
+    """
+    scene = _scene(2.0, 3.0 + COG_Y)
+    surfaces = [serialise(scene, "numeric"), serialise(scene, "nl"), _SYSTEM_A, _SYSTEM_B]
+    surfaces += [line for line in serialise(scene, "grid").splitlines() if "legend:" not in line]
+    for text in surfaces:
+        assert "T-load" not in text
+        assert "T-shaped" not in text
 
 
 def test_numeric_has_no_dead_vel_line() -> None:
