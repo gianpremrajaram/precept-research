@@ -28,7 +28,6 @@ from preceptx.data.schema import HandoffRecord
 from preceptx.gate.statistics import (
     CosineStatistic,
     FailStatistic,
-    InfoStatistic,
     Statistic,
     episode_groups,
     failure_label,
@@ -232,8 +231,8 @@ def calibrate(
             _ECE_RELIABLE_MIN,
         )
     e_s, e_m = featuriser.featurise(records)
+    # InfoStatistic is not calibrated: DSE-061 retired it as rank-identical to FailStatistic.
     factories: list[Callable[[], Statistic]] = [
-        lambda: InfoStatistic(cfg.probe),
         lambda: FailStatistic(cfg.probe),
         CosineStatistic,
     ]

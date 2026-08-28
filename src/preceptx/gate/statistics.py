@@ -99,6 +99,20 @@ class Statistic(ABC):
 class InfoStatistic(Statistic):
     """``s_info``: predictive entropy ``H(g_cond)`` about the outcome given ``[e_s;e_m]``.
 
+    **DEPRECATED (DSE-061); use ``FailStatistic``.** On the 227886 dataset the two rank handoffs
+    identically - Spearman -1.000000, not approximately - because for a binary outcome the entropy
+    of ``g_cond`` is a symmetric unimodal function of the same predicted probability that
+    ``FailStatistic`` reports directly. They were never two statistics, so offering a choice between
+    them in ``GateConfig.statistic_key`` overstated the evidence: a result that "holds for both"
+    held
+    once. ``FailStatistic`` is kept as the survivor because it is monotone in the quantity the gate
+    is calibrated against (realised failure), where entropy is not, and because it survives removing
+    the collapsed C1 arm at AUROC 0.838.
+
+    Retained, not deleted: persisted statistics and manifests from runs before DSE-061 name this
+    key,
+    and ``load_statistic("info")`` must keep working on them. It is no longer calibrated by default.
+
     Uses the offline-trained probe (the same family as the CPVI estimator's ``g_cond``) but never
     the realised outcome at score time - the distinction the thesis relies on.
     """
@@ -180,6 +194,25 @@ class CosineStatistic(Statistic):
 
     def score(self, e_s: FloatArray, e_m: FloatArray) -> FloatArray:
         return embedding_cosine(e_m, e_s)  # reuse the DSE-015 state-echo bridge (zero-norm safe)
+
+
+# Keys retired by DSE-061, mapped to their survivor. A config or manifest naming a retired key still
+# resolves rather than failing, so runs recorded before the retirement stay replayable.
+DEPRECATED_STATISTIC_KEYS: dict[str, str] = {"info": "fail"}
+
+
+def resolve_statistic_key(key: str) -> str:
+    """Map a retired statistic key onto its survivor, warning once at the boundary."""
+    survivor = DEPRECATED_STATISTIC_KEYS.get(key)
+    if survivor is None:
+        return key
+    logger.warning(
+        "statistic %r was retired in DSE-061 (rank-identical to %r); resolving to %r",
+        key,
+        survivor,
+        survivor,
+    )
+    return survivor
 
 
 def score_records(

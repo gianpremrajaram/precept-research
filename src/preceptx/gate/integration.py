@@ -28,11 +28,11 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from preceptx.gate.calibration import StatisticCalibration
 from preceptx.gate.controls import matched_random, random_trigger
-from preceptx.gate.statistics import GateError, Statistic
+from preceptx.gate.statistics import GateError, Statistic, resolve_statistic_key
 from preceptx.measure.featuriser import Featuriser
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,13 @@ class GateConfig(BaseModel):
 
     mode: GateMode = "off"
     statistic_key: str = Field(default="cosine", min_length=1)
+
+    @field_validator("statistic_key")
+    @classmethod
+    def _resolve_retired_key(cls, v: str) -> str:
+        """Accept a retired key and resolve it, so pre-DSE-061 configs still load (DSE-061)."""
+        return resolve_statistic_key(v)
+
     # One re-prompt by default: the cheapest bound that makes the treatment non-vacuous, and it
     # caps the arm's extra A calls at the firing rate rather than a multiple of it. 0 is a valid
     # and useful setting - it records every block without ever re-prompting (observation-only).

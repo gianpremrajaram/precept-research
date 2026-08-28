@@ -19,9 +19,14 @@
 #   # the one permitted retune (PREREGISTRATION §6):
 #   qsub -v ATTEMPT=2 scripts/myriad/pilot.sh
 #
-#   # a characterisation grid, which must NOT emit a gate verdict (see the DRIVER note below):
-#   qsub -N precept-rq1 -l h_rt=8:00:00 -v DRIVER=preceptx-rq1 scripts/myriad/pilot.sh \
-#     --conditions C0,C1,C2,C3,C4 --difficulties easy,medium,hard --seeds "$(seq -s, 0 31)"
+#   # a characterisation grid, which must NOT emit a gate verdict (see the DRIVER note below).
+#   # --no-analysis releases the GPU at the last episode; job 227886 held an A100 for 2h37m
+#   # running statsmodels, and the analysis is also the only part that can fail AFTER the
+#   # episodes are paid for. Analyse afterwards on a login node, with no GPU and no time limit:
+#   #   preceptx-analyse --dataset-hash <the hash the driver printed>
+#   qsub -N precept-rq1 -l h_rt=6:00:00 -v DRIVER=preceptx-rq1 scripts/myriad/pilot.sh \
+#     --conditions C0,C1,C2,C3,C4 --difficulties easy,medium,hard --seeds "$(seq -s, 0 31)" \
+#     --no-analysis
 #
 # Cost the sweep first, on the login node, where it issues no model calls and needs no GPU:
 #   uv run preceptx-pilot --dry-run --model qwen14b

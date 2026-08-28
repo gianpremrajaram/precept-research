@@ -34,6 +34,7 @@ dependencies = [
 preceptx-pilot = "preceptx.experiments.cli:pilot"
 preceptx-rq1 = "preceptx.experiments.cli:rq1"
 preceptx-rq2 = "preceptx.experiments.cli:rq2"
+preceptx-analyse = "preceptx.experiments.cli:analyse"
 
 [project.optional-dependencies]
 # vLLM serving (Myriad GPU nodes only); not needed by the analysis code.

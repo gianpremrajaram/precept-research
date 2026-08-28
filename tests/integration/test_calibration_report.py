@@ -83,7 +83,8 @@ def test_calibration_runs_and_persists_report(tmp_path) -> None:  # type: ignore
     assert report.target == "realised_failure"  # never CPVI
     assert report.provenance.encoder_name == EncoderConfig().name  # P1-8: self-describing artefact
     assert len(report.provenance.git_sha) == 40
-    assert {s.key for s in report.statistics} == {"info", "fail", "cosine"}
+    # "info" retired in DSE-061: rank-identical to "fail" (Spearman -1.000000 on 227886).
+    assert {s.key for s in report.statistics} == {"fail", "cosine"}
     for sc in report.statistics:
         assert np.isfinite(sc.threshold)
         assert sc.firing_rate <= 0.2 + 1e-9  # within the default budget

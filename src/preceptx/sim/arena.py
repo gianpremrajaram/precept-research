@@ -16,12 +16,21 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from preceptx.config import ConfigError
 from preceptx.data.schema import Difficulty
-from preceptx.sim.load import add_load
+from preceptx.sim.load import LOAD_EXTENT_Y, add_load
 
 # Quasi-static regime: strong damping so the load settles rather than coasts (roadmap §2.1).
 DAMPING = 0.2
 LOAD_MASS = 1.0
+# Penetration the contact solver tolerates before pushing bodies apart. Pinned at pymunk's current
+# default rather than left implicit (DSE-059): it is 25% of the hard rung's effective aperture, so a
+# change in the library default would silently move the difficulty ladder. Pinning it here also puts
+# it in the simulation fingerprint, which is what makes such a change re-key the dataset instead of
+# contaminating one. The value is unchanged; only its provenance is.
+COLLISION_SLOP = 0.1
 GOAL_RADIUS = 0.8
+SLIT_Y = (
+    3.0  # must match ArenaGeometry.slit_y; module-level so the jitter default can derive from it
+)
 WALL_FRICTION = 0.6
 
 # Difficulty maps to channel aperture (DSE-058, the successor task). The load is a convex 1.4 x 0.3
@@ -53,7 +62,17 @@ WALL_FRICTION = 0.6
 #
 # The predecessor T ladder (1.8/1.2/1.1 against thin segment walls) was falsified: rotation was
 # unnecessary at every rung. It is preserved in the design log, not here.
-_DIFFICULTY_SLITS: dict[Difficulty, float] = {"easy": 1.20, "medium": 0.80, "hard": 0.50}
+# hard moved 0.50 -> 0.64 in DSE-059. Its passing window was 8.26 deg against a rotation step that
+# could not be made smaller without pushing the rotation count past the budget, so the rung was
+# reachable only by lattice resonance: of 25 round step angles from 8 to 20 deg, exactly THREE gave
+# full coverage of the jitter band at 0.50, and several left the rung unreachable at any budget. At
+# 0.64 (window 20.13 deg) all 25 do. The rung's DIFFICULTY IS UNCHANGED on the axis the ladder
+# grades
+# - rotation-count slack stays +/-3 / +/-1 / +/-0, so hard still demands the exact count and
+# tolerates
+# no miscount - what changes is that it no longer depends on an arithmetic coincidence between the
+# step and the window. Effective aperture 0.54 remains inside the rotation-required band [0.3, 1.4).
+_DIFFICULTY_SLITS: dict[Difficulty, float] = {"easy": 1.20, "medium": 0.80, "hard": 0.64}
 
 
 def slit_widths() -> dict[Difficulty, float]:
@@ -89,6 +108,21 @@ class Goal(BaseModel):
     radius: float = Field(gt=0)
 
 
+def alignment_tolerance() -> float:
+    """How far off the slit centre a FLAT bar may sit and still clear the narrowest channel.
+
+    Derived rather than authored: it is a pure function of the tightest aperture and the bar's
+    thickness, so a change to either moves it automatically instead of leaving a stale constant.
+    """
+    return (
+        min(_DIFFICULTY_SLITS.values()) - 2.0 * ArenaGeometry().wall_radius - LOAD_EXTENT_Y
+    ) / 2.0
+
+
+# 80% of the tightest rung's tolerance: inside it for every difficulty, with margin for the settle.
+_Y_JITTER = 0.8 * alignment_tolerance()
+
+
 class ScenarioJitter(BaseModel):
     """Seeded start-pose jitter region (P0-2): what makes the seed axis a true replication axis.
 
@@ -110,12 +144,30 @@ class ScenarioJitter(BaseModel):
 
     **x_range stops at 2.4** so the bar's farthest vertex (2.4 + 0.7 = 3.1) clears the channel mouth
     at x = chamber_w - wall_depth/2 = 3.25; the old 2.8 would have started some poses inside it.
+
+    **y_range is scoped to the alignment tolerance, not to the chamber (DSE-059).** It was the full
+    (1.5, 4.5), which is a second instance of the fault that killed run 227886: a CONTINUOUS jitter
+    against a QUANTISED actuator. A flat bar clears the narrowest channel only if its centre sits
+    within (effective aperture - bar thickness)/2 of the slit - 0.12 world units on hard - but N/S
+    moves it in a deterministic 1.034-unit quantum, so the reachable set is the lattice y0 + m*1.034
+    and no policy can close a sub-quantum offset. That capped success at 77/39/23% by geometry
+    alone,
+    before either agent reasoned about anything, and it did so invisibly because the certificate is
+    computed from the canonical pose where y is exactly slit_y.
+
+    Scoping the jitter to the tolerance is the minimal repair: it keeps the seed axis a genuine
+    replication axis (pose still varies in x, y and theta, and trajectories still diverge) while
+    removing a control problem the action set cannot express. **The arena tests orientation control,
+    not sub-quantum position control** - that is the manipulation the ladder grades, and the y
+    offset
+    was never part of it. With this scoping the scripted rotate-then-push policy solves 32/32 seeds
+    at every rung; with the old range it solved 11/7/4.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     x_range: tuple[float, float] = (1.2, 2.4)
-    y_range: tuple[float, float] = (1.5, 4.5)
+    y_range: tuple[float, float] = (SLIT_Y - _Y_JITTER, SLIT_Y + _Y_JITTER)
     theta_range: tuple[float, float] = (math.radians(80.0), math.radians(100.0))
 
 
@@ -145,6 +197,7 @@ def build_arena(slit_width: float, geometry: ArenaGeometry) -> pymunk.Space:
     space = pymunk.Space()
     space.gravity = (0.0, 0.0)
     space.damping = DAMPING
+    space.collision_slop = COLLISION_SLOP
 
     # Outer boundary.
     _wall(space, (0.0, 0.0), (width, 0.0), r)

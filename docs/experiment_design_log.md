@@ -15,7 +15,143 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
-## 2026-08-28 (latest) — H4 as written could be confirmed by a proxy that tracks nothing but the channel label
+## 2026-08-28 (latest) — The task was never the task: a masked orientation hold, a stale quantum, and a jitter the actuator could not correct
+
+- **Area:** the action model (`sim/actions.py`), the difficulty ladder's semantics (§9.2), the
+  feasibility certificate (`sim/feasibility.py`), the start-pose jitter (§9.3), what the agents are
+  told about the actuator (`agents/prompts.py`), and the gate's statistic set (§11.4).
+- **Status:** implemented (DSE-059–063). Creates a new task generation; run 227886 is unaffected and
+  its D25 record stands.
+
+**Trigger.** D25 attributed the RQ1 null to a rotation quantum that had been sized against a load
+which no longer existed. That was true and insufficient. Asked to size the replacement impulse, two
+independent attempts (mine, and a cross-model review) both produced a number that would have left
+the hard rung unreachable — which prompted measuring the windows instead of deriving them, and the
+measurement did not agree with either the code's account of itself or the register's.
+
+**Findings.** Five, in increasing order of seriousness.
+
+1. **The rotation quantum was stale** (D25's finding, confirmed): `angular_impulse = 0.5` was sized
+   for the T's moment of inertia (0.2927) and inherited by the bar's (0.1708), so 34°/action became
+   57.79°. Free rotation is *exactly* deterministic — standard deviation `0.000000` across 37 start
+   angles at seven impulses — so the 49.1° ± 16.9° seen in the data is a **point mass at 57.79° with
+   a 26% contact-truncated tail**, not noise. That distinction is what makes the rest a lattice
+   problem with an exact answer.
+2. **"Step < window" is the wrong sizing criterion.** The bar is symmetric under a half-turn and both
+   rotate directions are available, so the set reachable in *k* actions is the lattice
+   `θ₀ + m·step (mod 180°)`, and reachability is whether that **orbit enters** the window — which is
+   not monotone in the step. A 9.25° step leaves hard unreachable where 11.67° reaches it. Both
+   independent sizing attempts failed on exactly this.
+3. **`_ANG_RES` was silently coupled to the quantum.** The planner's pose-dedup bucket was a bare
+   18°, correct against a 57.8° step and wrong the moment the step fell below it: a bucket wider than
+   the step collapses consecutive rotations into one search state, so the planner would prune the
+   poses the threading manoeuvre needs. Fixing the impulse alone would have broken the certifier.
+4. **The start-pose jitter posed a control problem the action set cannot express.** A flat bar clears
+   the narrowest channel only if its centre sits within 0.12 units of the slit, but N/S moves it in a
+   deterministic 1.034-unit quantum — so from a continuous `y_range` of (1.5, 4.5) the reachable set
+   is a lattice that misses the target for most starts. **Geometry alone capped success at
+   77/39/23%**, before either agent reasoned about anything. The certificate could not see it because
+   A\* searches from the canonical pose, where `y` is exactly `slit_y`.
+5. **`hold_orientation` masked contact rotation rather than preventing it — and this is the one that
+   matters.** It restored the pre-action angle *after* the settle. From 30° on medium (geometric
+   window ±17.2°) the load rotates itself to **0.48°** mid-action under contact torque, slips through
+   the channel, and is written back as 30.00°. So the DSE-058 degeneracy the register records as
+   closed was **hidden, not closed**; the realised apertures were far softer than certified (medium's
+   true window was ±32.6°, not ±17.2°); and **the recorded angle is not the angle at which the load
+   passed the gap**.
+
+**Impact.** Finding 5 is the serious one, because it reaches the measurement and not only the task.
+Every message that faithfully reported "angle 30°" was faithful to a state that was not the operative
+one, so the G3 groundedness result — messages match the recorded state to 0.01 units — is now a
+claim about *recorded* state only. It does not disturb the CPVI estimates, which condition on that
+same recorded state throughout and are internally consistent, but "grounded" is entitled to mean less
+than it appeared to. Findings 1–4 together mean the RQ1 grid could not have produced an information
+gradient on any arm: hard was geometrically dead, and medium and hard alike were capped by a
+positional lattice nobody had computed.
+
+**Risk reduced.** The class of fault is one constant silently outliving the assumption that set it —
+four instances of it here, three of them invisible to every test in the repo. The specific risk
+closed is spending a second 8-hour GPU allocation on a grid that cannot express the effect it is
+designed to measure.
+
+**Correction paths considered and rejected.**
+
+- *Keep hard at 0.50 and pick a step that fits.* Rejected. Of 25 round step angles from 8° to 20°,
+  exactly three give full coverage at 0.50, and several leave the rung unreachable at any budget.
+  That is survival by arithmetic coincidence, and a later 0.5° retune would kill the rung silently —
+  the failure class being fixed, wearing a new hat.
+- *Re-derive all three apertures from declared window/step ratios.* Rejected as elegance bought with
+  the one thing the new generation preserves: easy and medium keep their apertures, so the ladder is
+  comparable to 227886 on two of three rungs. The ratios the shipped values imply are documented
+  instead.
+- *Give N/S a finer impulse than E/W to fix finding 4.* Rejected: it adds a second actuator parameter
+  and a second control problem, when the jitter's job is to make seeds genuine replications, not to
+  test sub-quantum positioning. Scoping `y_range` to the alignment tolerance is the smaller change
+  and leaves the manipulation the ladder actually grades untouched.
+- *Re-run 227886 under the corrected physics and replace the result.* Rejected, as in D25. It is a
+  different task; it gets a different `dataset_hash` and a separate entry.
+
+**The fix.** DSE-059 makes the hold real (infinite moment for the duration of a non-rotate action —
+reproduces the geometric window to 0.01° across seven apertures, against 20.03° and non-monotone for
+restore-after); authors `ROTATION_STEP_DEG = 12.0` and *derives* the impulse from it; derives
+`_ANG_RES` from the step and refuses to load if it is not below it; pins `collision_slop`; scopes
+`y_range` to a derived alignment tolerance; and moves hard 0.50 → 0.64. DSE-060 refuses to certify a
+path whose rotations are not free-space rotations. DSE-063 refuses to certify a task the scripted
+rotate-then-push policy cannot solve from every jittered start.
+
+**Result.** All three rungs certify with **plannable** paths — `ROT+ ×5, E ×7` / `ROT+ ×7, E ×8` /
+`ROT+ ×7, E ×7` — every rotation free-space, expressible in one sentence of natural language. The
+scripted policy solves **32/32** seeds at every rung (it solved 11/7/4 before). Budgets 30/35/35.
+
+**Declared decisions, so they are on the page rather than in the diff.**
+
+1. **Difficulty grades by rotation-count slack (±3 / ±1 / ±0), not by rotation count.** Medium and
+   hard both need seven rotations; what separates them is that easy tolerates a miscount of three,
+   medium one, and hard none. Separating them by *count* would require hard's window to exclude the
+   lattice point medium's admits — which is precisely the knife-edge geometry this entry removes. The
+   trade is deliberate. Note the previous ladder did not separate them by count either (10 and 10).
+2. **Widening hard is not softening it.** Its slack stays ±0; only its dependence on an arithmetic
+   coincidence between step and window goes away. Effective aperture 0.54 remains inside the
+   rotation-required band [0.3, 1.4).
+3. **The prompt now states the action quanta** ("about 1.03 units", "exactly 12 degrees").
+   Deliberate: hard tolerates no miscount, so leaving the step implicit would make the rung a
+   constant-*discovery* task and the capability arm would measure the wrong thing. It follows
+   standard practice in embodied spatial-reasoning benchmarks — REM supplies "rotate right 15°"
+   alongside the observation and still finds models collapse under full rotation, which is the
+   capability this task is meant to stress. `PROMPT_VERSION` → v7.
+4. **`InfoStatistic` is retired in favour of `FailStatistic`** (DSE-061). They rank handoffs
+   identically — Spearman −1.000000, exactly — so the gate had two statistics, not three, and a
+   result "holding for both" held once. `FailStatistic` survives because it is monotone in the
+   quantity the gate is calibrated against. The key `"info"` still resolves, so 227886's manifests
+   replay.
+5. **The 32B arm stays deferred, and the reason is unchanged by it being cheap.** It turns out to
+   need no development work — `configs/model/qwen32b.yaml` is already pinned, so it is a submit-line
+   flag. That lowers activation energy, not evidential value: an arm whose function is testing
+   capability on a task with headroom belongs on the generation that *has* headroom. It runs after
+   the corrected ladder reports, as a 96-episode C0-only seed-paired arm.
+6. **The Phase-1 escalation rule is deferred to the new generation, not ignored.** Its trigger is
+   keyed to the outcome of a grid whose task has since been shown not to express the manipulation.
+   Re-reading it against 227886 would be reading a rule against a run it was not written for.
+
+**So-what.**
+
+1. **A feasibility certificate that proves only *existence* is not enough, and this is the
+   transferable lesson.** A\* returned sound physics for two years' worth of certificates; the paths
+   it returned were contact-exploiting tricks no agent could plan, from a canonical pose no episode
+   ever started at. Three limbs are needed and now all three are enforced: a path exists, an agent
+   could *state* it, and the obvious policy *finds* it from the real start distribution.
+2. **The register caught the wrong thing first, and the correction is the interesting part.** D25's
+   account was right about the mechanism it named and wrong about its numbers, because it derived
+   windows that it could have measured. Both this entry's findings 2 and 5 were reached only by
+   measuring — and finding 5 contradicts a claim the register itself records as settled.
+3. **Groundedness needs to be defined against the trajectory, not the record.** The strongest result
+   in the 227886 diagnosis was G3 passing emphatically. It still passes as stated, but the state it
+   was measured against was partly a fiction of the hold. Any future groundedness claim should say
+   which state it means.
+
+---
+
+## 2026-08-28 — H4 as written could be confirmed by a proxy that tracks nothing but the channel label
 
 - **Area:** the RQ2 measurement analysis (§9.7) — what "the runtime proxy tracks CPVI" is allowed to
   mean, and what the four-label comparison is a decision about.
