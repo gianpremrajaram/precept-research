@@ -12,6 +12,12 @@ code attaches no handlers, so ``logging.basicConfig`` is called exactly once, he
 ``preceptx-rq2`` is the odd one out: it analyses a dataset that already exists, so it takes no
 model flags, resolves no Hydra tree, and needs no live endpoint or serving-substrate label.
 
+``preceptx-rq3a`` sits between the two. It reads a fetched corpus off disk like ``preceptx-rq2``,
+but its three judge replications cost model calls, so the endpoint, the Hydra model block and the
+substrate label are demanded only under ``--judge``. Without that flag the whole driver is offline
+and the judge rows come back ``unavailable`` with their reason, which is a supported mode rather
+than a degraded one (DSE-064).
+
 ``--dry-run`` is the pre-flight: it prints the expanded cell count, the upper-bound model-call
 count and the resolved hashes without constructing a client or issuing a single call.
 """
@@ -35,6 +41,15 @@ from preceptx.data.writer import load_records
 from preceptx.experiments.pilot import run_pilot, write_pilot_report
 from preceptx.experiments.rq1 import CONDITION_ORDER, analyse_rq1, run_rq1, write_rq1
 from preceptx.experiments.rq2 import analyse_rq2, write_rq2
+from preceptx.experiments.rq3a import RQ3aConfig, write_rq3a
+from preceptx.experiments.rq3a_load import count_handoff_corpus
+from preceptx.experiments.rq3a_run import (
+    VLLMJudge,
+    load_corpus,
+    projected_judge_calls,
+    run_rq3a,
+    write_rq3a_manifest,
+)
 from preceptx.experiments.runner import run_grid
 from preceptx.experiments.sweep import SweepConfig, dataset_hash_for, expand, sweep_hash
 from preceptx.measure.featuriser import EncoderConfig, Featuriser, second_encoder_config
@@ -346,6 +361,98 @@ def rq2(argv: list[str] | None = None) -> int:
     out = cast(Path, parsed.out) if parsed.out else cast(Path, parsed.root) / f"{d_hash}-rq2"
     write_rq2(result, out, scores=scores)
     logger.info("rq2 analysis written to %s (recommended Y: %s)", out, result.recommended_y)
+    return 0
+
+
+def rq3a(argv: list[str] | None = None) -> int:
+    """``preceptx-rq3a``: score every localisation method on a real multi-agent corpus (DSE-064).
+
+    The corpus comes off disk (``scripts/fetch_rq3a.sh``), so the offline arms - the two surface
+    baselines, both CPVI regimes and the MAST secondary - need no endpoint at all. ``--judge`` adds
+    the three Who&When procedure replications, which are the only methods that cost model calls and
+    the only reason this driver ever needs a served model.
+    """
+    parser = argparse.ArgumentParser(
+        prog="preceptx-rq3a", description="Score localisation methods on a real MAS corpus (H5)."
+    )
+    parser.add_argument("--root", type=Path, required=True, help="corpus root (fetch_rq3a.sh)")
+    parser.add_argument(
+        "--corpus",
+        choices=["traceelephant", "who_and_when"],
+        default="traceelephant",
+        help="the per-step substrate; TraceElephant is primary (it records input_context)",
+    )
+    parser.add_argument("--out", type=Path, help="report directory (default: <root>/<corpus>-rq3a)")
+    parser.add_argument(
+        "--judge",
+        action="store_true",
+        help="replicate the three Who&When procedures against the served tier (costs model calls)",
+    )
+    parser.add_argument("--no-mast", action="store_true", help="drop the trace-level MAST arm")
+    parser.add_argument("--model", default="qwen14b", help="Hydra model group serving the judge")
+    parser.add_argument("--base-url", default=ServingConfig.model_fields["base_url"].default)
+    parser.add_argument("--timeout", type=float, default=60.0, help="per-request timeout (s)")
+    parser.add_argument(
+        "--structured-mode", choices=["guided_json", "response_format"], default="guided_json"
+    )
+    parser.add_argument("--thinking-switch", default="", help="in-band no-thinking token")
+    parser.add_argument("--config-dir", type=Path, default=_DEFAULT_CONFIG_DIR)
+    parser.add_argument("--overrides", nargs="*", default=[], help="extra Hydra overrides")
+    parser.add_argument("--dry-run", action="store_true", help="print the plan; issue no calls")
+    parser.add_argument("--verbose", action="store_true", help="DEBUG-level logging")
+    parsed = parser.parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if parsed.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
+    )
+
+    cfg = RQ3aConfig()
+    corpus = cast(str, parsed.corpus)
+    if parsed.dry_run:
+        # Loading is not a model call, and the counts are the whole point of a pre-flight here:
+        # the judge's cost is a function of trace lengths, which only the corpus knows.
+        records = load_corpus(parsed.corpus, parsed.root)
+        counts = count_handoff_corpus(records)
+        print(f"corpus:           {corpus}")
+        print(f"traces:           {counts.traces}")
+        print(f"steps:            {counts.steps}")
+        print(f"handoffs:         {counts.handoffs}")
+        print(f"failures:         {counts.failures} ({counts.non_failures} non-failures)")
+        print(f"reconstructed s:  {counts.reconstructed_observations}")
+        calls = projected_judge_calls(records, handoffs_only=cfg.handoffs_only)
+        print(f"judge calls:      {calls if parsed.judge else 0} (upper bound; --judge)")
+        return 0
+
+    judge = None
+    with contextlib.ExitStack() as stack:
+        if parsed.judge:
+            if not os.environ.get("PRECEPTX_SERVING_SUBSTRATE"):
+                raise ConfigError(
+                    "PRECEPTX_SERVING_SUBSTRATE is unset; label the substrate (e.g. 'myriad-a100') "
+                    "so the manifest records where the judge replication was served"
+                )
+            block = _resolve_cell(parsed.config_dir, [f"model={parsed.model}", *parsed.overrides])
+            client = stack.enter_context(_client(block.model.name, parsed.base_url, parsed))
+            judge = VLLMJudge(client, revision=block.model.revision)
+        run = run_rq3a(
+            parsed.corpus,
+            parsed.root,
+            Featuriser(EncoderConfig()),
+            cfg=cfg,
+            judge=judge,
+            with_mast=not parsed.no_mast,
+            command=list(sys.argv),
+        )
+
+    out = cast(Path, parsed.out) if parsed.out else cast(Path, parsed.root) / f"{corpus}-rq3a"
+    write_rq3a(run.result, out)
+    write_rq3a_manifest(run.manifest, out)
+    logger.info(
+        "rq3a analysis written to %s (corpus %s, digest %s)",
+        out,
+        run.result.corpus,
+        run.manifest.corpus_digest,
+    )
     return 0
 
 

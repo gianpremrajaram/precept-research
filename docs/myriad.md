@@ -191,6 +191,9 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 cd ~/Scratch/precept-research
 bash scripts/myriad/prefetch.sh        # image, then venv, then weights, then the encoder
+
+# Add the RQ3a corpora (~800 MB) if this session will run the judge replication:
+RQ3A_ROOT=$HOME/Scratch/rq3a bash scripts/myriad/prefetch.sh
 ```
 
 `scripts/myriad/shell.sh` is the entry point for everything that is *not* a jobscript — the dry-run
@@ -200,7 +203,8 @@ exits. It applies `--nv` only where there is a GPU, so the same invocation works
 
 
 `prefetch.sh` now owns all four, in that order, and each step is idempotent. It checks `gquota`
-before pulling anything, pulls the image, re-execs itself inside it, then builds `.venv` with
+before pulling anything, optionally pulls the RQ3a corpora when `RQ3A_ROOT` is set (on the host,
+where `curl` and `unzip` live), pulls the image, re-execs itself inside it, then builds `.venv` with
 `uv sync --extra serving --extra embed --python /usr/local/bin/python3.11` and asserts that
 pandas, pyarrow, scikit-learn and torch import — which is the check that proves the environment is
 the container's and not the host's.

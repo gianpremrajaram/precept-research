@@ -34,6 +34,7 @@ dependencies = [
 preceptx-pilot = "preceptx.experiments.cli:pilot"
 preceptx-rq1 = "preceptx.experiments.cli:rq1"
 preceptx-rq2 = "preceptx.experiments.cli:rq2"
+preceptx-rq3a = "preceptx.experiments.cli:rq3a"
 preceptx-analyse = "preceptx.experiments.cli:analyse"
 
 [project.optional-dependencies]

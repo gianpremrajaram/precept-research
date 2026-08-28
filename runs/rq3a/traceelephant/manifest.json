@@ -1,0 +1,107 @@
+{
+  "manifest_version": 1,
+  "git_sha": "1cb90acb11d5c9bfa6832cd46754f5808f3204ad",
+  "git_dirty": true,
+  "corpus": "traceelephant",
+  "corpus_digest": "ab666509dc934108",
+  "corpus_root": "/Users/gianpremrajaram/data/rq3a",
+  "counts": {
+    "corpus": "traceelephant",
+    "traces": 220,
+    "steps": 5960,
+    "handoffs": 2488,
+    "failures": 44,
+    "non_failures": 0,
+    "outcome_unknown": 176,
+    "reconstructed_observations": false
+  },
+  "mast_digest": "e46786e3a27fc66b",
+  "mast_counts": {
+    "corpus": "mast",
+    "traces": 1642,
+    "steps": 0,
+    "handoffs": 0,
+    "failures": 1237,
+    "non_failures": 405,
+    "outcome_unknown": 0,
+    "reconstructed_observations": false
+  },
+  "encoder_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+  "cfg": {
+    "probe": {
+      "probe": "logistic",
+      "variance_model": "homoscedastic",
+      "c": 1.0,
+      "max_iter": 1000,
+      "n_splits": 5,
+      "n_repeats": 5,
+      "mlp_hidden": 64,
+      "seed": 0
+    },
+    "top_k": 3,
+    "n_boot": 2000,
+    "alpha": 0.05,
+    "handoffs_only": true,
+    "audit_sample": 30,
+    "audit_seed": 0,
+    "transfer_key": "s_info",
+    "transfer_dir": null,
+    "transfer_orientation": null
+  },
+  "judge_model": null,
+  "judge_revision": null,
+  "judge_decoding": null,
+  "serving_substrate": "unspecified",
+  "serve_env": null,
+  "command": [
+    "/Users/gianpremrajaram/Documents/Precept Dev/precept-research/.venv/bin/preceptx-rq3a",
+    "--root",
+    "/Users/gianpremrajaram/data/rq3a",
+    "--corpus",
+    "traceelephant",
+    "--out",
+    "runs/rq3a/traceelephant"
+  ],
+  "dep_versions": {
+    "pydantic": "2.13.4",
+    "numpy": "2.2.6",
+    "pandas": "2.3.3",
+    "pyarrow": "21.0.0",
+    "scikit-learn": "1.9.0",
+    "langgraph": "0.6.11",
+    "openai": "1.109.1",
+    "hydra-core": "1.3.3",
+    "omegaconf": "2.3.1",
+    "pymunk": "6.11.1",
+    "scipy": "1.17.1",
+    "statsmodels": "0.14.6",
+    "joblib": "1.5.3",
+    "sentence-transformers": "5.6.0"
+  },
+  "timestamp": "2026-08-28T22:02:26.144111+00:00",
+  "metrics": {
+    "rq3a": {
+      "corpus": "traceelephant",
+      "n_traces": 220,
+      "n_steps_scored": 2488,
+      "handoffs_only": true,
+      "tie_policy": "descending risk, average ranks for ties; top-k inclusive at the cutoff",
+      "judge": null,
+      "statuses": {
+        "schema_validity": "ok",
+        "mean_cosine": "ok",
+        "cpvi_transfer": "unavailable",
+        "cpvi_refit": "unavailable"
+      },
+      "unavailable": {
+        "cpvi_transfer": "no frozen simulator statistic: the arena track has not produced one yet",
+        "cpvi_refit": "no replay outcome labels for these steps (DSE-042 has not been run on them)"
+      },
+      "agreement": null
+    }
+  },
+  "artefact_paths": {
+    "rq3a": "rq3a.json",
+    "table": "rq3a_localisation.csv"
+  }
+}

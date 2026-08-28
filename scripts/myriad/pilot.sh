@@ -28,6 +28,11 @@
 #     --conditions C0,C1,C2,C3,C4 --difficulties easy,medium,hard --seeds "$(seq -s, 0 31)" \
 #     --no-analysis
 #
+#   # the RQ3a judge replication (DSE-065). Its --root is the CORPUS root, not the runs root, and
+#   # the corpus must already be on disk - prefetch.sh pulls it. Cost it first on a login node:
+#   #   preceptx-rq3a --root ~/Scratch/rq3a --judge --dry-run
+#   qsub -N precept-rq3a -v DRIVER=preceptx-rq3a,RQ3A_ROOT=$HOME/Scratch/rq3a scripts/myriad/pilot.sh
+#
 # Cost the sweep first, on the login node, where it issues no model calls and needs no GPU:
 #   uv run preceptx-pilot --dry-run --model qwen14b
 #
@@ -160,10 +165,16 @@ echo "[pilot] endpoint live after ${SECONDS}s"
 # unbound-variable error on bash 3.2 and fine on 4.4+, and a jobscript should not depend on which
 # bash the node happens to have.
 DRIVER="${DRIVER:-preceptx-pilot}"
-driver_args=(--model "$TIER" --base-url "http://localhost:${PORT}/v1" --root "$RUNS_ROOT")
-if [[ "$DRIVER" == "preceptx-pilot" ]]; then
-  driver_args+=(--attempt "$ATTEMPT")
-fi
+driver_args=(--model "$TIER" --base-url "http://localhost:${PORT}/v1")
+case "$DRIVER" in
+  preceptx-pilot) driver_args+=(--root "$RUNS_ROOT" --attempt "$ATTEMPT") ;;
+  # RQ3a reads a fetched corpus instead of writing episodes, so its --root is the CORPUS root and
+  # RUNS_ROOT would silently point it at an empty tree. --judge is implied because it is the only
+  # part of RQ3a that makes a model call: an rq3a run without it needs no GPU and belongs on a
+  # login node, so a GPU job that omitted it would hold an A100 to run sklearn.
+  preceptx-rq3a) driver_args+=(--root "${RQ3A_ROOT:?RQ3A_ROOT unset; -v RQ3A_ROOT=\$HOME/Scratch/rq3a}" --judge) ;;
+  *) driver_args+=(--root "$RUNS_ROOT") ;;
+esac
 
 "$DRIVER" "${driver_args[@]}" "$@"
 
