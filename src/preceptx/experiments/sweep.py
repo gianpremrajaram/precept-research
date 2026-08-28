@@ -67,6 +67,13 @@ class SweepConfig(BaseModel):
     # into the ``RuntimeGate`` (DSE-025); they are not config and are not hashed here. ``None`` is
     # no gate in the loop, which is RQ1 and every dataset recorded to date.
     gate: GateConfig | None = None
+    # Decode-time reasoning (D26). It lives here rather than only on ``ServingConfig`` because it is
+    # dataset IDENTITY, not provenance: the same grid decoded with and without a thinking trace is
+    # two different datasets, and ``dataset_hash_for`` reads ``SweepConfig``, so a serving-only flag
+    # would let the two arms hash alike and the writer would append both into one directory - the
+    # exact pooling failure prompt_version and the simulation digest exist to prevent. False is
+    # excluded from the hash payload (see ``sweep_hash``), so no dataset recorded to date re-keys.
+    thinking: bool = False
     concurrency: int = Field(default=4, gt=0)
 
     @field_validator("max_steps", mode="before")
@@ -179,6 +186,8 @@ def sweep_hash(sweep: SweepConfig) -> str:
     dumped = sweep.model_dump(mode="json", exclude={"concurrency"})
     if dumped.get("gate") is None:
         del dumped["gate"]
+    if not dumped.get("thinking"):  # same reason as `gate`: absent means "as every prior run"
+        dumped.pop("thinking", None)
     return hashlib.sha256(json.dumps(dumped, sort_keys=True).encode()).hexdigest()[:16]
 
 

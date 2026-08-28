@@ -110,6 +110,18 @@ def _parser(name: str, description: str) -> argparse.ArgumentParser:
         help="in-band no-thinking token for runtimes that ignore chat_template_kwargs "
         "(LM Studio + Qwen3: /no_think)",
     )
+    p.add_argument(
+        "--max-steps",
+        type=int,
+        help="broadcast one step budget to every difficulty, overriding the certified "
+        "feasibility budgets (sim/feasibility.py STEP_BUDGETS). The certificate bounds an "
+        "OPTIMAL policy; agents need slack to recover from their own detours",
+    )
+    p.add_argument(
+        "--thinking",
+        action="store_true",
+        help="enable Qwen3 thinking mode and raise max_tokens to fit the trace",
+    )
     p.add_argument("--config-dir", type=Path, default=_DEFAULT_CONFIG_DIR)
     p.add_argument("--overrides", nargs="*", default=[], help="extra Hydra overrides (key=value)")
     p.add_argument("--dry-run", action="store_true", help="print the plan; issue no model calls")
@@ -146,6 +158,10 @@ def _build_sweep(args: argparse.Namespace, defaults: dict[str, list[Any]]) -> Sw
         model=cell.model,
         model_b=model_b,
         concurrency=args.concurrency,
+        thinking=args.thinking,
+        # Omitted rather than passed as None: the field's default_factory holds the certified
+        # budgets, and None would fail the validator instead of falling back to them.
+        **({} if args.max_steps is None else {"max_steps": args.max_steps}),
     )
 
 
@@ -167,6 +183,8 @@ def _print_plan(sweep: SweepConfig) -> None:
 
 def _client(model: str, base_url: str, args: argparse.Namespace) -> LLMClient:
     """Build a client and prove the endpoint is live before any episode is attempted."""
+    # `getattr`: --thinking is a sweep-parser flag, and rq3a builds its own namespace for the judge.
+    thinking = getattr(args, "thinking", False)
     client = LLMClient(
         ServingConfig(
             model=model,
@@ -174,6 +192,10 @@ def _client(model: str, base_url: str, args: argparse.Namespace) -> LLMClient:
             structured_mode=args.structured_mode,
             thinking_switch=args.thinking_switch,
             timeout=args.timeout,
+            chat_template_kwargs={"enable_thinking": thinking},
+            # 512 truncates a Qwen3 thinking trace mid-token and the structured action never
+            # arrives; 2048 fits the traces seen in the pilot with headroom.
+            **({"max_tokens": 2048} if thinking else {}),
         )
     )
     if not client.health_check():

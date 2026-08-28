@@ -15,7 +15,106 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
-## 2026-08-28 (latest) — The encoder returned different vectors for the same string, and every embedding computed on this laptop was suspect
+## 2026-08-29 (latest) — The agents could not see the quantity the task turns on, so they pushed into walls they could not pass
+
+- **Area:** the state serialisation (`sim/serialise.py`, `sim/load.py`), the step budget
+  (`sim/feasibility.py` `STEP_BUDGETS`), and decode-time reasoning as a dataset-identity key
+  (`experiments/sweep.py`). Prompt surface **v7 → v8**.
+- **Status:** shipped; the ablation that tests it is the next Myriad submission.
+
+**Trigger.** Job 232980 — the first 96-episode C0 grid on the DSE-059–063 corrected task
+(`188a3d556b824e3e`, prompt v7, budgets 30/35/35) — returned **1/96 successes** (easy 1, medium 0,
+hard 0), against 6/96 on C0 of the superseded pre-correction task. The actuator correction was
+sound and is not what failed: `ROTATION_STEP_DEG = 12.0` is realised exactly (max |Δθ| measured
+11.99987°), and against a 1.4×0.3 bar the passing windows are ±40°/±21°/±14° for slits
+1.2/0.8/0.64 — 6.7/3.5/2.3 quanta, matching the certificate's median 4/6/7 rotations. Seed 7 is the
+existence proof: eight consecutive `ROT-` from 84.8° to 0.8°, then seven `E`, goal reached at step
+28 of 30.
+
+**Finding.** Three mechanisms, in causal order, measured over all 3,198 handoffs.
+
+1. **Projection blindness.** The v4 numeric form gives pose plus `load_size=(1.4, 0.3)` and — by an
+   explicit design decision recorded at `serialise.py` — leaves the pass band as "the agent's
+   inference to make". It is not made. 99.9% of messages quote the angle; **6.6%** mention a sine,
+   cosine or projection at all; 77.3% invoke "thickness". The modal error is in the dataset's very
+   first message: it quotes `angle=1.7236` (98.8°, true vertical span 1.43) and then computes the
+   span as **0.3**, the thickness, concluding "you can push the load rightward". **97.6% of all `E`
+   actions (904 of 926) were issued at poses that could not fit the slit.** Only 17 of 96 episodes
+   ever reached a threadable pose.
+2. **A one-way trap, entered by mechanism 1.** Free rotation needs `com_x ≤ 2.55` (channel face
+   3.25 less the bar's 0.70 half-length). The linear quantum is 1.034 and starts jitter in
+   [1.2, 2.4], so one premature `E` lands the bar at [2.23, 3.43] — usually past the bound, where
+   rotation is contact-limited to half a quantum (`ROT+` median |Δθ| 6.25° against the 12° cap).
+   Median final `com_x` ≈ 2.8: parked against wall 1 with 3,148 of 3,198 handoffs in chamber 1.
+   The only escape, `W`, was issued **twice in 96 episodes**.
+3. **Budget exhausted by oscillation.** All 96 episodes hit their cap. `ROT+` 1173 against `ROT-`
+   878 with a direction-reversal rate of 0.36–0.47; the longest *committed* same-direction run has
+   median 6/6/5 (easy/medium/hard) against the certificate's required 4/6/7.
+
+**Impact.** No outcome variance, so RQ1's gradient, RQ2's proxy tracking and RQ3b's calibration all
+had nothing to bind to. It also mis-attributes the null: read without the mechanism, 1/96 reads as
+"the channel does not matter" or "the model is too weak", when what the run actually shows is that
+the observation never carried the quantity the task turns on.
+
+**Risk reduced.** A C0–C4 sweep bought at ~5 A100-hours on a task whose control arm cannot move,
+and a headline null that a reviewer could attribute to model capability with no way to rule it out.
+
+**Correction paths considered and rejected.**
+- *Re-tune the physics a third time.* The actuator is certified correct and the success trace
+  proves the task solvable in budget; the defect is upstream of the physics.
+- *Emit a boolean `fits`.* It reduces the task to "rotate until True, then push east" and trades
+  the floor for a ceiling, thinning the C0→C4 gradient from the top instead of the bottom.
+- *Scale to 32B.* The ceiling is representational, not parametric; a larger model reading the same
+  under-determined state would be re-running the same experiment.
+- *Shrink the linear quantum* to keep the bar out of the trap. It doubles the `E` count needed to
+  cross ~8 units and blows the budget it was meant to protect.
+
+**The fix.** Prompt **v8**, three parts.
+- `sim/load.py` gains `extent_y(angle) = 1.4·|sin θ| + 0.3·|cos θ|` — the load's vertical span at
+  its pose — and `clearance_line` puts it in **all three** state forms. It states the span, not a
+  verdict: the slit comparison, the rotate-then-translate ordering, the y-alignment and the
+  two-wall repetition all remain the agent's inference. This is the v4 argument one derivative up —
+  v4 named the object's constants because naming the gap without the object was underdetermined,
+  and DSE-058 made each wall a channel, so the pass-relevant quantity became the load's
+  *projection*, which is state and not a constant. It goes in all three forms because withholding
+  it from one would make that form measure trigonometry rather than representation, which is not
+  the axis the serialisation A/B is for.
+- `--max-steps` broadcasts one budget over the certified `STEP_BUDGETS`. The certificate bounds an
+  *optimal* policy; every one of 96 episodes saturated it, and the single success finished at 28 of
+  30, so the budget is a live constraint rather than a formality.
+- `--thinking` enables the Qwen3 reasoning trace (and raises `max_tokens` 512 → 2048), carried on
+  **`SweepConfig`** rather than only on `ServingConfig`. That placement is the load-bearing part:
+  `dataset_hash_for` reads `SweepConfig`, so a serving-only flag would have let the thinking and
+  non-thinking arms hash alike and the writer's resume path would have appended both into one
+  directory — the same pooling failure `prompt_version` and the simulation digest exist to prevent.
+  `False` is excluded from the hash payload, so no dataset recorded to date re-keys.
+
+**Result of the fix.** Not yet measured — the ablation is the next submission, and this entry is
+written before its result deliberately. Four arms, C0/numeric/14B/easy+medium/12 seeds, with the
+v7 baseline free because it is already run:
+
+| arm | prompt | budget | thinking | dataset hash | contrast |
+|---|---|---|---|---|---|
+| baseline | v7 | 30/35 | off | `188a3d556b824e3e` | job 232980, easy+medium seeds 0–11 |
+| A1 | v8 | 30/35 | off | `8e438b0a5606d8aa` | vs baseline → the serialiser alone |
+| A2 | v8 | 50 | off | `7653131edd55e316` | vs A1 → the budget alone |
+| A3 | v8 | 50 | on | `d66e67ae2a46cb5c` | vs A2 → reasoning alone |
+
+The baseline grid is a superset of the ablation grid (it ran three difficulties at 32 seeds), so
+the contrast is drawn on matched cells rather than on aggregates.
+
+**So-what.** Two takeaways worth carrying into the write-up whichever way the ablation lands.
+First, **the ablation is a result, not overhead**: "which intervention lifts a two-agent
+coordination task off the floor — giving the agent the derived clearance, or giving it reasoning
+tokens?" is a finding about where LLM spatial coordination actually breaks, and the four arms
+separate representation from capability cleanly. Second, if A3 clears where A2 does not, the honest
+claim is that the projection is computable but not *reliably computed under greedy single-pass
+decoding* — a claim about deployment conditions, not about the model's competence, and a different
+sentence from "the model cannot do it".
+
+---
+
+## 2026-08-28 — The encoder returned different vectors for the same string, and every embedding computed on this laptop was suspect
 
 - **Area:** the embedding featuriser (`measure/featuriser.py`, §5) — which is upstream of PVI,
   CPVI, the twin, all three runtime statistics, the gate calibration and G2. Not an RQ3a entry

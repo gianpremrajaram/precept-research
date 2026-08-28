@@ -43,7 +43,11 @@ from preceptx.sim.actions import ROTATION_STEP_DEG
 # arena's object and obstacle to agents manipulating a bar through a channel would reintroduce the
 # exact grounded-but-inferentially-wrong defect DSE-057 was spent falsifying. Landed before the
 # first successor model call, so no dataset is re-keyed.
-PROMPT_VERSION = "v7"
+# v8 (D26) adds the pose-dependent `load_extent_y` to all three state forms. Run 232980 floored at
+# 1/96 with the agents pushing into walls they could not pass: 99.9% of messages quoted the angle,
+# 6.6% attempted the projection, and 97.6% of E actions were issued at non-admitting poses. The
+# bump re-keys the dataset, so v7 (188a3d556b824e3e) stays the intact baseline for the contrast.
+PROMPT_VERSION = "v8"
 
 _SYSTEM_A = (
     "You are agent A, the navigator in a two-agent cooperative-transport task. A straight "

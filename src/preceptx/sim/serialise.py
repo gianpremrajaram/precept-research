@@ -24,7 +24,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from preceptx.data.schema import Serialisation
 from preceptx.sim.actions import BodyState
 from preceptx.sim.arena import ArenaGeometry, Goal, chamber_of
-from preceptx.sim.load import LOAD_COG_Y, LOAD_EXTENT_X, LOAD_EXTENT_Y, point_in_load_local
+from preceptx.sim.load import (
+    LOAD_COG_Y,
+    LOAD_EXTENT_X,
+    LOAD_EXTENT_Y,
+    extent_y,
+    point_in_load_local,
+)
 
 
 class SceneState(BaseModel):
@@ -133,6 +139,40 @@ def deserialise_check(scene: SceneState, mode: Serialisation) -> bool:
     raise ValueError(f"deserialise_check supports numeric/grid only, not {mode!r}")
 
 
+# The pose-dependent clearance line (v8), appended to ALL THREE forms. `load_size` (v4) named the
+# object's constants because naming the gap without the object was underdetermined; DSE-058 made
+# each wall a channel, so the pass-relevant quantity became the load's PROJECTION, which is state,
+# not a constant. Run 232980 is the evidence: 99.9% of messages quoted the angle, 6.6% attempted
+# the projection, and 97.6% of E actions were pushes at poses that could not fit. It states the
+# span, not a verdict - the slit comparison, the rotate-then-translate ordering, the y-alignment
+# and the two-wall repetition all remain the agent's inference. Isomorphism is why it goes in all
+# three: withholding it from one form would make that form measure trigonometry, not representation.
+_RASTER_GLYPHS = frozenset("TG#.")
+
+
+def split_grid(grid: str) -> tuple[list[str], list[str]]:
+    """Split a serialised grid into its header lines and its raster rows.
+
+    The header was one line (the legend) until v8 added the clearance line, and consumers that
+    counted lines - the centroid check here, the C3 row window in agents/channel.py - silently
+    mis-indexed every row when it grew. Recognising a raster row by its alphabet costs the same and
+    does not need revisiting the next time the header does.
+    """
+    lines = grid.splitlines()
+    cut = next(
+        (i for i, line in enumerate(lines) if line and set(line) <= _RASTER_GLYPHS), len(lines)
+    )
+    return lines[:cut], lines[cut:]
+
+
+def clearance_line(scene: SceneState) -> str:
+    """The load's vertical span at its current angle, for the prompt (v8)."""
+    return (
+        f"load_extent_y={extent_y(scene.load.angle):.4f}"
+        "  # the load's vertical span AT THIS ANGLE; a slit narrower than this cannot admit it"
+    )
+
+
 def _numeric(scene: SceneState) -> str:
     # No velocity line (RD-7): quasi-static settling zeroes velocity before every read, so it was
     # constant dead weight in the prompt. Landed with the grid legend as one serialisation bump
@@ -159,7 +199,8 @@ def _numeric(scene: SceneState) -> str:
         f"slit_y=({geo.slit_y - half:.4f}, {geo.slit_y + half:.4f})  "
         f"# the only gap in each wall (width {scene.slit_width:.4f})\n"
         f"load_size=({LOAD_EXTENT_X:.4f}, {LOAD_EXTENT_Y:.4f})  "
-        "# (length, thickness) - the WHOLE load must clear the gap, not its centre"
+        "# (length, thickness) - the WHOLE load must clear the gap, not its centre\n"
+        f"{clearance_line(scene)}"
     )
 
 
@@ -188,7 +229,7 @@ def _grid(scene: SceneState, cfg: GridConfig) -> str:
             else:
                 line.append(".")
         rows.append("".join(line))
-    return "\n".join([GRID_LEGEND, *rows])
+    return "\n".join([GRID_LEGEND, clearance_line(scene), *rows])
 
 
 def _is_wall(cx: float, cy: float, geo: ArenaGeometry, half: float, cell: float) -> bool:
@@ -245,7 +286,9 @@ def _nl(scene: SceneState) -> str:
         f"angle {s.angle:.2f} rad ({_orientation(s.angle)}). The goal is at "
         f"({goal.center_x:.2f}, {goal.center_y:.2f}), radius {goal.radius:.2f}, lying {direction} "
         f"beyond {n_slits} slit(s);{slit_clause} the load is "
-        f"{'touching' if s.in_contact else 'clear of'} a wall."
+        f"{'touching' if s.in_contact else 'clear of'} a wall. "
+        f"At this angle the load spans {extent_y(s.angle):.4f} vertically, so a slit narrower "
+        "than that cannot admit it."
     )
 
 
@@ -266,7 +309,7 @@ def _parse_numeric_load(text: str) -> tuple[float, float, float]:
 
 
 def _grid_load_centroid(scene: SceneState, cfg: GridConfig) -> tuple[float, float] | None:
-    rows = _grid(scene, cfg).splitlines()[1:]  # skip the legend header (contains a literal "T")
+    _, rows = split_grid(_grid(scene, cfg))
     n_rows = len(rows)
     xs: list[float] = []
     ys: list[float] = []

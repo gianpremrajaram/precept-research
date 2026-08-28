@@ -176,3 +176,20 @@ def test_each_gate_arm_keys_its_own_dataset() -> None:
     assert dataset_hash_for(active) != dataset_hash_for(
         base.model_copy(update={"gate": GateConfig(mode="active", statistic_key="info")})
     )
+
+
+def test_thinking_is_dataset_identity_not_just_provenance() -> None:
+    """A thinking arm must not append its parts into the non-thinking arm's directory.
+
+    ``--thinking`` sets ``chat_template_kwargs`` on ``ServingConfig``, which ``dataset_hash_for``
+    never sees. Carried only there, arms A2 and A3 of the D26 ablation would hash alike and the
+    writer's resume path would pool a reasoning arm and a non-reasoning one into one dataset.
+    """
+    base = _sweep()
+    assert dataset_hash_for(base.model_copy(update={"thinking": True})) != dataset_hash_for(base)
+
+
+def test_thinking_false_re_keys_no_recorded_dataset() -> None:
+    # Same contract as `gate=None`: the field is absent from the payload at its default, so every
+    # hash computed before it existed still resolves to the same directory.
+    assert dataset_hash_for(_sweep(thinking=False)) == dataset_hash_for(_sweep())

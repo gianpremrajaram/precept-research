@@ -17,6 +17,8 @@ centres the load on the gap. Dimensions are module constants (the task uses one 
 
 from __future__ import annotations
 
+import math
+
 import pymunk
 
 # T geometry (world units). Bar across the top, stem hanging below; see module docstring.
@@ -49,6 +51,18 @@ BAR_THICK = 0.3
 LOAD_COG_Y = 0.0
 LOAD_EXTENT_X = BAR_LEN  # x-extent at angle 0
 LOAD_EXTENT_Y = BAR_THICK  # y-extent at angle 0
+
+
+def extent_y(angle: float) -> float:
+    """The load's vertical span at ``angle`` - the quantity a slit width must exceed to admit it.
+
+    ``BAR_THICK`` at angle 0, ``BAR_LEN`` at pi/2, and neither constant anywhere between. Serialised
+    into all three state forms from prompt v8 (D26): run 232980 found agents quoting the angle and
+    then substituting ``BAR_THICK`` for this projection - 6.6%% of messages attempted the
+    trigonometry at all, and 97.6%% of pushes were issued at poses that could not fit the slit.
+    """
+    return LOAD_EXTENT_X * abs(math.sin(angle)) + LOAD_EXTENT_Y * abs(math.cos(angle))
+
 
 Vert = tuple[float, float]
 

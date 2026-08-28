@@ -9,7 +9,7 @@ from hypothesis import strategies as st
 from preceptx.agents.prompts import _SYSTEM_A, _SYSTEM_B
 from preceptx.sim.actions import BodyState
 from preceptx.sim.arena import ArenaGeometry, Goal
-from preceptx.sim.load import COG_Y
+from preceptx.sim.load import BAR_LEN, BAR_THICK, COG_Y, extent_y
 from preceptx.sim.serialise import (
     GRID_LEGEND,
     GridConfig,
@@ -17,6 +17,7 @@ from preceptx.sim.serialise import (
     deserialise_check,
     history_line,
     serialise,
+    split_grid,
 )
 
 _CELL = GridConfig().cell
@@ -218,3 +219,33 @@ def test_history_line_carries_no_advice() -> None:
     line = history_line([("ROT+", 0.0), ("ROT-", 0.0)])
     for word in ("try", "should", "instead", "different", "not working"):
         assert word not in line.lower()
+
+
+# --- v8: the pose-dependent clearance line (D26) ----------------------------
+
+
+def test_extent_y_is_the_projection_not_either_constant() -> None:
+    # The failure v8 exists to remove: agents substituted BAR_THICK for the projection at poses
+    # where the bar was near-vertical and 4.7x wider than that.
+    assert extent_y(0.0) == pytest.approx(BAR_THICK)
+    assert extent_y(math.pi / 2.0) == pytest.approx(BAR_LEN)
+    assert extent_y(math.pi) == pytest.approx(BAR_THICK)  # a half-turn is the same span
+    vertical = extent_y(math.radians(98.8))  # the modal pose of run 232980
+    assert vertical == pytest.approx(1.4293, abs=1e-3)
+    assert vertical > 4.0 * BAR_THICK
+
+
+@pytest.mark.parametrize("mode", ["numeric", "grid", "nl"])
+def test_every_form_carries_the_clearance_span(mode: str) -> None:
+    # Isomorphism: withholding the projection from one form would make that form measure
+    # trigonometry rather than representation, which is the axis the serialisation A/B is for.
+    text = serialise(_scene(2.0, 3.0, angle=math.radians(98.8)), mode)  # type: ignore[arg-type]
+    assert "1.429" in text
+
+
+def test_grid_splits_header_from_raster_by_alphabet() -> None:
+    header, rows = split_grid(serialise(_scene(6.0, 3.0), "grid"))
+    assert header[0] == GRID_LEGEND
+    assert any("load_extent_y=" in line for line in header)
+    assert rows and all(set(row) <= set("TG#.") for row in rows)
+    assert any("T" in row for row in rows)  # the load is inside the raster, not the header

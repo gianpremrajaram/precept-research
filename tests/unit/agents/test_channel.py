@@ -95,3 +95,12 @@ def test_c4_dropout_is_seed_deterministic() -> None:
 
 def test_c5_supervisor_relay_is_disabled_by_default() -> None:
     assert ChannelConfig().c5_enabled is False
+
+
+def test_c3_grid_window_preserves_the_v8_clearance_line() -> None:
+    # The header grew to two lines in v8. C3 restricts VISIBLE ROWS, not information content, so
+    # windowing the pose-dependent span out would silently turn C3 into a different treatment.
+    clearance = "load_extent_y=1.4294  # the load's vertical span AT THIS ANGLE"
+    grid = "\n".join([GRID_LEGEND, clearance, "....", "....", ".T..", "....", "...."])
+    r = _ch("m", "C3", serialisation="grid", observation=grid, cfg=ChannelConfig(c3_window_rows=1))
+    assert r.observation_override == "\n".join([GRID_LEGEND, clearance, "....", ".T..", "...."])
