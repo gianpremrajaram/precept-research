@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from preceptx.analysis.figures import ci_plot
+from preceptx.analysis.figures import ci_plot, scatter_plot
 
 _HAS_MPL = importlib.util.find_spec("matplotlib") is not None
 
@@ -30,3 +30,24 @@ def test_ci_plot_writes_png_with_viz(tmp_path: Path) -> None:
         path=tmp_path / "f.png",
     )
     assert out is not None and out.exists()
+
+
+def test_scatter_plot_writes_png_with_reference_lines(tmp_path: Path) -> None:
+    pytest.importorskip("matplotlib")
+    out = scatter_plot(
+        [0.1, 0.4, 0.9],
+        [0.0, -0.2, 0.3],
+        xlabel="mean of the two scores",
+        ylabel="retrospective - prospective",
+        title="Bland-Altman",
+        hlines=[0.03, -0.4, 0.5],  # bias and the limits of agreement
+        path=tmp_path / "ba.png",
+    )
+    assert out is not None and out.exists()
+
+
+def test_scatter_plot_noop_without_viz(tmp_path: Path) -> None:
+    if _HAS_MPL:
+        pytest.skip("matplotlib present; the no-op branch is unreachable")
+    out = scatter_plot([0.0], [0.0], xlabel="x", ylabel="y", title="t", path=tmp_path / "s.png")
+    assert out is None and not (tmp_path / "s.png").exists()

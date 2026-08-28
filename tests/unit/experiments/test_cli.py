@@ -2,15 +2,20 @@
 
 ``--dry-run`` is the guard that lets a sweep be costed before a single token is spent, so the two
 things worth pinning are that it prints the right plan and that it touches no endpoint at all.
+``preceptx-rq2`` is the offline analysis entry point, so what is pinned there is the opposite: that
+none of the serving pre-flight applies to it.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pytest
 import respx
 
 from preceptx.config import ConfigError
-from preceptx.experiments.cli import pilot, rq1
+from preceptx.data.writer import DatasetError
+from preceptx.experiments.cli import pilot, rq1, rq2
 from preceptx.sim.feasibility import STEP_BUDGETS
 
 
@@ -52,3 +57,20 @@ def test_unlabelled_substrate_fails_loud(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.delenv("PRECEPTX_SERVING_SUBSTRATE", raising=False)
     with pytest.raises(ConfigError, match="PRECEPTX_SERVING_SUBSTRATE"):
         pilot(["--seeds", "0"])
+
+
+@respx.mock
+def test_rq2_is_offline_and_needs_no_serving_pre_flight(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # It analyses episodes already on disk, so neither the substrate label nor an endpoint applies:
+    # the only thing it can fail on is the dataset itself.
+    monkeypatch.delenv("PRECEPTX_SERVING_SUBSTRATE", raising=False)
+    with pytest.raises(DatasetError, match="no parquet parts"):
+        rq2(["--dataset-hash", "nosuchhash", "--root", str(tmp_path)])
+    assert not respx.calls
+
+
+def test_rq2_requires_the_dataset_hash() -> None:
+    with pytest.raises(SystemExit):  # argparse exits 2; the hash is the only handle it has
+        rq2([])

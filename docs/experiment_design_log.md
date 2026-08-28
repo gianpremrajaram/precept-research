@@ -15,7 +15,113 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
-## 2026-08-28 (latest) — The cross-condition CPVI gap is mostly a condition tag, and what the next run has to establish
+## 2026-08-28 (latest) — H4 as written could be confirmed by a proxy that tracks nothing but the channel label
+
+- **Area:** the RQ2 measurement analysis (§9.7) — what "the runtime proxy tracks CPVI" is allowed to
+  mean, and what the four-label comparison is a decision about.
+- **Status:** written and merged **before any of job 227886's output is read**. Declared as **D24**
+  in `docs/methodology.md` §10.5. The ranking rule lives in `experiments/rq2.py`'s module constants,
+  so it is fixed in code rather than in prose that could be edited once numbers land.
+
+### Trigger
+
+DSE-022 (opened 25 June 2026) asks RQ2 for "a documented recommendation: the headline Y (from the
+four options) and the encoder". `PREREGISTRATION.md` §4 subsequently froze *Y* at
+`y_binary_progress`, and the fallback ladder records in terms that a re-reading of the ticket cannot
+soften: re-choosing *Y* "would rescue the gate without touching the defect, which is the forbidden
+move". The ticket and the register disagree, and the disagreement had to be settled before the
+module was written rather than discovered at review.
+
+### Finding
+
+**1. The Y conflict is real, and resolves by re-scoping rather than by picking a winner.** The
+ticket predates the freeze. What it actually needs a decision about — which label a *gate* should
+threshold — is not the thing §4 froze, and no gate run exists to have contaminated it. So the
+four-label comparison ships in full, reported as a pre-declared robustness check on the frozen label
+**plus** the selection input for the RQ3b gate target. RQ1 is untouched. The same narrowing applies
+to the encoder: §5 pins the primary and names `all-mpnet-base-v2` a *sensitivity* encoder, not a
+candidate, so the implemented rule can only flag a re-freeze and never perform one.
+
+**2. The larger finding: H4 as specified is not falsifiable, given D23.** The acceptance criterion is
+"rank correlation of each statistic with CPVI". D23 established that **78.0% / 96.4% / 92.1%** of the
+reported cross-condition CPVI contrast on the three existing datasets is the *identity component* —
+what survives destroying the message, because condition-level message style plus differing
+per-condition progress base rates make the condition tag alone predictive. A runtime statistic that
+picks up nothing but that tag will therefore post a healthy ρ against CPVI and satisfy the criterion
+exactly as written, while tracking no message content whatsoever. Nothing in the AC separates the
+two. `InfoStatistic` and `FailStatistic` are probe-backed on the same embeddings the CPVI probes see,
+so this is not a hypothetical failure mode for them — it is the expected one.
+
+**3. RQ1 applies the RD-15 null to the pooled mean only, and its null is not reusable here.**
+`shuffled_message_cpvi` returns one mean per permutation. A correlation needs the null paired back to
+the handoff it belongs to, which per-permutation means cannot supply.
+
+### Impact
+
+Unaddressed, H4 could have been written up as confirmed — "the cheap runtime statistic tracks the
+expensive offline one" — on a dataset where no statistic tracks any message content at all. That
+claim is what makes the gate defensible at all: a gate thresholding a statistic that only reads the
+channel label is a gate that has learned which arm it is in.
+
+### Risk reduced
+
+The measurement-primitive claim becomes falsifiable. Every H4 number now has a null it must beat,
+and the null is one the same run produces rather than an argument made afterwards.
+
+### Correction path considered and rejected
+
+**Partialling condition out of the correlation** (partial Spearman against a condition indicator, the
+machinery `analysis/stats.py` already has for message length). Rejected: condition is not a nuisance
+covariate here, it is *the manipulation*. Residualising on it removes genuine channel-driven message
+content along with the tag, and the residual answers a question nobody asked. The within-condition
+permutation removes exactly and only what survives destroying the message, which is the identity
+component and nothing else — and it leaves each handoff its own state, its own Y and its own
+condition, so the comparison stays like for like.
+
+### The fix
+
+- `_null_cpvi` rebuilds the within-condition permutation to return **per-handoff** null scores,
+  averaged over `n_shuffle` permutations. Cross-fit repeats are dropped inside it: averaging over
+  permutations already damps the fold noise `n_repeats` exists to damp.
+- Every ρ and every mean CPVI is reported three ways — real, null, corrected — with the corrected
+  interval from a **paired** episode-cluster bootstrap (`_cluster_resamples`: episodes resampled with
+  replacement, both quantities recomputed inside each draw). This is the same estimator the D23
+  re-scoring used.
+- `DECLARED_ORIENTATION` fixes each statistic's expected sign in advance and both AUROCs are taken
+  under it. A value below 0.5 is reported as-is. The gate's calibration derives an orientation from
+  the failure label because a gate must act; an analysis that chose the sign making its own AUROC
+  exceed 0.5 would be fitting the direction to the data.
+- The label ranking is lexicographic with **corrected effect size last**: encoder-invariance of the
+  per-handoff CPVI ordering, then the label's own twin agreement, then effect size only as a
+  tie-break inside 0.05. The two criteria ahead of it both ask whether the measurement is *the same
+  measurement* under a different encoder and without the realised outcome — which is what a gate
+  target has to be. `recommended_y = None` is a reportable outcome, not a fallback.
+
+### Result of the fix
+
+The known-answer case is exact rather than approximate. When messages are constant within a
+condition, the permutation is a literal no-op, so the corrected mean CPVI, the corrected ρ and both
+their intervals come out at `0.0` to machine precision and **no label is admissible** — the fixture
+is in `tests/unit/experiments/test_rq2.py` and is the case the module exists to get right. A second
+test pins `_null_cpvi`'s mean against `shuffled_message_cpvi`'s, so RQ1's null and RQ2's cannot
+drift apart. The module is at 100% line coverage; the suite is 472 passed, 2 skipped.
+
+### So-what / takeaways
+
+1. **A null applied to the pooled mean does not transfer to a contrast or a correlation.** D23 caught
+   the first case, this entry catches the second. Anywhere CPVI enters a *comparison*, the null has to
+   enter the same comparison, or the identity component rides along unlabelled.
+2. **An acceptance criterion can be satisfiable by the failure it was written to detect.** "The proxy
+   correlates with CPVI" was a reasonable criterion in June and became an unfalsifiable one the day
+   the identity component was measured. Tickets are not self-updating; the register is what catches
+   this, and only if the conflict is raised rather than silently reconciled.
+3. **A decision rule fixed in code before the data is a different object from one written in prose.**
+   The ranking constants are executable, tested, and in the diff that predates the run — which is the
+   only form of "pre-declared" that survives someone asking whether it was edited afterwards.
+
+---
+
+## 2026-08-28 — The cross-condition CPVI gap is mostly a condition tag, and what the next run has to establish
 
 - **Area:** what the shuffled-message audit is applied to (§8.5), the reported estimand for every
   cross-condition CPVI contrast, and the cell the post-gate characterisation run covers (§9.10).

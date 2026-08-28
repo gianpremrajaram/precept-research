@@ -15,6 +15,7 @@ from preceptx.experiments.sweep import (
     expand,
     sweep_hash,
 )
+from preceptx.gate.integration import GateConfig
 from preceptx.sim.actions import StepConfig
 from preceptx.sim.arena import ScenarioJitter
 from preceptx.sim.outcomes import OutcomeConfig
@@ -94,3 +95,55 @@ def test_gate_feedback_version_does_not_re_key_the_dataset(monkeypatch: pytest.M
     before = dataset_hash_for(_sweep())
     monkeypatch.setattr("preceptx.experiments.sweep.GATE_FEEDBACK_VERSION", "v99")
     assert dataset_hash_for(_sweep()) == before
+
+
+def test_the_live_grid_hash_survives_the_gate_field() -> None:
+    """The gate arm joins the dataset identity without re-keying a single existing dataset.
+
+    Adding any field to ``SweepConfig`` changes ``model_dump``, and ``sweep_hash`` hashes that
+    dump - so a naive addition silently re-points every recorded dataset. These are the real
+    hashes job 227886 is writing under right now (`preceptx-rq1`, C0-C4 x easy/medium/hard x
+    seeds 0-31, Qwen3-14B); if this fails, a live run has been orphaned from its own directory.
+    """
+    live = SweepConfig(
+        conditions=["C0", "C1", "C2", "C3", "C4"],
+        serialisations=["numeric"],
+        difficulties=["easy", "medium", "hard"],
+        seeds=list(range(32)),
+        model=ModelConfig(
+            name="Qwen/Qwen3-14B",
+            revision="40c069824f4251a91eefaf281ebe4c544efd3e18",
+            tier="14b",
+        ),
+    )
+    assert live.gate is None  # ungated is the default, and the default must hash as it always did
+    assert sweep_hash(live) == "afcd6a53ee11edd7"
+    assert dataset_hash_for(live) == "54ed65e6cc9e7d17"
+
+
+def test_each_gate_arm_keys_its_own_dataset() -> None:
+    """The RQ3b comparison is four arms over one grid; four arms sharing a dataset is no comparison.
+
+    Without the gate in the hash they collide in one run directory and ``run_grid``'s resume reads
+    arm 1's episode ids as arms 2-4's completed work - the whole causal contrast collapsing into one
+    arm run four times, with nothing in the artefacts to say so. ``off`` is a declared arm too: it
+    runs the gate machinery with the gate never firing, which is a different run of record from an
+    ungated RQ1 sweep even though the episodes would match.
+    """
+    base = _sweep()
+    hashes = {
+        mode: dataset_hash_for(base.model_copy(update={"gate": GateConfig(mode=mode)}))
+        for mode in ("off", "active", "matched_random", "random_trigger")
+    }
+    hashes["ungated"] = dataset_hash_for(base)
+    assert len(set(hashes.values())) == 5, hashes
+
+    # It is the arm's identity that keys it, not merely the presence of a gate: two arms differing
+    # only in retry budget or control rate are different treatments and must not pool either.
+    active = base.model_copy(update={"gate": GateConfig(mode="active")})
+    assert dataset_hash_for(active) != dataset_hash_for(
+        base.model_copy(update={"gate": GateConfig(mode="active", max_retries=3)})
+    )
+    assert dataset_hash_for(active) != dataset_hash_for(
+        base.model_copy(update={"gate": GateConfig(mode="active", statistic_key="info")})
+    )
