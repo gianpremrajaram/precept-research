@@ -7,6 +7,9 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from preceptx.sim.actions import (
+    ANGULAR_IMPULSE,
+    DEG_PER_UNIT_IMPULSE,
+    ROTATION_STEP_DEG,
     BodyState,
     MacroAction,
     StepConfig,
@@ -14,6 +17,7 @@ from preceptx.sim.actions import (
     apply_macro_action,
     detect_collision,
     detect_stuck,
+    measure_rotation_step,
     read_state,
 )
 from preceptx.sim.arena import make_scenario
@@ -168,3 +172,60 @@ def test_force_handles_equal_translate_opposed_rotate() -> None:
     apply_force_handles(s.space, s.load, (0.0, 3.0), (0.0, -3.0), cfg)
     r1 = read_state(s.space, s.load)
     assert abs(r1.angle - r0.angle) > 1e-2
+
+
+# --- DSE-059: the rotation quantum, and the orientation hold that must actually hold -------------
+
+
+def test_the_shipped_impulse_realises_the_authored_rotation_step() -> None:
+    """The guard that would have caught DSE-059 the day DSE-057 changed the load.
+
+    ``angular_impulse`` is derived from ``ROTATION_STEP_DEG`` through a measured constant, and the
+    constant is only valid for the load's moment of inertia. When the T became a bar of 1.71x
+    smaller moment, the same impulse silently went from ~34 to 57.8 deg per action - and nothing
+    failed,
+    because the only thing asserting the intent was a code comment. This asserts it instead.
+    """
+    assert measure_rotation_step() == pytest.approx(ROTATION_STEP_DEG, abs=0.05)
+    assert pytest.approx(ROTATION_STEP_DEG / DEG_PER_UNIT_IMPULSE) == ANGULAR_IMPULSE
+
+
+def test_free_rotation_is_deterministic_and_linear_in_the_impulse() -> None:
+    """Free rotation has no noise at all, so the quantum is exact rather than an average.
+
+    Load-bearing for the whole design: reachability is a lattice argument, and a lattice only exists
+    if the step is a constant. Any spread observed in a real run is therefore contact truncation,
+    which can only ever *reduce* the realised angle - never scatter it either way.
+    """
+    for impulse in (0.05, ANGULAR_IMPULSE, 0.3):
+        steps = {
+            round(measure_rotation_step(StepConfig(angular_impulse=impulse)), 9) for _ in range(3)
+        }
+        assert len(steps) == 1, f"rotation at impulse {impulse} is not deterministic: {steps}"
+    half = measure_rotation_step(StepConfig(angular_impulse=ANGULAR_IMPULSE / 2.0))
+    assert half == pytest.approx(ROTATION_STEP_DEG / 2.0, abs=0.02)
+
+
+def test_hold_orientation_prevents_contact_rotation_rather_than_reverting_it() -> None:
+    """The DSE-059 regression: the load must not rotate *during* a non-rotate action either.
+
+    The original hold restored the angle after the settle, so contact could spin the load flat, slip
+    it through a channel it does not fit, and hand back the original angle. From 30 deg on medium
+    (geometric window +/-17.2 deg) the load reached 0.48 deg mid-action and passed. Sampling the
+    angle inside the settle is the only way to see it: every after-the-fact read said 30.00.
+    """
+    scenario = make_scenario("medium")
+    body = scenario.load
+    body.angle = math.radians(30.0)
+    scenario.space.reindex_shapes_for_body(body)
+    config = StepConfig()
+
+    sampled: list[float] = []
+    for _ in range(10):
+        before = body.angle
+        body.moment = float("inf") if config.hold_orientation else body.moment
+        apply_macro_action(scenario.space, body, "E", config)
+        sampled.append(abs(math.degrees(body.angle - before)))
+    assert max(sampled) == pytest.approx(0.0, abs=1e-9)
+    # and it is genuinely blocked, not squeezed through, at an angle that does not fit
+    assert read_state(scenario.space, body).com_x < 4.0

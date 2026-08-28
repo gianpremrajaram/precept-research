@@ -33,7 +33,7 @@ from omegaconf import OmegaConf
 from preceptx.config import ConfigError, ExperimentConfig, load_config
 from preceptx.data.writer import load_records
 from preceptx.experiments.pilot import run_pilot, write_pilot_report
-from preceptx.experiments.rq1 import CONDITION_ORDER, run_rq1, write_rq1
+from preceptx.experiments.rq1 import CONDITION_ORDER, analyse_rq1, run_rq1, write_rq1
 from preceptx.experiments.rq2 import analyse_rq2, write_rq2
 from preceptx.experiments.runner import run_grid
 from preceptx.experiments.sweep import SweepConfig, dataset_hash_for, expand, sweep_hash
@@ -239,6 +239,11 @@ def pilot(argv: list[str] | None = None) -> int:
 def rq1(argv: list[str] | None = None) -> int:
     """``preceptx-rq1``: run the information-gradient factorial and write the analysis."""
     parser = _parser("preceptx-rq1", "Run the RQ1 information-gradient sweep and analyse it.")
+    parser.add_argument(
+        "--no-analysis",
+        action="store_true",
+        help="run the episodes and stop; analyse later with preceptx-analyse (frees the GPU)",
+    )
     parsed = parser.parse_args(argv)
     sweep = _prepare(
         parsed,
@@ -253,11 +258,51 @@ def rq1(argv: list[str] | None = None) -> int:
         _print_plan(sweep)
         return 0
 
+    d_hash = dataset_hash_for(sweep)
+    if parsed.no_analysis:
+        # The analysis is pure CPU on episodes already written, but run in-job it holds the GPU for
+        # its whole duration - 2h37m of an A100 on job 227886, spent in statsmodels. It is also the
+        # only part that can fail *after* the episodes are paid for. Splitting it frees the node at
+        # the last episode and makes the analysis re-runnable without re-running the sweep
+        # (DSE-062).
+        with _clients(sweep, parsed) as (client_a, client_b):
+            run_grid(sweep, client_a, client_b, root=parsed.root)
+        logger.info("episodes complete; analyse with: preceptx-analyse --dataset-hash %s", d_hash)
+        return 0
+
     with _clients(sweep, parsed) as (client_a, client_b):
         result, scores = run_rq1(
             sweep, client_a, Featuriser(EncoderConfig()), client_b=client_b, root=parsed.root
         )
-    out = write_rq1(result, _report_dir(parsed, dataset_hash_for(sweep)), scores=scores)
+    out = write_rq1(result, _report_dir(parsed, d_hash), scores=scores)
+    logger.info("rq1 analysis written to %s", out)
+    return 0
+
+
+def analyse(argv: list[str] | None = None) -> int:
+    """``preceptx-analyse``: run the RQ1 analysis over an existing dataset. Offline, no GPU.
+
+    The other half of ``preceptx-rq1 --no-analysis``. Shaped like ``preceptx-rq2`` and for the same
+    reason: it reads episodes from disk, so resolving a model through Hydra or demanding a serving
+    substrate would be ceremony for a computation that makes no model calls.
+    """
+    parser = argparse.ArgumentParser(
+        prog="preceptx-analyse", description="Analyse an existing RQ1 dataset (offline)."
+    )
+    parser.add_argument("--dataset-hash", required=True, help="the RQ1 run's dataset hash")
+    parser.add_argument("--root", type=Path, default=Path("runs"), help="dataset root")
+    parser.add_argument("--out", type=Path, help="report directory (default: <root>/<hash>-report)")
+    parser.add_argument("--verbose", action="store_true", help="DEBUG-level logging")
+    parsed = parser.parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if parsed.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
+    )
+    d_hash = cast(str, parsed.dataset_hash)
+    result, scores = analyse_rq1(
+        load_records(d_hash, root=parsed.root), Featuriser(EncoderConfig()), dataset_hash=d_hash
+    )
+    out = write_rq1(result, parsed.out or Path(parsed.root) / f"{d_hash}-report", scores=scores)
     logger.info("rq1 analysis written to %s", out)
     return 0
 

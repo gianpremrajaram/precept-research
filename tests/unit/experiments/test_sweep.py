@@ -97,15 +97,9 @@ def test_gate_feedback_version_does_not_re_key_the_dataset(monkeypatch: pytest.M
     assert dataset_hash_for(_sweep()) == before
 
 
-def test_the_live_grid_hash_survives_the_gate_field() -> None:
-    """The gate arm joins the dataset identity without re-keying a single existing dataset.
-
-    Adding any field to ``SweepConfig`` changes ``model_dump``, and ``sweep_hash`` hashes that
-    dump - so a naive addition silently re-points every recorded dataset. These are the real
-    hashes job 227886 is writing under right now (`preceptx-rq1`, C0-C4 x easy/medium/hard x
-    seeds 0-31, Qwen3-14B); if this fails, a live run has been orphaned from its own directory.
-    """
-    live = SweepConfig(
+def _job_227886_grid(**overrides: object) -> SweepConfig:
+    """The grid job 227886 ran: C0-C4 x easy/medium/hard x seeds 0-31 on Qwen3-14B."""
+    return SweepConfig(
         conditions=["C0", "C1", "C2", "C3", "C4"],
         serialisations=["numeric"],
         difficulties=["easy", "medium", "hard"],
@@ -115,10 +109,45 @@ def test_the_live_grid_hash_survives_the_gate_field() -> None:
             revision="40c069824f4251a91eefaf281ebe4c544efd3e18",
             tier="14b",
         ),
+        **overrides,  # type: ignore[arg-type]
     )
-    assert live.gate is None  # ungated is the default, and the default must hash as it always did
-    assert sweep_hash(live) == "afcd6a53ee11edd7"
-    assert dataset_hash_for(live) == "54ed65e6cc9e7d17"
+
+
+def test_the_recorded_grid_still_hashes_to_its_own_dataset() -> None:
+    """Job 227886's dataset identity is reproducible from its own configuration, forever.
+
+    Adding a field to ``SweepConfig`` changes ``model_dump``, and ``sweep_hash`` hashes that dump -
+    so a naive addition silently re-points every recorded dataset. The budgets are pinned here
+    rather than defaulted BECAUSE DSE-059 moved the defaults to 30/35/35: this asserts that the
+    227886 configuration still keys to 227886's directory, which is the property that matters and
+    the one a default change must never break. What a *new* default hashes to is the next test.
+
+    ``hold_orientation`` is pinned by VALUE and its value did not change - DSE-059 altered what
+    True *means*, not what it is - so ``sweep_hash`` cannot see that change.
+    ``ENVIRONMENT_SCHEMA_VERSION`` is what re-keys it, which is the case that field exists for, and
+    why the next test asserts on ``dataset_hash_for`` and not on ``sweep_hash`` alone.
+    """
+    recorded = _job_227886_grid(
+        jitter=ScenarioJitter(y_range=(1.5, 4.5)),
+        step=StepConfig(angular_impulse=0.5),
+        max_steps={"easy": 20, "medium": 25, "hard": 25},
+    )
+    assert (
+        recorded.gate is None
+    )  # ungated is the default, and the default must hash as it always did
+    assert sweep_hash(recorded) == "afcd6a53ee11edd7"
+
+
+def test_the_corrected_actuator_keys_a_new_dataset() -> None:
+    """DSE-059 is a new task generation and must not share 227886's directory.
+
+    The corrected rotation quantum, the true orientation hold and the 0.64 hard aperture change what
+    an episode *is*, so resuming into 54ed65e6cc9e7d17 would mix two physics under one hash - the
+    exact failure ``sim/fingerprint.py`` exists to prevent. Asserting inequality rather than a
+    literal keeps this test from becoming a second place to update on every legitimate retune.
+    """
+    assert sweep_hash(_job_227886_grid()) != "afcd6a53ee11edd7"
+    assert dataset_hash_for(_job_227886_grid()) != "54ed65e6cc9e7d17"
 
 
 def test_each_gate_arm_keys_its_own_dataset() -> None:

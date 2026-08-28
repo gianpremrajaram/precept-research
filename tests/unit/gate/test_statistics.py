@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import inspect
+import itertools
 
 import numpy as np
 import pytest
 from numpy.typing import NDArray
+from scipy.stats import spearmanr
 
 from preceptx.config import ConfigError
 from preceptx.data.schema import HandoffRecord
+from preceptx.gate.integration import GateConfig
 from preceptx.gate.statistics import (
     CosineStatistic,
     FailStatistic,
@@ -16,6 +19,7 @@ from preceptx.gate.statistics import (
     episode_groups,
     failure_label,
     load_statistic,
+    resolve_statistic_key,
     save_statistic,
     score_records,
 )
@@ -168,3 +172,37 @@ def test_save_load_round_trip_and_key_guard(tmp_path) -> None:  # type: ignore[n
     assert np.allclose(loaded.score(e_s, e_m), stat.score(e_s, e_m))
     with pytest.raises(GateError):
         load_statistic("info", dir=tmp_path / "s")  # never persisted
+
+
+# --- DSE-061: two statistics that rank identically are one statistic -----------------------------
+
+
+def test_no_two_calibrated_statistics_rank_handoffs_identically() -> None:
+    """The guard for DSE-061: a config surface that outran reality.
+
+    ``InfoStatistic`` and ``FailStatistic`` correlate at Spearman -1.000000 on the 227886 dataset -
+    exactly, not approximately, because for a binary outcome the entropy of ``g_cond`` is a
+    symmetric unimodal function of the probability ``FailStatistic`` reports. Offering both in
+    ``GateConfig.statistic_key`` overstated the evidence: a finding that "holds for both statistics"
+    held once. This asserts the default set stays genuinely plural.
+    """
+    rng = np.random.default_rng(0)
+    e_s = rng.normal(size=(64, 8))
+    e_m = rng.normal(size=(64, 8))
+    y = (rng.random(64) < 0.5).astype(int)
+
+    scores: dict[str, NDArray[np.float64]] = {}
+    for stat in (FailStatistic(), CosineStatistic()):
+        stat.fit(e_s, e_m, y)
+        scores[stat.key] = stat.score(e_s, e_m)
+
+    for a, b in itertools.combinations(scores, 2):
+        rho = spearmanr(scores[a], scores[b]).statistic
+        assert abs(rho) < 0.999, f"{a} and {b} are rank-identical (rho={rho:.6f}): one is redundant"
+
+
+def test_a_retired_statistic_key_still_resolves() -> None:
+    """Manifests and configs written before DSE-061 name ``info``; they must still load."""
+    assert resolve_statistic_key("info") == "fail"
+    assert resolve_statistic_key("cosine") == "cosine"  # a live key is returned untouched
+    assert GateConfig(statistic_key="info").statistic_key == "fail"

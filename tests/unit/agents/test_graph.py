@@ -80,8 +80,10 @@ def test_episode_runs_to_budget_when_action_never_succeeds() -> None:
 
 @respx.mock
 def test_episode_terminates_on_success() -> None:
-    # The oracle's easy opening: rotate into line, then push east (DSE-058, broadside start).
-    respx.post(CHAT).mock(side_effect=_script("E", prefix=("ROT+", "E", "ROT+")))
+    # The certified easy path (DSE-059): five rotations onto the passing angle, then push east.
+    # Five, not two, because the rotation step is now 12 deg rather than 57.8; the certificate in
+    # tests/unit/sim/test_feasibility.py is what guards the count, this test only has to use it.
+    respx.post(CHAT).mock(side_effect=_script("E", prefix=("ROT+",) * 5))
     records = EpisodeRunner(_client(), max_steps=20).run_episode(_cell(), "ep")
     assert records[-1].success  # reached the goal
     assert len(records) < 20  # stopped early, before the budget

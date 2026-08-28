@@ -14,11 +14,16 @@ fired on the cluster, on the verdict of record, looking like a success. Folding 
 dataset identity makes that state unrepresentable: changed geometry writes to a different
 directory, and there is nothing to mistake for a completed run.
 
-Deliberately NOT fingerprinted here: ``ScenarioJitter``, ``StepConfig``, ``OutcomeConfig`` and the
-per-difficulty step budgets. They are ``SweepConfig`` fields and are already inside ``sweep_hash``;
-hashing them twice would put one guarantee in two places to keep in step. Derived values
-(``load.LOAD_COG_Y``) are likewise omitted - they are pure functions of the load dimensions
-that *are* hashed, so they cannot change independently.
+``StepConfig`` IS fingerprinted, via the ``actions`` field. An earlier version of this docstring
+said otherwise while the code hashed it anyway (corrected in DSE-059). Hashing it here is the right
+call and the redundancy with ``sweep_hash`` is deliberate: ``hold_orientation`` and
+``angular_impulse`` decide whether contact can rotate the load and how far one action turns it, so a
+dataset must re-key on them whether or not a caller happened to route them through ``SweepConfig``.
+
+Deliberately NOT fingerprinted here: ``ScenarioJitter``, ``OutcomeConfig`` and the per-difficulty
+step budgets. They are ``SweepConfig`` fields and are already inside ``sweep_hash``. Derived values
+(``load.LOAD_COG_Y``, ``actions.ANGULAR_IMPULSE``) are likewise omitted - they are pure functions of
+values that *are* hashed, so they cannot change independently.
 """
 
 from __future__ import annotations
@@ -32,7 +37,7 @@ from preceptx.sim import actions, arena, load, serialise
 
 # Bump to force a deliberate re-key when a change cannot be captured structurally - a behavioural
 # change in pymunk's stepping, say, that leaves every constant here identical.
-ENVIRONMENT_SCHEMA_VERSION = 2
+ENVIRONMENT_SCHEMA_VERSION = 3
 
 
 class SimulationFingerprint(BaseModel):
@@ -78,6 +83,7 @@ def simulation_fingerprint() -> SimulationFingerprint:
         arena={
             **{k: float(v) for k, v in geometry.items()},
             "damping": arena.DAMPING,
+            "collision_slop": arena.COLLISION_SLOP,
             "load_mass": arena.LOAD_MASS,
             "goal_radius": arena.GOAL_RADIUS,
             "wall_friction": arena.WALL_FRICTION,

@@ -30,10 +30,18 @@ import logging
 import math
 from typing import NamedTuple
 
+import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
+from preceptx.config import ConfigError
 from preceptx.data.schema import Difficulty
-from preceptx.sim.actions import MacroAction, StepConfig, apply_macro_action, read_state
+from preceptx.sim.actions import (
+    ROTATION_STEP_DEG,
+    MacroAction,
+    StepConfig,
+    apply_macro_action,
+    read_state,
+)
 from preceptx.sim.arena import (
     LOAD_MASS,
     ArenaGeometry,
@@ -54,10 +62,20 @@ _SEARCH_ACTIONS: tuple[MacroAction, ...] = ("N", "S", "E", "W", "ROT+", "ROT-")
 
 # Pose-deduplication resolution: poses within one grid cell in position AND one bucket in angle are
 # the same search state. Fine enough to find the narrow threading passage for medium/hard (the
-# tight slits), coarse enough to bound the frontier. The angle bucket (18 deg) is below the ~34 deg
-# per-action rotation step, so consecutive rotations are never collapsed into one state.
+# tight slits), coarse enough to bound the frontier.
+#
+# The angle bucket is DERIVED from the rotation step and must stay below it (DSE-059). It was a bare
+# 18 deg, correct against the 57.8 deg step of the day and silently wrong the moment the step became
+# 12 deg: a bucket wider than the step collapses consecutive rotations into one search state, so the
+# planner prunes the very poses the threading manoeuvre needs and can report a solvable rung
+# unsolvable. Half the step keeps every distinct rotation distinguishable with margin.
 _POS_RES = 0.15
-_ANG_RES = math.pi / 10.0
+_ANG_RES = math.radians(ROTATION_STEP_DEG / 2.0)
+if math.radians(ROTATION_STEP_DEG) <= _ANG_RES:  # pragma: no cover - guards a future retune
+    raise ConfigError(
+        f"pose dedup bucket ({math.degrees(_ANG_RES):.2f} deg) is not below the rotation step "
+        f"({ROTATION_STEP_DEG:.2f} deg); consecutive rotations would collapse into one search state"
+    )
 
 # A* heuristic optimism: no single action reduces the geodesic distance to the goal by more than
 # this (an E-push advances ~1 world unit under the damped regime), so geodesic / this is a lower
@@ -85,10 +103,23 @@ BUDGET_MULTIPLIER = 2.5
 # continuum-physics benchmark.
 CERTIFICATION_STEP_CONFIG = StepConfig(substeps=64)
 
-# Certified per-difficulty step budgets, FROZEN from ``certify()`` on the SUCCESSOR geometry
-# (DSE-058: convex 1.4x0.3 bar, channel depth 1.5, apertures 1.20/0.80/0.50, broadside canonical
-# pose, orientation held through non-rotate actions). Easy solves in 8 steps with ONE rotation;
-# medium and hard in 10 with two. Budget is ceil(2.5 x optimum), so 20/25/25.
+# Certified per-difficulty step budgets, FROZEN from ``certify()`` on the CORRECTED geometry
+# (DSE-059: convex 1.4x0.3 bar, channel depth 1.5, apertures 1.20/0.80/0.64, broadside canonical
+# pose, orientation held by infinite moment, 12 deg rotation step). Easy solves in 12 steps with
+# FIVE rotations; medium and hard in 14 with seven. Budget is ceil(2.5 x optimum), so 30/35/35.
+#
+# The certified paths are now PLANNABLE: every rotation is a free-space rotation, so each is exactly
+# ROTATION_STEP_DEG and the whole solution is "rotate k times, then push east". The DSE-058 paths
+# were not - medium's and hard's each depended on a CONTACT-TRUNCATED rotation (34.68 and 42.49 deg
+# against a 57.79 deg free quantum) landing by luck inside the window. Those certificates were sound
+# as physics and useless as a target: they certified a task solvable by exploiting contact, and the
+# agents were then asked to solve it by reasoning. ``certify_plannable`` now enforces the
+# difference.
+#
+# Difficulty grades by ROTATION-COUNT SLACK, not by rotation count: medium and hard both need seven
+# rotations, but easy tolerates a miscount of +/-3, medium +/-1 and hard +/-0. Separating them by
+# count instead would require hard's window to exclude the lattice point medium's admits, which is
+# exactly the knife-edge geometry DSE-059 removed - so the trade is deliberate and is logged in D26.
 #
 # Budget width is part of the certification, not a free parameter bolted on afterwards: a longer
 # budget admits longer degenerate paths, and an earlier ladder that certified 10/10 at budget 25
@@ -103,9 +134,9 @@ CERTIFICATION_STEP_CONFIG = StepConfig(substeps=64)
 # loudly rather than silently starving the pilot. Regenerate with
 # ``python -m preceptx.sim.feasibility``.
 STEP_BUDGETS: dict[Difficulty, int] = {
-    "easy": 20,
-    "medium": 25,
-    "hard": 25,
+    "easy": 30,
+    "medium": 35,
+    "hard": 35,
 }
 
 
@@ -241,10 +272,125 @@ def solve(
 
 _DIFFICULTIES: tuple[Difficulty, ...] = ("easy", "medium", "hard")
 
+# A realised rotation may fall short of the free-space quantum only by this much before the path
+# counts as contact-exploiting. Free rotation is exactly deterministic, so any shortfall is contact.
+_PLANNABLE_ROT_TOL_DEG = 0.5
+
+
+class PlannabilityError(ConfigError):
+    """A certified path reaches the goal only by exploiting contact (DSE-060)."""
+
+
+def replay(
+    difficulty: Difficulty, path: list[MacroAction], *, step_cfg: StepConfig | None = None
+) -> tuple[bool, list[float]]:
+    """Replay ``path`` from the canonical start; return (reached goal, realised rotation
+    degrees)."""
+    step_cfg = step_cfg or StepConfig()
+    scenario = make_scenario(difficulty)
+    body = scenario.load
+    rotations: list[float] = []
+    for action in path:
+        before = body.angle
+        apply_macro_action(scenario.space, body, action, step_cfg)
+        if action in ("ROT+", "ROT-"):
+            rotations.append(abs(math.degrees(body.angle - before)))
+    return reached_goal(read_state(scenario.space, body), scenario.goal), rotations
+
+
+def assert_plannable(
+    difficulty: Difficulty, path: list[MacroAction], *, step_cfg: StepConfig | None = None
+) -> None:
+    """Fail loud if a certified path only works by exploiting contact-truncated rotation.
+
+    The guard for the DSE-060 failure. A* searches real physics, so anything it returns is *sound* -
+    but soundness is not the property a task certificate needs. The DSE-058 certificates for medium
+    and hard each threaded the channel on a rotation that contact had cut short (34.68 and 42.49 deg
+    against a 57.79 deg free quantum), landing inside the window by arithmetic luck. That certifies
+    a
+    task solvable by exploiting contact dynamics, and the agents are then asked to solve it by
+    reasoning about a quantum the record says is constant. A plannable path is one whose every
+    rotation is the quantum the agent is told about, so the plan an agent can state is a plan that
+    works.
+    """
+    reached, rotations = replay(difficulty, path, step_cfg=step_cfg)
+    if not reached:
+        raise PlannabilityError(
+            f"certified path for {difficulty!r} does not reach the goal on replay"
+        )
+    truncated = [r for r in rotations if abs(r - ROTATION_STEP_DEG) > _PLANNABLE_ROT_TOL_DEG]
+    if truncated:
+        raise PlannabilityError(
+            f"certified path for {difficulty!r} exploits contact: rotations "
+            f"{[round(r, 2) for r in truncated]} deg differ from the free quantum "
+            f"{ROTATION_STEP_DEG} deg by more than {_PLANNABLE_ROT_TOL_DEG} deg. The path is sound "
+            "physics but not a plan an agent could state and execute."
+        )
+
+
+def scripted_policy_solves(
+    difficulty: Difficulty, *, seeds: int = 10, step_cfg: StepConfig | None = None
+) -> tuple[int, int]:
+    """Run the obvious plan - rotate onto the nearest passing angle, then push east - per seed.
+
+    The DSE-063 smoke, and the thing no A* certificate can tell you: the oracle proves a path
+    exists,
+    this proves the path a competent planner would actually choose is one of them. It issues no
+    model
+    calls, so it runs on a laptop in seconds and gates a GPU submission rather than trailing it.
+    """
+    step_cfg = step_cfg or StepConfig()
+    budget = STEP_BUDGETS[difficulty]
+    solved = 0
+    for seed in range(seeds):
+        scenario = make_scenario(difficulty, rng=np.random.default_rng(seed))
+        body = scenario.load
+        # rotations onto the lattice point nearest flat (mod 180), then push east for the remainder
+        theta = math.degrees(body.angle) % 180.0
+        k = round((theta if theta <= 90.0 else theta - 180.0) / ROTATION_STEP_DEG)
+        plan: list[MacroAction] = ["ROT-" if k > 0 else "ROT+"] * abs(k)
+        plan += ["E"] * (budget - len(plan))
+        for action in plan[:budget]:
+            apply_macro_action(scenario.space, body, action, step_cfg)
+            if reached_goal(read_state(scenario.space, body), scenario.goal):
+                solved += 1
+                break
+    return solved, seeds
+
+
+# The scripted policy must solve at least this share of jittered seeds for a task to certify. Set to
+# 1.0 deliberately: the policy is the obvious plan against a deterministic actuator, so anything
+# below 1.0 means some start pose cannot be corrected by the action set - the DSE-059 fault - and
+# that is a property of the task, not of the agent. There is no reason to tolerate any of it.
+_SCRIPTED_POLICY_MIN = 1.0
+_SCRIPTED_POLICY_SEEDS = 16
+
 
 def certify(step_cfg: StepConfig | None = None) -> dict[Difficulty, FeasibilityResult]:
-    """Run the search for every difficulty - the certificate the test and the CLI both consume."""
-    return {d: solve(d, step_cfg=step_cfg) for d in _DIFFICULTIES}
+    """Certify every difficulty: solvable, by a PLANNABLE path, and reachable by the obvious policy.
+
+    Three limbs, because run 227886 passed the first and failed the other two invisibly
+    (DSE-059/060,
+    D26). A* proves a path exists; ``assert_plannable`` proves it is a path an agent could state;
+    ``scripted_policy_solves`` proves the plan a competent agent would actually choose works from
+    every jittered start, which is the only limb that sees the start-pose distribution at all.
+    """
+    results = {d: solve(d, step_cfg=step_cfg) for d in _DIFFICULTIES}
+    for difficulty, result in results.items():
+        if not result.solvable:
+            continue
+        assert_plannable(difficulty, result.path, step_cfg=step_cfg)
+        solved, seeds = scripted_policy_solves(
+            difficulty, seeds=_SCRIPTED_POLICY_SEEDS, step_cfg=step_cfg
+        )
+        if solved < _SCRIPTED_POLICY_MIN * seeds:
+            raise PlannabilityError(
+                f"{difficulty!r} certifies as solvable but the scripted rotate-then-push policy "
+                f"solves only {solved}/{seeds} jittered starts. A* searches from the "
+                "canonical pose, so a start-pose offset the action set cannot correct is "
+                "invisible to it."
+            )
+    return results
 
 
 def _main() -> None:

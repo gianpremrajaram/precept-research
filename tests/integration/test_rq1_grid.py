@@ -1,7 +1,7 @@
 """Integration: a small mock RQ1 grid runs and the analysis emits a table + JSON (DSE-020).
 
 Torch-free and offline - a mocked vLLM endpoint drives ``run_grid`` over a C0+C4 grid with the
-east-push script (the hard difficulty moves then jams, so per-step progress carries both classes),
+east-push script (the E,E,W script keeps per-step progress two-class),
 then ``run_rq1`` analyses it with a stub encoder. The check is that the headline driver closes the
 loop and writes its artefacts; the full-scale run is gated on the resolved compute (DSE-005).
 """
@@ -9,6 +9,7 @@ loop and writes its artefacts; the full-scale run is gated on the resolved compu
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 from pathlib import Path
 
@@ -60,9 +61,17 @@ def _completion(content: str) -> dict[str, object]:
     }
 
 
+# E,E,W rather than pure E (DSE-059). The progress label is "net geodesic gain over the next k
+# steps > 0", and a load pressed against a wall still creeps forward ~0.012 units per step inside
+# the contact solver's slop - so a pure-east script now labels EVERY handoff as progress and the
+# analysis has one class to fit. Backing off every third step makes the label genuinely two-class
+# (26/32 positive) without depending on a jam that the corrected physics no longer produces.
+_ACTION_CYCLE = itertools.cycle(("E", "E", "W"))
+
+
 def _east_script(request: httpx.Request) -> httpx.Response:
     if b"structured_outputs" in request.content:
-        return httpx.Response(200, json=_completion(json.dumps({"action": "E"})))
+        return httpx.Response(200, json=_completion(json.dumps({"action": next(_ACTION_CYCLE)})))
     return httpx.Response(200, json=_completion("push the load east toward the goal"))
 
 

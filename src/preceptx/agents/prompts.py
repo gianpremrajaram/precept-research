@@ -11,6 +11,7 @@ record (``SweepManifest.prompt_version``).
 from __future__ import annotations
 
 from preceptx.serving.client import ChatMessage
+from preceptx.sim.actions import ROTATION_STEP_DEG
 
 # v2: serialisation bump (P1-5 + RD-7) - the grid gained its constant legend/axis header and the
 # numeric form dropped the dead vel line. Prompt templates themselves are unchanged from v1; the
@@ -42,7 +43,7 @@ from preceptx.serving.client import ChatMessage
 # arena's object and obstacle to agents manipulating a bar through a channel would reintroduce the
 # exact grounded-but-inferentially-wrong defect DSE-057 was spent falsifying. Landed before the
 # first successor model call, so no dataset is re-keyed.
-PROMPT_VERSION = "v6"
+PROMPT_VERSION = "v7"
 
 _SYSTEM_A = (
     "You are agent A, the navigator in a two-agent cooperative-transport task. A straight "
@@ -60,6 +61,12 @@ _SYSTEM_A = (
     "will gain nothing again from the same position."
 )
 
+# Realised world-units per N/S/E/W push, for the action hint. Deterministic (sd 1e-15), so it is a
+# constant rather than an average - and asserted against the live actuator in test_prompts.py, since
+# a number in a prompt that describes the physics must not be able to disagree with the physics.
+_LINEAR_STEP = 1.03
+
+
 _SYSTEM_B = (
     "You are agent B, the actuator in a two-agent cooperative-transport task. You receive a "
     "partial observation of the scene and one instruction from agent A, who can see more of the "
@@ -67,9 +74,17 @@ _SYSTEM_B = (
     "toward the goal, following A's instruction unless your own observation plainly contradicts it."
 )
 
+# The action QUANTA are stated, not left to be inferred from action history (DSE-059, D26). Since
+# the corrected actuator, hard tolerates no miscount - it needs exactly seven rotations - so leaving
+# the step size implicit would make the rung a constant-DISCOVERY task and the capability arm would
+# measure the wrong thing. Declaring it is also the standard in embodied spatial-reasoning
+# benchmarks: REM supplies "rotate right 15 deg" alongside the observation, and still finds that
+# models collapse under full rotation, which is the capability this task is meant to stress.
+# The numbers are interpolated from the live StepConfig so the prompt cannot drift from the physics.
 _ACTION_HINT = (
-    "Actions: N pushes the load north (+y), S south (-y), E east (+x), W west (-x); ROT+/ROT- "
-    "rotate it; WAIT does nothing. Choose one."
+    "Actions: N pushes the load north (+y), S south (-y), E east (+x), W west (-x), each by about "
+    f"{_LINEAR_STEP:.2f} units; ROT+/ROT- rotate it by exactly {ROTATION_STEP_DEG:.0f} degrees "
+    "(anticlockwise/clockwise); WAIT does nothing. Choose one."
 )
 
 

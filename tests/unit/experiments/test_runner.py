@@ -286,7 +286,7 @@ def test_the_manifest_records_the_world_and_its_digest(tmp_path: Path) -> None:
     simulation = manifest["simulation"]
     assert isinstance(simulation, dict)
     # The payload, not only the digest: a digest says identity changed, the payload says why.
-    assert simulation["slit_widths"] == {"easy": 1.20, "medium": 0.80, "hard": 0.50}
+    assert simulation["slit_widths"] == {"easy": 1.20, "medium": 0.80, "hard": 0.64}
 
 
 def test_a_gate_the_sweep_does_not_declare_fails_loud(tmp_path: Path) -> None:
