@@ -156,3 +156,16 @@ class Featuriser:
         e_s = self.embed_texts([r.observation for r in records])
         e_m = self.embed_texts([r.message_delivered for r in records])
         return e_s, e_m
+
+
+def second_encoder_config(cfg: EncoderConfig) -> EncoderConfig:
+    """The sensitivity encoder promoted to primary, for the DSE-022 side-by-side rescore.
+
+    Same cache directory on purpose: cache keys already include the encoder *name* as well as its
+    revision (P1-16), so the two encoders' vectors cannot collide, and sharing the directory keeps
+    one cache to warm. ``second_encoder``/``second_encoder_revision`` are carried through unchanged
+    so the returned config still records which pair it came from.
+    """
+    return cfg.model_copy(
+        update={"name": cfg.second_encoder, "revision": cfg.second_encoder_revision}
+    )

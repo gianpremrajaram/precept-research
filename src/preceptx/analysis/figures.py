@@ -104,3 +104,36 @@ def series_plot(
         fig.savefig(path, bbox_inches="tight")
         plt.close(fig)
     return path
+
+
+def scatter_plot(
+    x: Any,
+    y: Any,
+    *,
+    xlabel: str,
+    ylabel: str,
+    title: str,
+    path: Path,
+    hlines: list[float] | None = None,
+) -> Path | None:
+    """Per-point scatter with optional horizontal reference lines. No-op without viz.
+
+    Added for the RQ2 Bland-Altman figure (DSE-022), where the question is the *spread* of the
+    per-handoff disagreement rather than a per-condition mean, so the interval plots above cannot
+    show it; ``hlines`` draws the bias and the limits of agreement.
+    """
+    plt = _pyplot()
+    if plt is None:
+        return None
+    with plt.rc_context(_RC):
+        fig, ax = plt.subplots()
+        ax.scatter(x, y, s=12, alpha=0.5)
+        for h in hlines or []:
+            ax.axhline(h, linestyle="--", linewidth=1.0)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(path, bbox_inches="tight")
+        plt.close(fig)
+    return path

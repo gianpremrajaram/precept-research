@@ -25,6 +25,7 @@ from preceptx.agents.prompts import GATE_FEEDBACK_VERSION, PROMPT_VERSION
 from preceptx.config import ExperimentConfig, ModelConfig
 from preceptx.data.schema import Condition, Difficulty, Serialisation
 from preceptx.data.writer import dataset_hash
+from preceptx.gate.integration import GateConfig
 from preceptx.manifest import ServeEnv, dep_versions, git_sha, serve_env
 from preceptx.serving.client import ServingConfig
 from preceptx.sim.actions import StepConfig
@@ -33,7 +34,7 @@ from preceptx.sim.feasibility import STEP_BUDGETS
 from preceptx.sim.fingerprint import SimulationFingerprint, simulation_fingerprint
 from preceptx.sim.outcomes import OutcomeConfig
 
-SWEEP_MANIFEST_VERSION = 2
+SWEEP_MANIFEST_VERSION = 3
 
 
 class SweepConfig(BaseModel):
@@ -60,6 +61,12 @@ class SweepConfig(BaseModel):
     # oracle optimum from sim/feasibility.py), so hard is not starved relative to easy. A bare int
     # is accepted and broadcast to every difficulty (so a caller can still pass one budget).
     max_steps: dict[Difficulty, int] = Field(default_factory=lambda: dict(STEP_BUDGETS))
+    # The runtime-gate ARM (DSE-018), not its artefacts: mode, statistic key, retry budget and the
+    # control rate - everything that decides which handoffs get blocked, and so what data the sweep
+    # produces. The fitted statistic and its calibration are on-disk artefacts the driver injects
+    # into the ``RuntimeGate`` (DSE-025); they are not config and are not hashed here. ``None`` is
+    # no gate in the loop, which is RQ1 and every dataset recorded to date.
+    gate: GateConfig | None = None
     concurrency: int = Field(default=4, gt=0)
 
     @field_validator("max_steps", mode="before")
@@ -159,9 +166,20 @@ def sweep_hash(sweep: SweepConfig) -> str:
     ``concurrency`` is excluded: it is an execution knob, not a result-shaping one, and hashing it
     would re-key the dataset when a resumed run changes worker count - orphaning every completed
     episode under the old hash.
+
+    ``gate`` is excluded **only when it is unset**. A gate arm shapes the data - that is the
+    whole of RQ3b - so a gated sweep has to key its own dataset: without this, gate-active,
+    matched-random, random-trigger and off over one grid all hash alike, land in one run
+    directory, and ``run_grid`` resumes arms 2-4 straight past arm 1's episode ids as already
+    complete. The comparison would come out as one arm run four times, silently. Dropping the
+    key when ``gate is None`` makes an ungated sweep hash byte-identically to one computed
+    before the field existed, so adding it re-keys no dataset recorded to date - pinned by the
+    live-grid regression test.
     """
-    canonical = json.dumps(sweep.model_dump(mode="json", exclude={"concurrency"}), sort_keys=True)
-    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+    dumped = sweep.model_dump(mode="json", exclude={"concurrency"})
+    if dumped.get("gate") is None:
+        del dumped["gate"]
+    return hashlib.sha256(json.dumps(dumped, sort_keys=True).encode()).hexdigest()[:16]
 
 
 def dataset_hash_for(sweep: SweepConfig) -> str:

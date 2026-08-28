@@ -12,6 +12,7 @@ from preceptx.data.schema import HandoffRecord
 from preceptx.data.writer import load_records
 from preceptx.experiments.runner import run_grid
 from preceptx.experiments.sweep import SweepConfig, dataset_hash_for
+from preceptx.gate.integration import GateConfig, RuntimeGate
 from preceptx.serving.client import LLMClient, ServingConfig
 from preceptx.sim import arena
 from preceptx.sim.fingerprint import simulation_fingerprint
@@ -286,3 +287,26 @@ def test_the_manifest_records_the_world_and_its_digest(tmp_path: Path) -> None:
     assert isinstance(simulation, dict)
     # The payload, not only the digest: a digest says identity changed, the payload says why.
     assert simulation["slit_widths"] == {"easy": 1.20, "medium": 0.80, "hard": 0.50}
+
+
+def test_a_gate_the_sweep_does_not_declare_fails_loud(tmp_path: Path) -> None:
+    # The dataset hash is keyed on sweep.gate, so an undeclared gate would write a gated arm's
+    # episodes into the ungated arm's directory - and the resume would then hand them back as its
+    # own. Both directions are errors: a declared arm with no gate to run it is equally a lie.
+    with pytest.raises(ConfigError, match=r"sweep\.gate"):
+        run_grid(_sweep(), _client(), root=tmp_path, gate=RuntimeGate(GateConfig(mode="off")))
+    with pytest.raises(ConfigError, match=r"sweep\.gate"):
+        run_grid(
+            _sweep().model_copy(update={"gate": GateConfig(mode="active")}),
+            _client(),
+            root=tmp_path,
+        )
+
+
+def test_a_gate_contradicting_the_sweep_fails_loud(tmp_path: Path) -> None:
+    # Both are set, so the pairing guard passes - and the two disagree about which arm this is. The
+    # hash follows sweep.gate, so the episodes would land in the matched-random dataset while the
+    # gate actually ran active: two arms of the RQ3b comparison pooled with nothing to show for it.
+    sweep = _sweep().model_copy(update={"gate": GateConfig(mode="matched_random")})
+    with pytest.raises(ConfigError, match="contradicts"):
+        run_grid(sweep, _client(), root=tmp_path, gate=RuntimeGate(GateConfig(mode="active")))

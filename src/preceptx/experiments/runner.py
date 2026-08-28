@@ -35,6 +35,7 @@ from preceptx.experiments.sweep import (
     expand,
     sweep_hash,
 )
+from preceptx.gate.integration import RuntimeGate
 from preceptx.serving.client import LLMClient
 from preceptx.sim.fingerprint import simulation_fingerprint
 
@@ -81,16 +82,35 @@ def run_grid(
     client_b: LLMClient | None = None,
     *,
     root: Path | str,
+    gate: RuntimeGate | None = None,
 ) -> RunSummary:
     """Run the full grid under ``root``, writing handoffs plus a manifest + summary alongside.
 
     ``client_b`` serves agent B (DSE-049); omitted means self-play through ``client_a``. The sweep's
     ``model_b`` and the second client must be set together - a second endpoint with no declared
     model identity would produce a dataset whose manifest lies about what served role B.
+
+    ``gate`` runs the sweep through a runtime gate (DSE-018) and pairs with ``sweep.gate`` under
+    the same rule, for a sharper reason: the dataset hash is keyed on ``sweep.gate``, so a gate
+    the sweep does not declare - or one whose config contradicts it - writes its arm's episodes
+    into another arm's directory, where the resume then treats them as that arm's. The two
+    guards below are what make "one gate arm, one dataset" true rather than merely intended.
     """
     if (sweep.model_b is None) != (client_b is None):
         raise ConfigError(
             "sweep.model_b and client_b must be supplied together (or both omitted for self-play)"
+        )
+    if (sweep.gate is None) != (gate is None):
+        raise ConfigError(
+            "sweep.gate and the gate must be supplied together (or both omitted for an ungated "
+            "run): the dataset hash is keyed on sweep.gate, so a gate the sweep does not declare "
+            "would pool its arm's episodes into the ungated arm's dataset"
+        )
+    if gate is not None and sweep.gate is not None and gate.cfg != sweep.gate:
+        raise ConfigError(
+            f"the gate's config ({gate.cfg.mode!r}) contradicts sweep.gate ({sweep.gate.mode!r}); "
+            "the dataset hash is derived from sweep.gate, so a mismatch silently pools two arms of "
+            "the RQ3b comparison into one dataset"
         )
     root = Path(root)
     d_hash = dataset_hash_for(sweep)
@@ -114,6 +134,7 @@ def run_grid(
         step_cfg=sweep.step,
         outcome_cfg=sweep.outcome,
         jitter=sweep.jitter,
+        gate=gate,
     )
     write_lock = threading.Lock()
 

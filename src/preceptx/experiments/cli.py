@@ -1,4 +1,4 @@
-"""Command-line entry points for the pilot and RQ1 drivers (DSE-031).
+"""Command-line entry points for the pilot, RQ1 and RQ2 drivers (DSE-031).
 
 ``run_grid``, ``run_pilot`` and ``run_rq1`` are library functions with no console entry, so nothing
 downstream of a served model could be launched from a shell. This module is that entry point and
@@ -8,6 +8,9 @@ nothing more: parse flags, let Hydra compose the config tree, validate it into a
 Two conventions are load-bearing here. First, **Hydra composes and Pydantic validates**: the raw
 ``DictConfig`` never leaves ``_resolve_cell``. Second, **the entry point owns logging** - library
 code attaches no handlers, so ``logging.basicConfig`` is called exactly once, here.
+
+``preceptx-rq2`` is the odd one out: it analyses a dataset that already exists, so it takes no
+model flags, resolves no Hydra tree, and needs no live endpoint or serving-substrate label.
 
 ``--dry-run`` is the pre-flight: it prints the expanded cell count, the upper-bound model-call
 count and the resolved hashes without constructing a client or issuing a single call.
@@ -31,9 +34,10 @@ from preceptx.config import ConfigError, ExperimentConfig, load_config
 from preceptx.data.writer import load_records
 from preceptx.experiments.pilot import run_pilot, write_pilot_report
 from preceptx.experiments.rq1 import CONDITION_ORDER, run_rq1, write_rq1
+from preceptx.experiments.rq2 import analyse_rq2, write_rq2
 from preceptx.experiments.runner import run_grid
 from preceptx.experiments.sweep import SweepConfig, dataset_hash_for, expand, sweep_hash
-from preceptx.measure.featuriser import EncoderConfig, Featuriser
+from preceptx.measure.featuriser import EncoderConfig, Featuriser, second_encoder_config
 from preceptx.serving.client import LLMClient, ServingConfig, ServingError
 
 logger = logging.getLogger(__name__)
@@ -255,6 +259,48 @@ def rq1(argv: list[str] | None = None) -> int:
         )
     out = write_rq1(result, _report_dir(parsed, dataset_hash_for(sweep)), scores=scores)
     logger.info("rq1 analysis written to %s", out)
+    return 0
+
+
+def rq2(argv: list[str] | None = None) -> int:
+    """``preceptx-rq2``: analyse an existing RQ1 dataset. Offline - no endpoint, no model calls.
+
+    Deliberately not built on ``_parser``/``_prepare``: those resolve a model through Hydra and
+    refuse to run without ``PRECEPTX_SERVING_SUBSTRATE``, both of which are meaningless for an
+    analysis that reads episodes already on disk. The dataset hash the RQ1 driver printed is the
+    only handle needed.
+    """
+    parser = argparse.ArgumentParser(
+        prog="preceptx-rq2", description="Analyse an RQ1 dataset for H3, H4 and the label check."
+    )
+    parser.add_argument("--dataset-hash", required=True, help="the RQ1 run's dataset hash")
+    parser.add_argument("--root", type=Path, default=Path("runs"), help="dataset root")
+    parser.add_argument("--out", type=Path, help="report directory (default: <root>/<hash>-rq2)")
+    parser.add_argument(
+        "--skip-second-encoder",
+        action="store_true",
+        help="skip the sensitivity rescore, which downloads and runs a second encoder",
+    )
+    parser.add_argument("--verbose", action="store_true", help="DEBUG-level logging")
+    parsed = parser.parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if parsed.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
+    )
+
+    encoder = EncoderConfig()
+    d_hash = cast(str, parsed.dataset_hash)
+    result, scores = analyse_rq2(
+        load_records(d_hash, root=parsed.root),
+        Featuriser(encoder),
+        dataset_hash=d_hash,
+        second_featuriser=(
+            None if parsed.skip_second_encoder else Featuriser(second_encoder_config(encoder))
+        ),
+    )
+    out = cast(Path, parsed.out) if parsed.out else cast(Path, parsed.root) / f"{d_hash}-rq2"
+    write_rq2(result, out, scores=scores)
+    logger.info("rq2 analysis written to %s (recommended Y: %s)", out, result.recommended_y)
     return 0
 
 

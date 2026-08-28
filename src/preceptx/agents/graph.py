@@ -19,10 +19,11 @@ import pymunk
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from preceptx.agents.channel import ChannelConfig, apply_channel
+from preceptx.agents.channel import ChannelConfig, ChannelResult, apply_channel
 from preceptx.agents.prompts import prompt_a, prompt_b
 from preceptx.config import ExperimentConfig
 from preceptx.data.schema import Difficulty, HandoffRecord
+from preceptx.gate.integration import RuntimeGate
 from preceptx.serving.client import LLMClient
 from preceptx.sim.actions import (
     BodyState,
@@ -62,6 +63,9 @@ class _GraphState(TypedDict):
     message_delivered: str  # what B actually receives
     action: MacroAction  # B's chosen action this step
     buffered: str | None  # C2 one-step delay buffer
+    gate_blocked: bool  # the runtime gate fired at this handoff (DSE-018)
+    gate_retries: int  # re-prompts the block cost
+    message_blocked: str | None  # the first rejected message, kept for audit
     records: list[HandoffRecord]
     done: bool
 
@@ -85,6 +89,7 @@ class EpisodeRunner:
         step_cfg: StepConfig | None = None,
         outcome_cfg: OutcomeConfig | None = None,
         jitter: ScenarioJitter | None = None,
+        gate: RuntimeGate | None = None,
     ) -> None:
         self._client_a = client_a
         # Self-play stays the default and the primary cell (DSE-049): omitting client_b points both
@@ -100,6 +105,10 @@ class EpisodeRunner:
         # seed axis is true replication (P0-2). The rng keys on [cell.seed, salt], so the same seed
         # reproduces the same pose and different seeds get different problem instances.
         self._jitter = jitter
+        # None = no gate in the loop, and the path is byte-identical to the ungated runner: A's
+        # prompt keeps its default `gate_feedback=False` form and the three gate fields keep their
+        # HandoffRecord defaults. RQ1's frozen dataset semantics do not move (P0-4).
+        self._gate = gate
 
     def _budget(self, difficulty: Difficulty) -> int:
         """Resolve the per-difficulty step budget (a bare int applies to every difficulty)."""
@@ -126,6 +135,9 @@ class EpisodeRunner:
             "message_delivered": "",
             "action": "WAIT",
             "buffered": None,
+            "gate_blocked": False,
+            "gate_retries": 0,
+            "message_blocked": None,
             "records": [],
             "done": False,
         }
@@ -148,6 +160,7 @@ class EpisodeRunner:
     ) -> Any:  # langgraph's compiled graph is untyped; callers cast invoke()'s result
         client_a, client_b = self._client_a, self._client_b
         channel_cfg, step_cfg = self._channel_cfg, self._step_cfg
+        gate = self._gate
         post_history: list[BodyState] = []
 
         def agent_a(state: _GraphState) -> dict[str, object]:
@@ -165,23 +178,60 @@ class EpisodeRunner:
                 [(r.action["action"], r.progress) for r in state["records"][-HISTORY_WINDOW:]]
             )
             state_str = f"{scene_str}\n{history}"
-            message_raw = client_a.chat(prompt_a(state_str))
-            result = apply_channel(
-                message_raw,
-                cell.condition,
-                serialisation=cell.serialisation,
-                observation=scene_str,
-                cfg=channel_cfg,
-                rng=np.random.default_rng([cell.seed, state["step"]]),
-                buffered=state["buffered"],
-            )
-            observed_scene = result.observation_override or scene_str
+
+            def emit(*, retry: bool) -> tuple[str, ChannelResult]:
+                """One A turn through the channel. ``retry`` appends the gate feedback (DSE-045).
+
+                Under greedy decoding a bare re-prompt is a fixed point, so the retry has to differ
+                in content or the gate would re-block the identical message for every retry.
+                """
+                raw = client_a.chat(prompt_a(state_str, gate_feedback=retry))
+                return raw, apply_channel(
+                    raw,
+                    cell.condition,
+                    serialisation=cell.serialisation,
+                    observation=scene_str,
+                    cfg=channel_cfg,
+                    rng=np.random.default_rng([cell.seed, state["step"]]),
+                    buffered=state["buffered"],
+                )
+
+            def observed(res: ChannelResult) -> str:
+                return f"{res.observation_override or scene_str}\n{history}"
+
+            message_raw, result = emit(retry=False)
+            blocked_text: str | None = None
+            retries = 0
+            # The gate scores the POST-channel pair - what B will actually see - because that is
+            # the pair the featuriser conditions on offline (P0-1). Note the consequence under C2:
+            # `message_delivered` is the previous step's buffered message, so a retry cannot change
+            # what B reads this step (it changes the buffer for the next one). That is a property
+            # of scoring what B sees, not a special case, so the gate does not reach into the
+            # channel to correct it - flagged for DSE-025's arm selection instead.
+            while (
+                gate is not None
+                and gate.decide(
+                    observed(result), result.message_delivered, seed=cell.seed, step=state["step"]
+                ).blocked
+            ):
+                if blocked_text is None:
+                    # The FIRST rejection: `message_blocked` vs `message_delivered` is then exactly
+                    # the counterfactual the causal arm is about - what B would have seen with no
+                    # gate, against what it saw with one.
+                    blocked_text = result.message_delivered
+                if retries >= gate.max_retries:
+                    break  # bounded: A proceeds with the still-blocked message, and it is recorded
+                retries += 1
+                message_raw, result = emit(retry=True)
             return {
                 "state_str": state_str,
                 "message_raw": message_raw,
                 "message_delivered": result.message_delivered,
-                "observation": f"{observed_scene}\n{history}",
+                "observation": observed(result),
                 "buffered": result.new_buffer,
+                "gate_blocked": blocked_text is not None,
+                "gate_retries": retries,
+                "message_blocked": blocked_text,
             }
 
         def agent_b(state: _GraphState) -> dict[str, object]:
@@ -219,6 +269,9 @@ class EpisodeRunner:
                 observation=state["observation"],
                 message_raw=state["message_raw"],
                 message_delivered=state["message_delivered"],
+                gate_blocked=state["gate_blocked"],
+                gate_retries=state["gate_retries"],
+                message_blocked=state["message_blocked"],
                 action={"action": action},
                 pre_state=pre.model_dump(),
                 post_state=post.model_dump(),

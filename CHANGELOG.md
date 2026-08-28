@@ -8,6 +8,69 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
 ## [Unreleased]
 
 ### Added
+- **RQ2 measurement analysis (`experiments/rq2.py`, DSE-022).** The offline H3/H4 analysis over an
+  existing RQ1 dataset: twin agreement, proxy tracking, the encoder-sensitivity rescore and the
+  four-label comparison. Runs no grid and issues no model call, so it is a pure read of artefacts
+  another driver produced.
+  - **`twin_reports` (H3).** Retrospective CPVI and its prospective twin from **one** shared probe
+    fit, reported pooled and per condition by slicing that fit - refitting inside a condition at
+    pilot N would measure the fold split rather than the agreement. Carries Bland-Altman bias and
+    limits of agreement alongside Pearson/Spearman, and surfaces `n_kl_capped` as the calibration
+    flag it already was.
+  - **`proxy_tracking` (H4).** `info`/`fail`/`cosine` each scored out of fold through
+    `gate.calibration._oof_scores` - imported rather than reimplemented, so RQ2 describes each
+    statistic exactly as the DSE-017 calibration and the gate will see it, with no second copy of
+    the episode-group fold discipline. Reports Spearman rho against CPVI plus AUROC for bottom-
+    quartile CPVI and for failure. Scored against the frozen primary label only: which statistic
+    tracks CPVI is a property of the statistic, not of the label.
+  - **The RD-15 leakage null applied to a *correlation*, not just a mean.** `_null_cpvi` rebuilds
+    the within-condition message permutation to return **per-handoff** null scores (the existing
+    `shuffled_message_cpvi` returns per-permutation means, which cannot be paired back to a
+    handoff). Every rho and every mean CPVI is then reported three ways - real, null, and the
+    leakage-corrected difference with an episode-cluster interval from `_cluster_resamples`, paired
+    inside each draw. A unit test pins `_null_cpvi`'s mean against `shuffled_message_cpvi`'s so the
+    two nulls cannot drift apart. Cross-fit repeats are dropped inside the null: averaging over
+    `n_shuffle` permutations already damps the fold noise `n_repeats` exists to damp.
+  - **`DECLARED_ORIENTATION`, declared and never fitted.** All three statistics are declared to
+    move opposite to information, and both AUROCs are taken under that declaration. A value below
+    0.5 is reported as-is rather than flipped: `gate/calibration.py` derives an orientation from the
+    failure label because a gate must act, but an analysis that chose the sign making its own AUROC
+    exceed 0.5 would be fitting the direction to the data.
+  - **`compare_labels` and the pre-declared decision rule.** All four PREREGISTRATION §4 labels
+    scored side by side; the continuous one through `cpvi_continuous`, the rest through `cpvi`.
+    Admissibility is coverage >= 0.95, minority-class share >= 0.10, and a leakage-corrected mean
+    CPVI whose episode-cluster interval excludes zero. Ranking is lexicographic - encoder-invariance
+    of the per-handoff CPVI ordering, then the label's own twin agreement, then corrected effect
+    size **only** as a tie-break inside 0.05. Effect size is deliberately last; leading with it is
+    the move the Y freeze exists to prevent. `recommended_y = None` when nothing is admissible is a
+    reportable outcome, not a fallback. An unscoreable label keeps its row as `unavailable` or
+    `degenerate` with a reason, never `0.0` and never dropped.
+  - **What the rule cannot do.** It cannot re-point RQ1's frozen `y_binary_progress` - its output is
+    the RQ3b gate target, which is not yet frozen - and the encoder rule can only *flag* a re-freeze
+    when the two encoders agree below rho 0.50, never perform one. Both are stated in the module
+    docstring, the recommendation note and the emitted `recommendation.md`.
+  - **Two estimators of CPVI, kept in separate columns.** The reported mean uses the register's
+    repeated cross-fit (R = 5); the H3 pair must come from one shared fit. `rq2_scores.parquet`
+    carries `cpvi`/`cpvi_shuffled_null` and `twin_retrospective`/`twin_prospective` separately so
+    nothing downstream silently mixes them.
+  - **`write_rq2`** emits `rq2.json`, the per-handoff scores, three CSV tables, a `recommendation.md`
+    decision note naming the frozen Y, and three figures (Bland-Altman, proxy-vs-null, corrected
+    CPVI by label) under the existing all-render-or-none viz-extra contract.
+
+- **`preceptx-rq2` console entry point (`experiments/cli.py`).** Deliberately not built on
+  `_parser`/`_prepare`: those resolve a model through Hydra and refuse to run without
+  `PRECEPTX_SERVING_SUBSTRATE`, both meaningless for an analysis of episodes already on disk. Takes
+  `--dataset-hash`, `--root`, `--out` and `--skip-second-encoder`; the sensitivity rescore is on by
+  default because it is an acceptance criterion, and opt-out because it downloads a second encoder.
+
+- **`measure.featuriser.second_encoder_config`.** Promotes the pinned sensitivity encoder to primary
+  for the DSE-022 rescore, swapping name **and** revision together - swapping one would silently
+  re-run the primary and report perfect agreement. Shares the cache directory safely because keys
+  already include the encoder name (P1-16).
+
+- **`analysis.figures.scatter_plot`.** Per-point scatter with optional horizontal reference lines,
+  for the Bland-Altman figure: the existing interval plots show per-condition means and cannot show
+  the spread of per-handoff disagreement. Same no-op-without-viz contract as `ci_plot`.
 - **`DRIVER` selection and grid pass-through in `scripts/myriad/pilot.sh`.** The jobscript served
   and drove `preceptx-pilot` with a hardcoded flag list, so the only grid it could ever run on
   Myriad was the pre-registered E3 gate cell, and any other cell needed a second jobscript
@@ -179,6 +242,74 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
     each other, not against a shared assumption) and ends in a JSON-serialisable manifest block.
     100% line coverage on the module. Nothing touches the network or a served model.
 
+- **Runtime gate integration and the two causal-arm controls (DSE-018).** The active-control-layer
+  contribution: the calibrated statistic stops being an annotation and becomes an intervention that
+  changes the run. Three arms plus the null, selected by one flag.
+  - **`gate/integration.py` - `GateConfig`.** `mode` is the H6 arm selector
+    (`off` / `active` / `matched_random` / `random_trigger`); `random_rate=1.0` is the
+    preregistration's "always-retry" arm, so the four-arm contrast needs no fifth mode.
+    `max_retries` defaults to **1** - the cheapest bound that makes the treatment non-vacuous, and
+    it caps the arm's extra A calls at the firing rate rather than a multiple of it. `0` is a valid
+    setting and is the observation-only gate: every block is recorded, nothing is ever re-prompted.
+    Deliberately NOT nested into `ExperimentConfig` - it is injected like `ChannelConfig` /
+    `StepConfig` / `OutcomeConfig`, so no bump to the reproducibility contract and no re-freeze.
+  - **`RuntimeGate`.** Holds an injected `Statistic`, the `StatisticCalibration` and a `Featuriser`.
+    Scores the **post-channel** pair - `observation` and `message_delivered`, what B will actually
+    see - because that is the pair the featuriser conditions on offline (P0-1); scoring A's raw
+    message would gate on something no downstream number is computed from. `oriented = orientation
+    * raw`, blocked iff `oriented >= threshold`, matching the calibration's own "block score >= t".
+    The two texts go through one batched `embed_texts` call, sharing the cache and the forward pass.
+  - **Orientation cannot be separated from its threshold.** The calibration *object* is injected
+    rather than a bare float, so a threshold can never arrive without the sign that makes it mean
+    anything - the same rule `rq3a.transfer_scores` enforces at the boundary, here made structural.
+    A statistic or calibration whose `key` disagrees with `GateConfig.statistic_key` raises
+    `GateError` at **construction**, outside the episode loop: applying `cosine`'s threshold to
+    `info`'s score is a wrong number, not a missing one, and it would silently invert every block.
+  - **Fail-open, as the deliberate inversion of the repo's fail-loud rule.** `off`, a missing
+    statistic, a missing calibration or a missing encoder all pass the handoff through and log one
+    WARNING **per gate, not per handoff** (a 40-step sweep would otherwise emit thousands of
+    identical lines). The justification is that an absent gate is a *valid cell of the design* - it
+    is literally the `off` control - so failing open lands the run in a defined arm rather than
+    destroying it. Documented in the module docstring so a reviewer reads it as intent.
+  - **`gate/controls.py` - the two score-blind arms.** `matched_random` draws at the gate's own
+    calibrated `StatisticCalibration.firing_rate` (DSE-017), so it blocks the same count as the real
+    gate on the same episodes; `random_trigger` draws at a fixed configured rate. Both are seeded
+    Bernoulli draws keyed `[episode seed, salt, gate seed, step]`, so a control arm is exactly as
+    re-runnable as the episode it runs in. The two salts (`2**17`, `2**18`) are **distinct on
+    purpose**: at equal rates a shared stream would block byte-identical handoffs and collapse the
+    two arms into one. Both sit above `graph.py`'s jitter salt (`2**16`) and outside the channel's
+    two-element `[seed, step]` keys, so no gate draw can alias a scenario pose or a C4 dropout mask.
+    Known ceiling, marked in the source: rate-matched per handoff, not count-matched per episode -
+    an exact per-episode count needs the episode length up front, which early termination denies.
+  - **`agents/graph.py` - the hook and the re-prompt path.** One `gate: RuntimeGate | None = None`
+    kwarg on `EpisodeRunner`; the hook sits inside `agent_a` **after** `apply_channel` and before
+    `agent_B`, so the graph topology is unchanged (no new node, no new edge). On a block A is
+    re-prompted with `prompt_a(..., gate_feedback=True)` (DSE-045) up to `max_retries` and then
+    **proceeds with the still-blocked message**, which is recorded rather than dropped - the loop
+    can never spin. The retry carries feedback rather than re-asking, because under greedy decoding
+    a bare re-prompt is a fixed point and a gate that merely re-asks would pass its tests and change
+    nothing live.
+  - **What lands on the record.** `gate_blocked` / `gate_retries` / `message_blocked` were reserved
+    in the v2 schema bump, so nothing here re-keys a dataset. `message_blocked` keeps the **first**
+    rejected delivered message and `message_delivered` keeps what B actually saw: that pair is
+    exactly the counterfactual the causal arm is about - what B would have seen with no gate against
+    what it saw with one.
+  - **`gate=None` is byte-identical to the ungated loop**, and this is asserted rather than assumed:
+    an integration test compares full `model_dump()`s across three wirings that must not touch the
+    data (`gate=None`, `mode="off"`, and `mode="active"` failing open with no calibration). RQ1's
+    frozen dataset semantics do not move.
+  - **Known interaction with C2, recorded not corrected.** Under the one-step delay
+    `message_delivered` is the *previous* step's buffered message, so a retry cannot change what B
+    reads this step (it changes the buffer for the next one) and the gate re-blocks the same text
+    until the budget is spent. That is a consequence of scoring what B sees, not a special case, so
+    the gate does not reach into the channel to correct it - flagged for DSE-025's arm selection.
+  - **Tests.** 15 unit tests on the gate (threshold both sides, orientation flipping which handoff
+    fires, all four fail-open wirings, warn-once, mode selection, both key-mismatch raises), 6 on the
+    controls (reproducibility, exact degenerate rates, empirical rate within 0.02, the two arms not
+    sharing a stream, the gate seed re-realising an arm without moving the episode seed), and 8
+    stub-LLM integration tests running one short episode per mode. 100% line coverage on
+    `gate/integration.py`, `gate/controls.py` and `agents/graph.py`. Nothing touches a served model.
+
 ### Changed
 - **The task is now the SUCCESSOR convex-bar channel benchmark (DSE-058).** Result-affecting: it
   re-keys every dataset. Adopted after the T-load benchmark was falsified as a rotation-necessity
@@ -245,6 +376,39 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
       centroid check to buy nothing.
 
 ### Fixed
+- **The runtime-gate arm now keys its own dataset (`experiments/sweep.py`, `experiments/runner.py`).**
+  Found while wiring DSE-018 and DSE-022 onto one branch; it would have surfaced as a wrong RQ3b
+  result rather than an error.
+  - **The defect.** `dataset_hash_for` = `sweep_hash(sweep)` + `PROMPT_VERSION` + the simulation
+    digest, and the gate arm was on none of them - `GateConfig` was constructed by the driver, not
+    declared on `SweepConfig`. So gate-active, matched-random, random-trigger and off over one grid
+    hashed **identically**, wrote into one run directory, and `run_grid`'s resume-by-episode-id read
+    arm 1's episodes as arms 2-4's completed work. RQ3b's four-arm causal comparison would have come
+    out as one arm run four times, with nothing in the artefacts to say so.
+  - **`SweepConfig.gate: GateConfig | None`** carries the arm's *identity* - mode, statistic key,
+    retry budget, control rate, control seed - which is exactly what decides which handoffs get
+    blocked and therefore what data the sweep produces. The fitted statistic and its calibration
+    stay out: they are on-disk artefacts the DSE-025 driver injects into the `RuntimeGate`, not
+    config, and hashing them would re-key a dataset when a probe is refit on identical inputs.
+  - **`sweep_hash` drops the key only when the gate is unset**, so an ungated sweep hashes
+    byte-identically to one computed before the field existed - the same carve-out `concurrency`
+    already has, for the opposite reason. Pinned by a regression test asserting the **live** hashes
+    of job 227886 (`sweep afcd6a53ee11edd7`, `dataset 54ed65e6cc9e7d17`): a naive field addition
+    changes `model_dump`, so without that carve-out this fix would have orphaned a running sweep
+    from its own directory mid-flight. `mode="off"` is a declared arm and keys separately from an
+    ungated run - the episodes would match, but they are different runs of record.
+  - **`run_grid` gains `gate=` and two guards that make the invariant true rather than intended.**
+    `sweep.gate` and the `RuntimeGate` must be supplied together (mirroring the existing
+    `model_b`/`client_b` pairing), and a gate whose `GateConfig` contradicts `sweep.gate` raises:
+    the hash follows `sweep.gate`, so a mismatch pools two arms silently. Passing the gate through
+    to `EpisodeRunner` here also means the only route to a gated sweep is the field that is hashed -
+    a driver can no longer gate a run behind the dataset's back.
+  - **`SWEEP_MANIFEST_VERSION` 2 -> 3**, since `SweepManifest.sweep` now carries the field. No
+    loader keys off it, so no shim; the bump is the record that the manifest shape moved.
+  - Out of scope and unchanged: `gate_feedback_version` stays manifest-only. It lives on
+    `SweepManifest`, not `SweepConfig`, so `sweep_hash` never saw it, and its own comment's
+    condition ("when DSE-018 makes retries live") is still unmet - no driver wires a gate yet.
+
 - **Limb 7 of the certification standard could not fail on any input
   (`scripts/check_rotation_need.py`, DSE-058).** It is a **pre-registered acceptance criterion**,
   and as shipped it was vacuous twice over, so "30/30 seeds pass every limb" rested on six limbs.

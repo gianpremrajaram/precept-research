@@ -10,7 +10,7 @@ import pytest
 
 from preceptx.config import ConfigError
 from preceptx.data.schema import HandoffRecord
-from preceptx.measure.featuriser import EncoderConfig, Featuriser
+from preceptx.measure.featuriser import EncoderConfig, Featuriser, second_encoder_config
 
 
 class _StubEncoder:
@@ -151,3 +151,16 @@ def test_unpinned_revision_raises_on_the_real_load_path(tmp_path: Path) -> None:
 def test_stub_path_is_unaffected_by_the_pin_check(tmp_path: Path) -> None:
     f = Featuriser(EncoderConfig(revision="main", cache_dir=tmp_path), _StubEncoder())
     assert f.embed_texts(["anything"]).shape == (1, 16)
+
+
+def test_second_encoder_config_promotes_the_sensitivity_encoder(tmp_path: Path) -> None:
+    # DSE-022 rescores everything under the second encoder; promoting it must swap BOTH the name and
+    # the revision, or the sensitivity arm silently re-runs the primary and reports perfect
+    # agreement. The pair is carried through unchanged so the config still records where it came
+    # from, and the shared cache dir is safe because keys include the name (P1-16, tested above).
+    primary = EncoderConfig(cache_dir=tmp_path / "c")
+    second = second_encoder_config(primary)
+    assert second.name == primary.second_encoder != primary.name
+    assert second.revision == primary.second_encoder_revision != primary.revision
+    assert second.second_encoder == primary.second_encoder  # the pair survives the promotion
+    assert second.cache_dir == primary.cache_dir
