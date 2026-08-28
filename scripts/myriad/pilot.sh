@@ -19,6 +19,10 @@
 #   # the one permitted retune (PREREGISTRATION §6):
 #   qsub -v ATTEMPT=2 scripts/myriad/pilot.sh
 #
+#   # a characterisation grid, which must NOT emit a gate verdict (see the DRIVER note below):
+#   qsub -N precept-rq1 -l h_rt=8:00:00 -v DRIVER=preceptx-rq1 scripts/myriad/pilot.sh \
+#     --conditions C0,C1,C2,C3,C4 --difficulties easy,medium,hard --seeds "$(seq -s, 0 31)"
+#
 # Cost the sweep first, on the login node, where it issues no model calls and needs no GPU:
 #   uv run preceptx-pilot --dry-run --model qwen14b
 #
@@ -132,14 +136,30 @@ until curl -sf "http://localhost:${PORT}/v1/models" >/dev/null 2>&1; do
 done
 echo "[pilot] endpoint live after ${SECONDS}s"
 
-# The pilot's own health check verifies the endpoint serves the model that was configured, so a
+# The driver's own health check verifies the endpoint serves the model that was configured, so a
 # leftover job on this port serving another tier fails here rather than being recorded as this one.
-# Conditions/difficulties/seeds are left to the CLI defaults, which are the pre-registered E3 cell
-# (PREREGISTRATION §6): naming them here would let the two drift apart silently.
-preceptx-pilot \
-  --model "$TIER" \
-  --base-url "http://localhost:${PORT}/v1" \
-  --root "$RUNS_ROOT" \
-  --attempt "$ATTEMPT"
+#
+# The default driver is preceptx-pilot with no grid flags: conditions/difficulties/seeds stay the
+# CLI defaults, which are the pre-registered E3 cell (PREREGISTRATION §6), because naming them here
+# would let the two drift apart silently. DRIVER selects a different entry point - preceptx-rq1
+# writes the factorial analysis and NO G1/G2/G3 verdict, which is what a characterisation grid must
+# use: the gate has no attempt 3, and a driver that emits a verdict cannot be run without spending
+# one. Flags after the script name reach the driver ("$@" survives the container re-exec), so a
+# non-default grid needs no second jobscript.
+#
+#   qsub -N precept-rq1 -l h_rt=8:00:00 -v DRIVER=preceptx-rq1 scripts/myriad/pilot.sh \
+#     --conditions C0,C1,C2,C3,C4 --difficulties easy,medium,hard --seeds "$(seq -s, 0 31)"
+#
+# --attempt exists only on preceptx-pilot, so it is appended only for that driver. One array
+# holding the whole argv, rather than a separate flags array: `"${empty[@]}"` under `set -u` is an
+# unbound-variable error on bash 3.2 and fine on 4.4+, and a jobscript should not depend on which
+# bash the node happens to have.
+DRIVER="${DRIVER:-preceptx-pilot}"
+driver_args=(--model "$TIER" --base-url "http://localhost:${PORT}/v1" --root "$RUNS_ROOT")
+if [[ "$DRIVER" == "preceptx-pilot" ]]; then
+  driver_args+=(--attempt "$ATTEMPT")
+fi
+
+"$DRIVER" "${driver_args[@]}" "$@"
 
 echo "[pilot] $(date -u +%FT%TZ) complete"

@@ -15,7 +15,138 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
-## 2026-08-27 (latest) — What the RQ3a table can honestly contain, and one blind secondary analysis
+## 2026-08-28 (latest) — The cross-condition CPVI gap is mostly a condition tag, and what the next run has to establish
+
+- **Area:** what the shuffled-message audit is applied to (§8.5), the reported estimand for every
+  cross-condition CPVI contrast, and the cell the post-gate characterisation run covers (§9.10).
+- **Status:** post-verdict, pre-run. Declared as **D23** in `docs/methodology.md` §10.5 before the
+  job is submitted. Parts are confirmatory rather than blind, and are marked as such throughout —
+  this is the first register entry written with episodes on disk.
+
+### Trigger
+
+Job 227048 — the DSE-057/058 successor re-gate, and the second and final permitted E3 attempt —
+returned `fallback`: G1 0.200 against 0.500, G2's success half −0.050 against +0.100, G3 0.997.
+The one limb that *passed* was G2's CPVI half, reading a `+0.146`-bit C0−C4 gap with the control task
+at −0.004 and selectivity +0.088. An audit was asked to decide whether the verdict was a valid
+scientific result, a reporting artefact, or a configuration fault. The recovered `manifest.json`
+settled configuration immediately: `git_sha 1580259`, `load_shape: bar` at 1.4 × 0.3, slits
+1.2/0.8/0.5, `wall_depth 1.5`, prompt surface v6, `--attempt 2`, served bf16 on an A100-40GB. The
+run is exactly what it claims to be. That left the reporting question, and it is the whole entry.
+
+### Finding
+
+**1. The apparent progress signal was a per-step statistic read as a cumulative one.** `progress` in
+the parquet is `step_progress(pre, post)` — one macro-action's signed geodesic gain, not distance
+covered. Against an initial geodesic of ~8.5 units, the largest single shove being 0.906 is 11% of
+the journey, not 90% of it. Recomputed as fraction of geodesic closed: easy 0.273 / 0.229 / 0.190 /
+0.602 and hard 0.036 / 0.151 / 0.036 / 0.128 across C0/C1/C3/C4. **39 of 40 hard episodes never
+leave the starting chamber of three.** The cell is at floor, not on a knife-edge.
+
+**2. The identity component dominates the reported contrast, in every dataset the project has.**
+`shuffled_message_cpvi` permutes messages within condition, and §8 already names the resulting null
+height as CPVI's *identity* component — condition-level message style plus differing per-condition
+progress base rates. That correction had only ever been taken on the **pooled mean**. Applied to the
+**gap**, over 250 episode-cluster bootstrap resamples with real and permuted scored in the same
+resample:
+
+| dataset | task | eps | reported C0−C4 | shuffled | corrected | identity share |
+|---|---|---|---|---|---|---|
+| `1c994b87bbca8257` | T | 40 | +0.250 [+0.079, +0.476] | +0.195 | **+0.055** [−0.018, +0.158] | 78.0% |
+| `eddd19c654515bb2` | T | 80 | +0.102 [−0.004, +0.211] | +0.099 | **+0.004** [−0.057, +0.055] | 96.4% |
+| `a66efd4ea089af6a` | bar | 80 | +0.149 [+0.056, +0.272] | +0.137 | **+0.012** [−0.035, +0.073] | 92.1% |
+
+Two geometries, three runs, two seed counts. `1c994b87bbca8257` is the `+0.243`-bit "healthy
+gradient" cited on 2026-08-26 as evidence the instrument discriminated: 78% of it was the tag.
+
+**3. Within difficulty, the cleanest-looking gradient is in the cell where nothing happened.** On
+`a66efd4ea089af6a`, hard reports +0.1715 [+0.072, +0.284] — an interval excluding zero — and corrects
+to **−0.004** [−0.057, +0.048]. That is the cell whose episodes never left chamber 1, so no mechanism
+exists by which real message content could differ. Easy reports +0.140 and corrects to **+0.035**
+[−0.037, +0.133], P(>0) = 0.73: unresolved, and the only place a real effect could live.
+
+**4. The raw gap is unstable while the corrected one is not.** Raw swings 2.5× across runs
+(+0.102 → +0.250); corrected sits within 0.05 bits of zero in all three. An identity component tracks
+whatever the per-condition base rates happened to be that run, and those swing hard — C1's
+`y_binary_progress` is 0.81 / 0.93 / 0.70. **C1 is the top-CPVI condition in all three runs**
+(+0.263 / +0.254 / +0.157): the 8-token cap reads as the *most* informative channel every time, which
+is the artefact's signature and not a gradient.
+
+**5. The pooled-mean excess is real, stable, and the strongest result the project holds.**
+Leakage-corrected mean CPVI: **+0.058** [−0.001, +0.140], **+0.048** [+0.025, +0.077], **+0.039**
+[+0.009, +0.073]. Roughly 0.04–0.06 bits of genuine per-handoff message content, replicated across
+two task geometries and independent of whether the arena is solvable.
+
+**6. n binds the measurement claim, not the capability claim.** The corrected gap's episode-cluster
+SE is 0.027 at 80 episodes and projects to 0.013 at 320 — the difference between "unresolved" and a
+statement either way. Terminal success is the opposite: hard is 0/40, and bounding the easy contrast
+inside ±0.10 needs ~230–305 episodes per arm.
+
+**7. Aside, for the successor-task record.** The bar task produced **fewer** successes than the
+T-task it replaced (5/80 against 18/80). It closed the memorylessness defect and cost capability.
+
+### Impact (had it not been caught)
+
+RQ1's headline would have been an information gradient that is 78–96% condition identity, published
+with an interval that excludes zero in precisely the cell where the agents were provably inert. The
+G2 CPVI limb would have been cited as the surviving evidence that the measurement instrument works —
+it is the one limb that passed — and the claim would have rested entirely on the uncorrected number.
+
+### Risk reduced
+
+The forbidden move here is not threshold-shopping; it is reporting a contrast the design cannot
+identify. Fixing the estimand *before* the next run, and declaring which half of the fix is
+confirmatory, removes the option of discovering the correction after seeing whether the new cell
+cooperated.
+
+### Correction path considered and rejected
+
+Re-pointing G2's outcome limb from `y_terminal_success` at `y_binary_progress`, on the argument that
+§6 already pre-registers the latter. Rejected twice over: the progress table that motivated it was
+the per-step misread of Finding 1, and C1 — the condition driving the apparent progress advantage —
+has a 0.905/0.960 collision rate with **0 of 20 episodes** surviving a ≤0.25 contact filter, so the
+advantage is ramming. §6 registers terminal success for the *outcome* claim and `y_binary_progress`
+for the *CPVI construct*; collapsing the two is a new degree of freedom, not an alignment.
+
+### The fix
+
+1. **The corrected gap becomes the reported estimand** for every cross-condition CPVI contrast, raw
+   gap and null shown beside it. Extending `_shuffle_audit` from the pooled mean to the contrast is
+   filed as a follow-up; until it lands the correction is computed from the persisted per-handoff
+   scores and the parquet.
+2. **`medium` (slit 0.80) and `C2` enter the grid** — the two cells with zero recorded episodes, and
+   the only genuinely blind parts of D23. C2 is load-bearing rather than decorative: its delivered
+   message is surface-identical to C0's, so it is the one arm that can separate a channel effect from
+   an identity component instead of arguing about it.
+3. **The run is driven by `preceptx-rq1`, never `preceptx-pilot`.** There is no attempt 3; a driver
+   that emits a G1/G2/G3 verdict cannot be run without spending one that does not exist. The changed
+   grid yields a different `dataset_hash`, so 227048's verdict stands unamended. `scripts/myriad/`
+   `pilot.sh` gained a `DRIVER` selector and grid pass-through for exactly this.
+4. **No threshold moves.** §5, §6 and §9.10 are untouched by this entry, and the pilot is reported as
+   an estimate with intervals plus an explicit statement that G1/G2's thresholds were set
+   uncalibrated, rather than as a gate whose verdict carries evidential weight it never had.
+
+### Result of the fix
+
+**Not yet known — the run has not been submitted.** Recorded here so that the estimand, the cells and
+the driver were fixed before any of it returned. What is already established is the retrospective
+half: the identity share and the corrected gaps in the table above, and the replicated pooled-mean
+excess.
+
+### So what
+
+The pilot's one surviving limb was the one that most needed auditing, and the audit that would have
+caught it was already in the protocol — pointed at the wrong quantity. A negative control certifies
+only the statistic it is actually applied to; "the control task is at zero and selectivity is
+positive" says nothing about a contrast the control never touches. The generalisation is not specific
+to this arena: **any study that varies a communication channel and measures information at the
+boundary inherits this artefact**, because the manipulation and the message surface are the same
+edit. That is an RQ2 methods contribution, it rests on data already recorded, and it survives whether
+or not the arena ever becomes solvable.
+
+---
+
+## 2026-08-27 — What the RQ3a table can honestly contain, and one blind secondary analysis
 
 - **Area:** the RQ3a localisation comparison — which methods enter it, what an empty cell means, and
   what the MAST arm is allowed to claim (DSE-024); plus a pre-registered RQ1 secondary analysis

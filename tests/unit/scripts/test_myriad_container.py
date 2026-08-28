@@ -303,3 +303,68 @@ def test_a_spooled_jobscript_submitted_from_the_wrong_directory_fails_loud(
     assert result.returncode == 1
     assert "_common.sh: No such file or directory" not in result.stderr, result.stderr
     assert "submit from the repo root" in result.stderr, result.stderr
+
+
+# --- Driver selection (the characterisation-grid path) -------------------------------------------
+#
+# pilot.sh cannot be run end to end here - it serves a model - so these exercise the shipped lines
+# themselves: the block is sliced out of the file and run against a stub driver. Duplicating the
+# block into the test would only prove the copy works.
+
+PILOT = SCRIPTS / "pilot.sh"
+
+
+def _driver_block() -> str:
+    """The DRIVER selection and invocation, lifted verbatim from pilot.sh."""
+    lines = PILOT.read_text().splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.startswith('DRIVER="${DRIVER:-'))
+    end = next(i for i, ln in enumerate(lines[start:], start) if ln.startswith('"$DRIVER"'))
+    return "\n".join(lines[start : end + 1])
+
+
+def _run_driver_block(tmp_path: Path, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
+    """Run the block under the job's own shell options; every driver is stubbed to echo its argv."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    for name in ("preceptx-pilot", "preceptx-rq1"):
+        stub = bin_dir / name
+        stub.write_text('#!/bin/bash\necho "DRIVER $(basename "$0") ARGS $*"\n')
+        stub.chmod(0o755)
+    preamble = "set -euo pipefail\nTIER=qwen14b\nPORT=8000\nRUNS_ROOT=runs\nATTEMPT=2\n"
+    script = f"{preamble}{_driver_block()}\n"
+    return subprocess.run(
+        ["bash", "-c", script, "bash", *args],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", **env},
+        timeout=30,
+    )
+
+
+def test_the_default_driver_is_the_gate_with_its_attempt(tmp_path: Path) -> None:
+    """Unset DRIVER must behave exactly as before: the pilot, carrying --attempt."""
+    result = _run_driver_block(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "DRIVER preceptx-pilot" in result.stdout
+    assert "--attempt 2" in result.stdout
+
+
+def test_a_non_gate_driver_survives_set_e_and_drops_attempt(tmp_path: Path) -> None:
+    """Three defects in one line: `[[ ... ]] && arr=(...)` returns non-zero on the false branch
+    and `set -e` then kills the job at the end of a paid GPU hour; `"${empty[@]}"` under `set -u`
+    is an unbound-variable error on bash 3.2; and --attempt exists only on preceptx-pilot, so
+    leaking it would fail the run at argument parsing."""
+    result = _run_driver_block(tmp_path, DRIVER="preceptx-rq1")
+    assert result.returncode == 0, result.stderr
+    assert "DRIVER preceptx-rq1" in result.stdout
+    assert "--attempt" not in result.stdout
+
+
+def test_grid_flags_reach_the_driver(tmp_path: Path) -> None:
+    """A characterisation grid is passed after the script name; it must not be silently dropped."""
+    result = _run_driver_block(
+        tmp_path, "--conditions", "C0,C2", "--difficulties", "medium", DRIVER="preceptx-rq1"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--conditions C0,C2 --difficulties medium" in result.stdout
+    assert "--model qwen14b" in result.stdout
