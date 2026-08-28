@@ -8,6 +8,28 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
 ## [Unreleased]
 
 ### Added
+- **`DRIVER` selection and grid pass-through in `scripts/myriad/pilot.sh`.** The jobscript served
+  and drove `preceptx-pilot` with a hardcoded flag list, so the only grid it could ever run on
+  Myriad was the pre-registered E3 gate cell, and any other cell needed a second jobscript
+  duplicating the container, serve and trap logic.
+  - **`DRIVER` (default `preceptx-pilot`) chooses the entry point.** `preceptx-rq1` writes the
+    factorial analysis and **no G1/G2/G3 verdict**, which is what a characterisation grid must use:
+    the gate has no attempt 3 (PREREGISTRATION §6), so a driver that emits a verdict cannot be run
+    without spending one that does not exist.
+  - **Flags after the script name reach the driver.** `enter_container` already forwarded `"$@"`
+    through the container re-exec; the invocation now consumes it. Unset `DRIVER` with no trailing
+    flags reproduces the previous command line exactly, `--attempt` included.
+  - **`--attempt` is appended only for `preceptx-pilot`** - it exists on no other entry point, so
+    leaking it would fail the run at argument parsing, after the queue wait and the model load.
+  - **One `driver_args` array holds the whole argv**, rather than a conditional flags array: an
+    empty `"${arr[@]}"` under `set -u` is an unbound-variable error on bash 3.2 and fine on 4.4+,
+    and a jobscript must not depend on which bash a node has. An earlier draft using
+    `[[ ... ]] && arr=(...)` also returned non-zero on the false branch, which under `set -e` would
+    have killed the job at the end of a paid GPU hour; both are pinned by tests.
+  - Tests slice the block out of `pilot.sh` and run it against a stub driver rather than
+    duplicating it, so they exercise the shipped lines: default-is-the-gate-with-`--attempt`,
+    non-gate-driver-survives-`set -e`-and-drops-`--attempt`, and grid-flags-reach-the-driver.
+
 - **RQ3a localisation, baselines and the judge-agreement audit (`experiments/rq3a.py`, DSE-024).**
   The H5 analysis: does boundary CPVI localise the responsible step in real multi-agent traces
   better than cheap surface baselines and the published Who&When attribution methods? Consumes the

@@ -458,14 +458,23 @@ retries stay greedy and the content is what changes.
 ## 9. Deviation log (opens at F0)
 
 Every deviation from v1 after the freeze is recorded here — prospectively, with its reason, before
-the affected analysis is re-run. The pre-F0 register lives in `docs/methodology.md` §10.5 (D1–D18)
-and closes when v1 is committed.
+the affected analysis is re-run. The pre-F0 register lives in `docs/methodology.md` §10.5 and closes
+when v1 is committed.
+
+**F0 has not fired, so this register has not opened.** §6 permits two E3 attempts and no third; the
+second (job 227048, 27 August 2026) returned `fallback`, not `proceed`. This file therefore stays at
+v0, every value in it stays revisable, and **§10.5 remains the live register** — now running past
+D22, with entries from D23 onward marked for which parts are prospective and which are confirmatory,
+since episodes now exist on disk. The characterisation run that follows the spent gate is declared
+there as **D23**, before submission.
 
 | # | Date | What changed | Why | Effect on results |
 |---|---|---|---|---|
-| — | — | *(no deviations; the register opens at F0)* | — | — |
+| — | — | *(the register opens at F0; F0 was not reached — see above)* | — | — |
 
 ---
 
-*v0 drafted at zero recorded episodes. Freeze this file as v1 on the E3 `proceed` verdict, add the
-freeze date to the header, and record the CPVI floor set for G2.*
+*v0 drafted at zero recorded episodes. The freeze instruction was: freeze this file as v1 on the E3
+`proceed` verdict, add the freeze date to the header, and record the CPVI floor set for G2. On the
+`fallback` verdict that instruction cannot fire, and no CPVI floor may be set from the pilot's
+observed bit-scale after the fact — deferring that choice is the point of not freezing.*
