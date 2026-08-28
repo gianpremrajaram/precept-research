@@ -50,8 +50,10 @@ from preceptx.experiments.rq3a_run import (
     run_rq3a,
     write_rq3a_manifest,
 )
+from preceptx.experiments.rq3b import GATE_MODES, rq3b_sweeps, run_rq3b, write_rq3b
 from preceptx.experiments.runner import run_grid
 from preceptx.experiments.sweep import SweepConfig, dataset_hash_for, expand, sweep_hash
+from preceptx.gate.calibration import CalibrationReport
 from preceptx.measure.featuriser import EncoderConfig, Featuriser, second_encoder_config
 from preceptx.serving.client import LLMClient, ServingConfig, ServingError
 
@@ -313,6 +315,74 @@ def rq1(argv: list[str] | None = None) -> int:
         )
     out = write_rq1(result, _report_dir(parsed, d_hash), scores=scores)
     logger.info("rq1 analysis written to %s", out)
+    return 0
+
+
+def rq3b(argv: list[str] | None = None) -> int:
+    """``preceptx-rq3b``: run the four H6 gate arms over one grid and test the causal claim.
+
+    The calibration is **imported, never fitted here**. Its threshold was chosen against realised
+    failure on a different dataset (the R5 circularity guard), and re-deriving it from the arms'
+    own outcomes would let the treatment pick the operating point it is about to be judged at.
+    """
+    parser = _parser("preceptx-rq3b", "Run the RQ3b causal-gate arms (H6) and analyse them.")
+    parser.add_argument(
+        "--calibration",
+        type=Path,
+        required=True,
+        help="calibration.json from preceptx-pilot / gate.calibration.write_report",
+    )
+    parser.add_argument(
+        "--calibration-dataset",
+        required=True,
+        help="dataset hash the statistic re-fits on - the calibration set, not an arm's episodes",
+    )
+    parser.add_argument("--statistic", default="cosine", help="gate statistic key (DSE-061)")
+    parser.add_argument("--max-retries", type=int, default=1, help="re-prompts per blocked handoff")
+    parser.add_argument("--random-rate", type=float, default=0.2, help="random-trigger block rate")
+    parser.add_argument("--gate-seed", type=int, default=0, help="salt for the control draws")
+    parsed = parser.parse_args(argv)
+    sweep = _prepare(
+        parsed,
+        {
+            "conditions": ["C0", "C4"],
+            "serialisations": ["numeric"],
+            "difficulties": ["easy"],
+            "seeds": [0, 1, 2, 3, 4],
+        },
+    )
+    if parsed.dry_run:
+        # Four arms over the same grid, so the cost is four times what the plan prints - stated
+        # rather than silently folded in, because the printed hash is one arm's, not the run's.
+        _print_plan(sweep)
+        print(f"arms:             {len(GATE_MODES)} (x the cost above)")
+        for mode, arm in rq3b_sweeps(
+            sweep,
+            statistic_key=parsed.statistic,
+            max_retries=parsed.max_retries,
+            random_rate=parsed.random_rate,
+            gate_seed=parsed.gate_seed,
+        ).items():
+            print(f"  {mode:<16}{dataset_hash_for(arm)}")
+        return 0
+
+    report = CalibrationReport.model_validate_json(parsed.calibration.read_text())
+    featuriser = Featuriser(EncoderConfig())
+    with _clients(sweep, parsed) as (client_a, _client_b):
+        result = run_rq3b(
+            sweep,
+            client_a,
+            root=parsed.root,
+            report=report,
+            calibration_records=load_records(parsed.calibration_dataset, root=parsed.root),
+            featuriser=featuriser,
+            statistic_key=parsed.statistic,
+            max_retries=parsed.max_retries,
+            random_rate=parsed.random_rate,
+            gate_seed=parsed.gate_seed,
+        )
+    out = write_rq3b(result, _report_dir(parsed, f"{dataset_hash_for(sweep)}-rq3b"))
+    logger.info("rq3b analysis written to %s: %s", out, result.verdict)
     return 0
 
 

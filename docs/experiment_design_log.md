@@ -15,7 +15,49 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
-## 2026-08-29 (latest) — The agents could not see the quantity the task turns on, so they pushed into walls they could not pass
+## 2026-08-29 (latest) — H6's analysis plan, declared before the arms have run
+
+- **Area:** the RQ3b causal-gate contrast (`experiments/rq3b.py`, DSE-025).
+- **Status:** declared. No RQ3b arm has been run, so nothing here was chosen with data in view.
+
+**Trigger.** The RQ3b driver landed, which makes the arms runnable and therefore makes every
+remaining analysis choice a researcher degree of freedom the moment the first one runs. Fixing the
+plan is worth a short entry precisely because it costs nothing now and cannot be done later.
+
+**What is fixed.**
+- **Unit of analysis:** the episode. The gate acts per handoff, but the intervention resolves at the
+  episode - it either reaches the goal or does not - and handoffs inside one share a start pose and
+  a trajectory.
+- **Outcomes:** terminal success and steps per episode. Both, not one chosen afterwards.
+- **The family:** six contrasts - gate-active against each of `matched_random`, `random_trigger`
+  and `off`, on each outcome - corrected together under Holm as **one** family. Correcting
+  per-outcome would enter six tests as two families of three and inflate the family-wise rate at
+  exactly the point the claim is made.
+- **The decision rule:** H6 is supported only if gate-active beats **both** score-blind controls on
+  terminal success after correction. Beating `off` alone is not enough and never was: the active
+  gate both blocks and buys the sender another turn, and `off` holds neither constant.
+- **Uncertainty:** bootstrap deltas with percentile intervals and Cliff's delta on every contrast.
+  No bare significance.
+
+**Risk reduced.** The two failure modes this closes are choosing the outcome after seeing which one
+moved, and quietly widening the family so a marginal contrast survives correction.
+
+**The one thing that is *not* fixed here.** The gate threshold. It is imported from a persisted
+`CalibrationReport` whose target is pinned to `realised_failure` and never CPVI - the R5
+circularity guard - and `build_gate` re-fits the statistic on the **calibration** records rather
+than on any arm's own episodes. A threshold re-derived from the arms would let the treatment choose
+the operating point it is about to be judged at.
+
+**So-what.** Two readings are pre-authorised, and they are different claims. A **null** - the gate
+matching its score-blind controls - says the statistic does not localise the handoffs that decide
+the episode, and is reported as a finding about the measurement. **Untestable** - every arm
+returning identical outcomes - says the grid produced no variance to move, which after job 232980's
+1/96 is the live risk, and is a statement about the task rather than about the gate. The driver
+distinguishes them in `verdict` rather than leaving the distinction to the write-up.
+
+---
+
+## 2026-08-29 — The agents could not see the quantity the task turns on, so they pushed into walls they could not pass
 
 - **Area:** the state serialisation (`sim/serialise.py`, `sim/load.py`), the step budget
   (`sim/feasibility.py` `STEP_BUDGETS`), and decode-time reasoning as a dataset-identity key
