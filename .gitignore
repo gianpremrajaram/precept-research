@@ -14,6 +14,7 @@ venv/
 .pytest_cache/
 .hypothesis/
 .coverage
+.coverage.*
 coverage.xml
 htmlcov/
 
@@ -32,6 +33,9 @@ runs/**/index.json
 # Interim substrates: local-pilot and benchmark-smoke episodes are decision inputs, never headline
 # data, so nothing under them is committed (the ladder table itself sits directly in runs/bench).
 runs/local/
+# fetch.sh's staging area: a mirror of the cluster, never the frozen copy. Frozen artefacts are
+# promoted deliberately into runs/rq1/<hash>/ instead.
+runs/myriad/
 runs/bench/smoke/
 *.npy
 *.joblib

@@ -1,0 +1,7 @@
+{
+  "n_cells": 24,
+  "n_episodes": 24,
+  "n_handoffs": 1013,
+  "success_rate": 0.4166666666666667,
+  "wall_time_s": 914.8394733611494
+}
