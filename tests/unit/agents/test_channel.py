@@ -97,10 +97,16 @@ def test_c5_supervisor_relay_is_disabled_by_default() -> None:
     assert ChannelConfig().c5_enabled is False
 
 
-def test_c3_grid_window_preserves_the_v8_clearance_line() -> None:
-    # The header grew to two lines in v8. C3 restricts VISIBLE ROWS, not information content, so
-    # windowing the pose-dependent span out would silently turn C3 into a different treatment.
-    clearance = "load_extent_y=1.4294  # the load's vertical span AT THIS ANGLE"
+def test_c3_grid_window_strips_the_clearance_and_keeps_only_the_legend() -> None:
+    # The header grew past one line in v8/v9. C3 must restrict the grid arm exactly as hard as the
+    # other two: the numeric whitelist ("load=", "contact=") and the nl first-sentence rule both
+    # drop the derived clearance already, so re-prepending it here would leave the grid arm under a
+    # weaker restriction and confound the condition contrast with serialisation. Only the legend -
+    # a constant symbol key, not state - survives, and it survives BY NAME so a header line added
+    # later is dropped from C3 until someone deliberately admits it.
+    clearance = "slit_clearance=0.5400  # the gap's USABLE width\nload_extent_y=1.4294  # the span"
     grid = "\n".join([GRID_LEGEND, clearance, "....", "....", ".T..", "....", "...."])
     r = _ch("m", "C3", serialisation="grid", observation=grid, cfg=ChannelConfig(c3_window_rows=1))
-    assert r.observation_override == "\n".join([GRID_LEGEND, clearance, "....", ".T..", "...."])
+    assert r.observation_override == "\n".join([GRID_LEGEND, "....", ".T..", "...."])
+    assert "slit_clearance" not in (r.observation_override or "")
+    assert "load_extent_y" not in (r.observation_override or "")

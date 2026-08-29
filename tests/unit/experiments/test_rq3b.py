@@ -146,6 +146,32 @@ def test_a_floored_grid_is_untestable_rather_than_a_null() -> None:
     assert "not about the gate" in result.verdict
 
 
+def test_a_floored_grid_stays_untestable_when_the_gated_arms_spend_retries() -> None:
+    # The regression. The guard used to compare the (success, steps) PAIR across arms, which is
+    # identical only in a fixture: on a real grid every gated arm re-prompts where the ungated one
+    # does not, so the arms' step counts differ and a wholly floored run read as "H6 NOT
+    # SUPPORTED" - a verdict about the gate drawn from a grid that never moved.
+    records = {
+        m: _episodes(
+            m, n=24, n_success=0, steps=10 if m == "off" else 11, blocks=0 if m == "off" else 3
+        )
+        for m in GATE_MODES
+    }
+    hashes = {m: f"hash-{m}" for m in GATE_MODES}
+    result = analyse_rq3b(records, hashes, statistic_key="cosine", cfg=RQ3bConfig(n_boot=2000))
+    assert len({m.mean_steps for m in result.modes}) > 1  # the arms really are not identical
+    assert result.verdict.startswith("UNTESTABLE")
+    assert "not about the gate" in result.verdict
+
+
+def test_the_verdict_names_the_correction_it_actually_applied() -> None:
+    records, hashes = _four_arms({"active": 20, "matched_random": 4, "random_trigger": 4, "off": 3})
+    cfg = RQ3bConfig(n_boot=2000, correction="bh")
+    result = analyse_rq3b(records, hashes, statistic_key="cosine", cfg=cfg)
+    assert result.verdict.startswith("H6 SUPPORTED")
+    assert "Benjamini-Hochberg" in result.verdict and "Holm" not in result.verdict
+
+
 def test_a_missing_arm_fails_loud() -> None:
     records, hashes = _four_arms(dict.fromkeys(GATE_MODES, 4))
     del records["matched_random"]

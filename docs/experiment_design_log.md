@@ -15,7 +15,93 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
-## 2026-08-29 (latest) — H6's analysis plan, declared before the arms have run
+## 2026-08-29 (latest) — The prompt's own pass rule was wrong by the width of the wall's lip
+
+- **Area:** the state serialiser (`sim/serialise.py`), the arena's aperture (`sim/arena.py`), and
+  the C3 restriction (`agents/channel.py`). Prompt **v9**, correcting **v8** before v8 ran.
+- **Status:** fixed. No v8 dataset exists, so nothing is superseded and nothing re-freezes; the
+  three planned D26 ablation arms re-key from v8 to v9 and the table above carries the new hashes.
+
+**Trigger.** A review of this branch before the ablation was submitted, not a run. v8 was built to
+remove an inference error the agents were making; the check was whether the number it hands them is
+the number the physics uses.
+
+**Finding — three defects, one of them decisive.**
+
+1. **The prompt named an aperture the walls do not impose.** `build_arena` gives every wall segment
+   `wall_radius = 0.05`, so each face stands proud of its authored edge and the free gap is
+   `nominal − 2 × wall_radius`. v8 stated the load's span next to the **declared** slit width and
+   told the agent "a slit narrower than this cannot admit it", so the rule the prompt invited was
+   `extent_y ≤ slit_width` — looser than the truth by 0.1 of clearance at every rung. Measured on
+   the simulator by pushing a slit-centred bar east across 0–60° in 0.5° steps, the largest angle
+   that actually threads is **38.0 / 17.0 / 10.0°** at 1.20/0.80/0.64. `extent_y ≤ usable_gap`
+   reproduces all three **exactly**; `extent_y ≤ slit_width` predicts 44.5 / 21.5 / 14.0°, so
+   **15% / 21% / 29%** of the poses the prompt certified as passable jam in the channel. v8 would
+   have replaced the agents' trigonometry error with a narrower one of the prompt's own making —
+   and a failure under it would have been misread as the agents', since the arithmetic they were
+   asked to do would have been done correctly. The design log already recorded the effective
+   aperture (2026-08-27); v8 simply did not reconcile against it.
+2. **The natural-language form never named an aperture at all.** `_nl` gives the slit's centre and
+   the channel depth, never its width. v8 appended "a slit narrower than that cannot admit it" to a
+   form that cannot say whether any slit is narrower — an invited comparison with one operand
+   missing. The nl arm would have measured trigonometry it had no second number for, which is the
+   exact non-isomorphism v8's own rationale said the change existed to avoid.
+3. **C3 restricted the grid arm less than the other two.** The numeric whitelist (`load=`,
+   `contact=`) and the nl first-sentence rule both drop the clearance, but `_window_grid`
+   deliberately re-prepended the whole grid header, clearance included. C3 would then have been a
+   materially weaker treatment in one serialisation than in the other two, confounding the
+   condition contrast with the serialisation axis it is crossed against.
+
+**Impact.** Unfixed, the D26 ablation would have measured how well agents recover from a state
+description that is wrong about the task's binding constraint for up to 29% of poses at the rung
+the run floored on — and A1-vs-baseline, the contrast that is supposed to isolate the serialiser,
+would have carried that error as part of the treatment. The C3 defect would have propagated into
+RQ1 proper, where the condition gradient is the headline.
+
+**Risk reduced.** A headline RQ1 result whose C0→C3 gradient is partly a serialisation artefact,
+and an ablation whose "the serialiser did not help" reading could not be separated from "the
+serialiser told them the wrong thing".
+
+**Correction paths considered and rejected.**
+- *Restate `slit_y` as the free interval.* One interval instead of two, but the grid raster draws
+  walls at the **nominal** edges, so the text and the picture would have disagreed in the form
+  where they sit side by side.
+- *Shrink `wall_radius` towards zero.* It is a collision-fidelity parameter, and moving it re-keys
+  the simulation digest and invalidates every certificate and the frozen baseline with it.
+- *Emit a `fits` boolean.* Rejected in the D26 entry above for the same reason it is rejected here:
+  it trades the floor for a ceiling.
+- *Keep the clearance visible under C3 in all three forms.* Symmetric, but B cannot use its own
+  span without the gap, which C3 removes as layout — so it buys nothing and weakens the treatment.
+
+**The fix.**
+- `sim/arena.py` gains `usable_gap(slit_width, geometry) = slit_width − 2·wall_radius`, the single
+  source of truth; `alignment_tolerance()` now derives from it rather than re-deriving the subtraction.
+- `clearance_line` states **two** scalars in all three forms — `slit_clearance` and
+  `load_extent_y` — and still no verdict: the comparison, the rotate-then-translate ordering, the
+  y-alignment and the two-wall repetition remain the agent's inference. The nl form names both in
+  prose, so it can perform the comparison for the first time.
+- `_window_grid` re-prepends the **legend only**, selected by name so a header line added later is
+  dropped from C3 until someone deliberately admits it — the fail-closed rule the numeric whitelist
+  already used.
+- `PROMPT_VERSION = "v9"`, which re-keys the three planned arms.
+
+**Result of the fix.** Not yet measured; the ablation is still the next submission. What is
+measured is the rule: a unit test pins `slit_clearance` to `usable_gap` at all three rungs and
+asserts the declared width is *not* what the line offers as the bar to clear.
+
+**So-what.** The generalisable lesson is about what "grounded" has to mean when a prompt is an
+instrument. v8 was grounded in the ordinary sense — every number in it was read from the live
+simulator, none was stale or invented — and was still wrong, because the *relation* it invited
+between two true numbers was not the relation the physics enforces. Groundedness checks that
+compare serialised values against simulator state (G3, as specified) would have passed it. The
+check that catches it is different in kind: take the decision rule the prompt implies, run it
+against the simulator, and confirm the boundary it predicts is the boundary that exists. That check
+is cheap — it is the sweep above, a few seconds on a laptop — and it belongs beside G3 for any
+state variable the agent is expected to *compare* rather than merely read.
+
+---
+
+## 2026-08-29 — H6's analysis plan, declared before the arms have run
 
 - **Area:** the RQ3b causal-gate contrast (`experiments/rq3b.py`, DSE-025).
 - **Status:** declared. No RQ3b arm has been run, so nothing here was chosen with data in view.
@@ -54,6 +140,14 @@ the episode, and is reported as a finding about the measurement. **Untestable** 
 returning identical outcomes - says the grid produced no variance to move, which after job 232980's
 1/96 is the live risk, and is a statement about the task rather than about the gate. The driver
 distinguishes them in `verdict` rather than leaving the distinction to the write-up.
+
+**Amended the same day, before any arm ran.** "Untestable" was first written as *every arm
+returning identical outcomes* and implemented as such, which is a condition that cannot occur: the
+gated arms re-prompt where the ungated one does not, so their step counts differ on any real grid
+and a wholly floored run would have been reported as "H6 NOT SUPPORTED" - a verdict about the gate
+drawn from a grid that never moved. The declaration and the code now key untestability on the
+**primary outcome alone**: terminal success constant across every episode of every arm. Nothing
+else in the plan changes, and no data existed when this was corrected.
 
 ---
 
@@ -113,7 +207,9 @@ and a headline null that a reviewer could attribute to model capability with no 
 
 **The fix.** Prompt **v8**, three parts.
 - `sim/load.py` gains `extent_y(angle) = 1.4·|sin θ| + 0.3·|cos θ|` — the load's vertical span at
-  its pose — and `clearance_line` puts it in **all three** state forms. It states the span, not a
+  its pose — `sim/arena.py` gains `usable_gap = slit_width − 2·wall_radius`, and `clearance_line`
+  puts **both** in **all three** state forms. (The second half is the v9 correction below; v8
+  shipped the span against the declared width and never ran.) It states two scalars, not a
   verdict: the slit comparison, the rotate-then-translate ordering, the y-alignment and the
   two-wall repetition all remain the agent's inference. This is the v4 argument one derivative up —
   v4 named the object's constants because naming the gap without the object was underdetermined,
@@ -138,9 +234,9 @@ v7 baseline free because it is already run:
 | arm | prompt | budget | thinking | dataset hash | contrast |
 |---|---|---|---|---|---|
 | baseline | v7 | 30/35 | off | `188a3d556b824e3e` | job 232980, easy+medium seeds 0–11 |
-| A1 | v8 | 30/35 | off | `8e438b0a5606d8aa` | vs baseline → the serialiser alone |
-| A2 | v8 | 50 | off | `7653131edd55e316` | vs A1 → the budget alone |
-| A3 | v8 | 50 | on | `d66e67ae2a46cb5c` | vs A2 → reasoning alone |
+| A1 | v9 | 30/35 | off | `9f46e0e34fab81cf` | vs baseline → the serialiser alone |
+| A2 | v9 | 50 | off | `8902072e1f47b6de` | vs A1 → the budget alone |
+| A3 | v9 | 50 | on | `9fe1823c20d33c75` | vs A2 → reasoning alone |
 
 The baseline grid is a superset of the ablation grid (it ran three difficulties at 32 seeds), so
 the contrast is drawn on matched cells rather than on aggregates.

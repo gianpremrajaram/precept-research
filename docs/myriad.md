@@ -352,8 +352,8 @@ is the bf16 re-gate run here**.
 ## 9. Submissions in flight — the D26 capability ablation
 
 Job 232980 floored at 1/96 for reasons `docs/experiment_design_log.md` (2026-08-29) sets out. Prompt
-v8 adds the pose-dependent clearance, `--max-steps` relaxes the certified budget, and `--thinking`
-turns on the Qwen3 reasoning trace. The ablation separates the three so the eventual RQ1 sweep is
+v9 adds the load's pose-dependent span and the gap's usable clearance, `--max-steps` relaxes the
+certified budget, and `--thinking` turns on the Qwen3 reasoning trace. The ablation separates the three so the eventual RQ1 sweep is
 run on a configuration we can defend rather than the first one that happened to work.
 
 **Three qsubs, not one jobscript.** Same driver, same grid, three flag sets — `pilot.sh` already
@@ -367,14 +367,14 @@ SEEDS="$(seq -s, 0 11)"
 COMMON=(-l h_rt=4:00:00 -v DRIVER=preceptx-rq1 scripts/myriad/pilot.sh
         --conditions C0 --difficulties easy,medium --seeds "$SEEDS" --no-analysis)
 
-# A1 - v8 at the certified budgets: the serialiser alone, against job 232980's matched cells.
-qsub -N precept-a1-v8-certified "${COMMON[@]}"                          # 8e438b0a5606d8aa
+# A1 - v9 at the certified budgets: the serialiser alone, against job 232980's matched cells.
+qsub -N precept-a1-v9-certified "${COMMON[@]}"                          # 9f46e0e34fab81cf
 
-# A2 - v8 with budget slack: the step budget alone, against A1.
-qsub -N precept-a2-v8-budget50  "${COMMON[@]}" --max-steps 50           # 7653131edd55e316
+# A2 - v9 with budget slack: the step budget alone, against A1.
+qsub -N precept-a2-v9-budget50  "${COMMON[@]}" --max-steps 50           # 8902072e1f47b6de
 
-# A3 - v8, budget slack, reasoning on: decode-time reasoning alone, against A2.
-qsub -N precept-a3-v8-thinking  "${COMMON[@]}" --max-steps 50 --thinking # d66e67ae2a46cb5c
+# A3 - v9, budget slack, reasoning on: decode-time reasoning alone, against A2.
+qsub -N precept-a3-v9-thinking  "${COMMON[@]}" --max-steps 50 --thinking # 9fe1823c20d33c75
 ```
 
 `--no-analysis` releases the GPU at the last episode. Analyse each afterwards on a login node, with

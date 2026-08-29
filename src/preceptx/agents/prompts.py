@@ -47,7 +47,12 @@ from preceptx.sim.actions import ROTATION_STEP_DEG
 # 1/96 with the agents pushing into walls they could not pass: 99.9% of messages quoted the angle,
 # 6.6% attempted the projection, and 97.6% of E actions were issued at non-admitting poses. The
 # bump re-keys the dataset, so v7 (188a3d556b824e3e) stays the intact baseline for the contrast.
-PROMPT_VERSION = "v8"
+# v9 corrects v8 before it ran. v8 gave the span but left the agent to compare it against the
+# DECLARED slit width, which is 2 x wall_radius wider than the aperture the walls impose, so the
+# prompt certified as passable up to 29% of the poses that actually jam (measured: the true limit
+# is 38.0/17.0/10.0 deg at 1.20/0.80/0.64). It now names `slit_clearance` beside the span. No v8
+# dataset exists, so nothing is superseded - the planned ablation arms re-key from v8 to v9.
+PROMPT_VERSION = "v9"
 
 _SYSTEM_A = (
     "You are agent A, the navigator in a two-agent cooperative-transport task. A straight "

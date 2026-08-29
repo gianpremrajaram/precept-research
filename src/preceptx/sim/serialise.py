@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from preceptx.data.schema import Serialisation
 from preceptx.sim.actions import BodyState
-from preceptx.sim.arena import ArenaGeometry, Goal, chamber_of
+from preceptx.sim.arena import ArenaGeometry, Goal, chamber_of, usable_gap
 from preceptx.sim.load import (
     LOAD_COG_Y,
     LOAD_EXTENT_X,
@@ -139,14 +139,14 @@ def deserialise_check(scene: SceneState, mode: Serialisation) -> bool:
     raise ValueError(f"deserialise_check supports numeric/grid only, not {mode!r}")
 
 
-# The pose-dependent clearance line (v8), appended to ALL THREE forms. `load_size` (v4) named the
-# object's constants because naming the gap without the object was underdetermined; DSE-058 made
-# each wall a channel, so the pass-relevant quantity became the load's PROJECTION, which is state,
-# not a constant. Run 232980 is the evidence: 99.9% of messages quoted the angle, 6.6% attempted
-# the projection, and 97.6% of E actions were pushes at poses that could not fit. It states the
-# span, not a verdict - the slit comparison, the rotate-then-translate ordering, the y-alignment
-# and the two-wall repetition all remain the agent's inference. Isomorphism is why it goes in all
-# three: withholding it from one form would make that form measure trigonometry, not representation.
+# The clearance lines (v8's span, v9's gap), appended to ALL THREE forms. `load_size` (v4) named
+# the object's constants because naming the gap without the object was underdetermined; DSE-058
+# made each wall a channel, so the pass-relevant quantity became the load's PROJECTION, which is
+# state, not a constant. Run 232980 is the evidence: 99.9% of messages quoted the angle, 6.6%
+# attempted the projection, and 97.6% of E actions were pushes at poses that could not fit. Both
+# scalars are stated, neither is compared - the comparison, the rotate-then-translate ordering, the
+# y-alignment and the two-wall repetition all remain the agent's inference. Isomorphism is why they
+# go in all three: withholding either would make that form measure trigonometry, not representation.
 _RASTER_GLYPHS = frozenset("TG#.")
 
 
@@ -166,10 +166,23 @@ def split_grid(grid: str) -> tuple[list[str], list[str]]:
 
 
 def clearance_line(scene: SceneState) -> str:
-    """The load's vertical span at its current angle, for the prompt (v8)."""
+    """The two derived scalars the pass decision turns on: the gap's free width and the load's span.
+
+    Both are stated; neither is compared, so the comparison, the rotate-then-translate ordering, the
+    y-alignment and the two-wall repetition all remain the agent's inference. It names
+    ``slit_clearance`` and not ``slit_width`` because the nominal aperture is not the one the
+    physics enforces (``arena.usable_gap``): v8 shipped the span alone beside the declared width and
+    so swapped the agents' trigonometry error for a narrower one of the prompt's own making, wrong
+    for 15/21/29% of the poses that rule certifies at easy/medium/hard. Naming the clearance closes
+    it (v9).
+    """
+    geo = scene.geometry
     return (
+        f"slit_clearance={usable_gap(scene.slit_width, geo):.4f}"
+        f"  # the gap's USABLE width: {scene.slit_width:.4f} less each wall face's "
+        f"{geo.wall_radius:.4f} rounded lip\n"
         f"load_extent_y={extent_y(scene.load.angle):.4f}"
-        "  # the load's vertical span AT THIS ANGLE; a slit narrower than this cannot admit it"
+        "  # the load's vertical span AT THIS ANGLE; it must be under slit_clearance to pass"
     )
 
 
@@ -287,8 +300,10 @@ def _nl(scene: SceneState) -> str:
         f"({goal.center_x:.2f}, {goal.center_y:.2f}), radius {goal.radius:.2f}, lying {direction} "
         f"beyond {n_slits} slit(s);{slit_clause} the load is "
         f"{'touching' if s.in_contact else 'clear of'} a wall. "
-        f"At this angle the load spans {extent_y(s.angle):.4f} vertically, so a slit narrower "
-        "than that cannot admit it."
+        f"At this angle the load spans {extent_y(s.angle):.4f} vertically and a slit's usable "
+        f"clearance is {usable_gap(scene.slit_width, geo):.4f} (its {scene.slit_width:.4f} gap "
+        f"less each wall face's {geo.wall_radius:.4f} rounded lip), so it cannot pass until the "
+        "span is under that."
     )
 
 

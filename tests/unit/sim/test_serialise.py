@@ -8,7 +8,7 @@ from hypothesis import strategies as st
 
 from preceptx.agents.prompts import _SYSTEM_A, _SYSTEM_B
 from preceptx.sim.actions import BodyState
-from preceptx.sim.arena import ArenaGeometry, Goal
+from preceptx.sim.arena import ArenaGeometry, Goal, usable_gap
 from preceptx.sim.load import BAR_LEN, BAR_THICK, COG_Y, extent_y
 from preceptx.sim.serialise import (
     GRID_LEGEND,
@@ -236,16 +236,34 @@ def test_extent_y_is_the_projection_not_either_constant() -> None:
 
 
 @pytest.mark.parametrize("mode", ["numeric", "grid", "nl"])
-def test_every_form_carries_the_clearance_span(mode: str) -> None:
-    # Isomorphism: withholding the projection from one form would make that form measure
-    # trigonometry rather than representation, which is the axis the serialisation A/B is for.
-    text = serialise(_scene(2.0, 3.0, angle=math.radians(98.8)), mode)  # type: ignore[arg-type]
+def test_every_form_carries_both_the_span_and_the_usable_clearance(mode: str) -> None:
+    # Isomorphism: withholding either half from one form would make that form measure trigonometry
+    # rather than representation, which is the axis the serialisation A/B is for. Both halves,
+    # because the span alone is only actionable against a clearance - and the nl form named no
+    # aperture at all before v9, so v8's sentence there invited a comparison it could not perform.
+    scene = _scene(2.0, 3.0, angle=math.radians(98.8))
+    text = serialise(scene, mode)  # type: ignore[arg-type]
     assert "1.429" in text
+    assert f"{usable_gap(scene.slit_width, scene.geometry):.4f}" in text
+
+
+def test_the_stated_clearance_is_the_one_the_walls_impose_not_the_declared_width() -> None:
+    # The v9 correction. The wall faces carry a `wall_radius` lip, so the free gap is 2 x that
+    # narrower than `slit_width`; v8 stated the span beside the declared width and so certified as
+    # passable poses that jam - measured, the true limit is 38.0/17.0/10.0 deg at 1.20/0.80/0.64.
+    geo = ArenaGeometry()
+    for width in (1.20, 0.80, 0.64):
+        scene = _scene(2.0, 3.0, slit=width)
+        assert usable_gap(width, geo) == pytest.approx(width - 2.0 * geo.wall_radius)
+        assert f"slit_clearance={width - 2.0 * geo.wall_radius:.4f}" in serialise(scene, "numeric")
+        # The looser number must not be the one the line offers as the bar to clear.
+        assert f"slit_clearance={width:.4f}" not in serialise(scene, "numeric")
 
 
 def test_grid_splits_header_from_raster_by_alphabet() -> None:
     header, rows = split_grid(serialise(_scene(6.0, 3.0), "grid"))
     assert header[0] == GRID_LEGEND
     assert any("load_extent_y=" in line for line in header)
+    assert any("slit_clearance=" in line for line in header)
     assert rows and all(set(row) <= set("TG#.") for row in rows)
     assert any("T" in row for row in rows)  # the load is inside the raster, not the header

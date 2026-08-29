@@ -251,27 +251,37 @@ def _contrast(
     )
 
 
-def _verdict(modes: list[ModeSummary], contrasts: list[H6Contrast], alpha: float) -> str:
+_CORRECTION_NAMES: dict[str, str] = {"holm": "Holm", "bh": "Benjamini-Hochberg"}
+
+
+def _verdict(modes: list[ModeSummary], contrasts: list[H6Contrast], cfg: RQ3bConfig) -> str:
     """H6's plain-language outcome, distinguishing a null from an untestable comparison."""
-    outcomes = {(m.success_rate, m.mean_steps) for m in modes}
-    if len(outcomes) == 1:
+    # Degeneracy is judged on the PRIMARY outcome alone. Requiring the (success, steps) PAIR to
+    # match across arms looked equivalent and was not: every gated arm re-prompts where the ungated
+    # one does not, so the arms' step counts differ on any real grid, and a wholly floored run -
+    # the live risk, job 232980 returned 1/96 - would have slipped through as "H6 NOT SUPPORTED".
+    # That is precisely the reading this branch exists to prevent, so it keys on success alone.
+    rates = {m.success_rate for m in modes}
+    if rates <= {0.0} or rates <= {1.0}:
         return (
-            "UNTESTABLE: every arm returned identical success and step counts, so the task "
-            "produced no outcome variance for the gate to move. This is a statement about the "
-            "grid, not about the gate - re-run H6 on a grid whose control arm is off the floor."
+            f"UNTESTABLE: terminal success was {rates.pop():.3f} in every arm, so the task "
+            "produced no outcome variance for the gate to move and no contrast on it can carry "
+            "evidence "
+            "either way. This is a statement about the grid, not about the gate - re-run H6 on a "
+            "grid whose control arm is off the floor."
         )
-        # A floored grid is the live risk (job 232980 returned 1/96), so it is named, not inferred.
     beaten = {
         c.control
         for c in contrasts
-        if c.outcome == "success" and c.p_corrected < alpha and c.delta > 0.0
+        if c.outcome == "success" and c.p_corrected < cfg.alpha and c.delta > 0.0
     }
     blind = {"matched_random", "random_trigger"}
     if blind <= beaten:
         return (
             "H6 SUPPORTED: gate-active beats both score-blind controls on terminal success after "
-            f"{('Holm')} correction, so the improvement is attributable to blocking the *right* "
-            "handoffs rather than to blocking, or to the extra sender turn, per se."
+            f"{_CORRECTION_NAMES[cfg.correction]} correction, so the improvement is attributable "
+            "to blocking the *right* handoffs rather than to blocking, or to the extra sender "
+            "turn, per se."
         )
     if beaten & blind:
         only = ", ".join(sorted(beaten & blind))
@@ -335,7 +345,7 @@ def analyse_rq3b(
         statistic_key=statistic_key,
         modes=modes,
         contrasts=contrasts,
-        verdict=_verdict(modes, contrasts, cfg.alpha),
+        verdict=_verdict(modes, contrasts, cfg),
     )
 
 
@@ -343,7 +353,6 @@ def write_rq3b(result: RQ3bResult, dir: Path | str) -> Path:
     """Persist the analysis JSON, the two tables and the outcome-by-mode figures."""
     dir = Path(dir)
     dir.mkdir(parents=True, exist_ok=True)
-    (dir / "rq3b.json").write_text(result.model_dump_json(indent=2))
     pd.DataFrame([m.model_dump() for m in result.modes]).to_csv(dir / "rq3b_modes.csv", index=False)
     pd.DataFrame([c.model_dump() for c in result.contrasts]).to_csv(
         dir / "rq3b_contrasts.csv", index=False
