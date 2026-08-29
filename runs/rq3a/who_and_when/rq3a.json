@@ -1,0 +1,130 @@
+{
+  "corpus": "who_and_when",
+  "n_traces": 182,
+  "n_steps_scored": 3505,
+  "handoffs_only": true,
+  "tie_policy": "descending risk, average ranks for ties; top-k inclusive at the cutoff",
+  "provenance": {
+    "encoder_name": "BAAI/bge-base-en-v1.5",
+    "encoder_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "second_encoder": "sentence-transformers/all-mpnet-base-v2",
+    "second_encoder_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+    "probe": {
+      "probe": "logistic",
+      "variance_model": "homoscedastic",
+      "c": 1.0,
+      "max_iter": 1000,
+      "n_splits": 5,
+      "n_repeats": 5,
+      "mlp_hidden": 64,
+      "seed": 0
+    },
+    "git_sha": "1cb90acb11d5c9bfa6832cd46754f5808f3204ad",
+    "timestamp": "2026-08-28T22:09:55.705280+00:00"
+  },
+  "methods": [
+    {
+      "method": "schema_validity",
+      "status": "ok",
+      "reason": null,
+      "n_traces_scored": 182,
+      "n_traces_evaluated": 150,
+      "n_traces_target_off_boundary": 32,
+      "n_abstained": 0,
+      "model_calls": 0,
+      "top_k": 3,
+      "step_accuracy": 0.006666666666666667,
+      "step_accuracy_ci": [
+        0.0,
+        0.04
+      ],
+      "agent_accuracy": 0.32666666666666666,
+      "agent_accuracy_ci": [
+        0.26,
+        0.4066666666666666
+      ],
+      "top_k_accuracy": 0.21333333333333335,
+      "top_k_accuracy_ci": [
+        0.15333333333333332,
+        0.2866666666666667
+      ],
+      "mrr": 0.22471508439900884,
+      "mrr_ci": [
+        0.2029790300648174,
+        0.24821752389612634
+      ]
+    },
+    {
+      "method": "mean_cosine",
+      "status": "ok",
+      "reason": null,
+      "n_traces_scored": 182,
+      "n_traces_evaluated": 150,
+      "n_traces_target_off_boundary": 32,
+      "n_abstained": 0,
+      "model_calls": 0,
+      "top_k": 3,
+      "step_accuracy": 0.2733333333333333,
+      "step_accuracy_ci": [
+        0.20666666666666667,
+        0.3466666666666667
+      ],
+      "agent_accuracy": 0.36666666666666664,
+      "agent_accuracy_ci": [
+        0.29333333333333333,
+        0.44666666666666666
+      ],
+      "top_k_accuracy": 0.5266666666666666,
+      "top_k_accuracy_ci": [
+        0.44666666666666666,
+        0.6066666666666667
+      ],
+      "mrr": 0.4475080897865928,
+      "mrr_ci": [
+        0.3922061200459157,
+        0.5091368307092675
+      ]
+    },
+    {
+      "method": "cpvi_transfer",
+      "status": "unavailable",
+      "reason": "no frozen simulator statistic: the arena track has not produced one yet",
+      "n_traces_scored": 0,
+      "n_traces_evaluated": 0,
+      "n_traces_target_off_boundary": 0,
+      "n_abstained": 0,
+      "model_calls": 0,
+      "top_k": 3,
+      "step_accuracy": null,
+      "step_accuracy_ci": null,
+      "agent_accuracy": null,
+      "agent_accuracy_ci": null,
+      "top_k_accuracy": null,
+      "top_k_accuracy_ci": null,
+      "mrr": null,
+      "mrr_ci": null
+    },
+    {
+      "method": "cpvi_refit",
+      "status": "unavailable",
+      "reason": "no replay outcome labels for these steps (DSE-042 has not been run on them)",
+      "n_traces_scored": 0,
+      "n_traces_evaluated": 0,
+      "n_traces_target_off_boundary": 0,
+      "n_abstained": 0,
+      "model_calls": 0,
+      "top_k": 3,
+      "step_accuracy": null,
+      "step_accuracy_ci": null,
+      "agent_accuracy": null,
+      "agent_accuracy_ci": null,
+      "top_k_accuracy": null,
+      "top_k_accuracy_ci": null,
+      "mrr": null,
+      "mrr_ci": null
+    }
+  ],
+  "judge": null,
+  "mast": null,
+  "agreement": null
+}

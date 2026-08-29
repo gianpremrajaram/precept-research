@@ -1,0 +1,142 @@
+{
+  "corpus": "traceelephant",
+  "n_traces": 220,
+  "n_steps_scored": 2488,
+  "handoffs_only": true,
+  "tie_policy": "descending risk, average ranks for ties; top-k inclusive at the cutoff",
+  "provenance": {
+    "encoder_name": "BAAI/bge-base-en-v1.5",
+    "encoder_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "second_encoder": "sentence-transformers/all-mpnet-base-v2",
+    "second_encoder_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+    "probe": {
+      "probe": "logistic",
+      "variance_model": "homoscedastic",
+      "c": 1.0,
+      "max_iter": 1000,
+      "n_splits": 5,
+      "n_repeats": 5,
+      "mlp_hidden": 64,
+      "seed": 0
+    },
+    "git_sha": "1cb90acb11d5c9bfa6832cd46754f5808f3204ad",
+    "timestamp": "2026-08-28T22:02:24.489756+00:00"
+  },
+  "methods": [
+    {
+      "method": "schema_validity",
+      "status": "ok",
+      "reason": null,
+      "n_traces_scored": 220,
+      "n_traces_evaluated": 118,
+      "n_traces_target_off_boundary": 100,
+      "n_abstained": 0,
+      "model_calls": 0,
+      "top_k": 3,
+      "step_accuracy": 0.01694915254237288,
+      "step_accuracy_ci": [
+        0.0,
+        0.059322033898305086
+      ],
+      "agent_accuracy": 0.2627118644067797,
+      "agent_accuracy_ci": [
+        0.1864406779661017,
+        0.3474576271186441
+      ],
+      "top_k_accuracy": 0.288135593220339,
+      "top_k_accuracy_ci": [
+        0.211864406779661,
+        0.3813559322033898
+      ],
+      "mrr": 0.24440260192794938,
+      "mrr_ci": [
+        0.21752971705570023,
+        0.282590076968579
+      ]
+    },
+    {
+      "method": "mean_cosine",
+      "status": "ok",
+      "reason": null,
+      "n_traces_scored": 220,
+      "n_traces_evaluated": 118,
+      "n_traces_target_off_boundary": 100,
+      "n_abstained": 0,
+      "model_calls": 0,
+      "top_k": 3,
+      "step_accuracy": 0.09322033898305085,
+      "step_accuracy_ci": [
+        0.05084745762711865,
+        0.16101694915254236
+      ],
+      "agent_accuracy": 0.2542372881355932,
+      "agent_accuracy_ci": [
+        0.1864406779661017,
+        0.3389830508474576
+      ],
+      "top_k_accuracy": 0.2966101694915254,
+      "top_k_accuracy_ci": [
+        0.211864406779661,
+        0.3813559322033898
+      ],
+      "mrr": 0.2549752687313814,
+      "mrr_ci": [
+        0.21149383609937078,
+        0.31246757852583873
+      ]
+    },
+    {
+      "method": "cpvi_transfer",
+      "status": "unavailable",
+      "reason": "no frozen simulator statistic: the arena track has not produced one yet",
+      "n_traces_scored": 0,
+      "n_traces_evaluated": 0,
+      "n_traces_target_off_boundary": 0,
+      "n_abstained": 0,
+      "model_calls": 0,
+      "top_k": 3,
+      "step_accuracy": null,
+      "step_accuracy_ci": null,
+      "agent_accuracy": null,
+      "agent_accuracy_ci": null,
+      "top_k_accuracy": null,
+      "top_k_accuracy_ci": null,
+      "mrr": null,
+      "mrr_ci": null
+    },
+    {
+      "method": "cpvi_refit",
+      "status": "unavailable",
+      "reason": "no replay outcome labels for these steps (DSE-042 has not been run on them)",
+      "n_traces_scored": 0,
+      "n_traces_evaluated": 0,
+      "n_traces_target_off_boundary": 0,
+      "n_abstained": 0,
+      "model_calls": 0,
+      "top_k": 3,
+      "step_accuracy": null,
+      "step_accuracy_ci": null,
+      "agent_accuracy": null,
+      "agent_accuracy_ci": null,
+      "top_k_accuracy": null,
+      "top_k_accuracy_ci": null,
+      "mrr": null,
+      "mrr_ci": null
+    }
+  ],
+  "judge": null,
+  "mast": {
+    "status": "ok",
+    "reason": null,
+    "n_traces": 1642,
+    "n_positive": 876,
+    "category_information_bits": 0.08822807131928986,
+    "category_information_ci": [
+      0.07040305695528654,
+      0.10665309964114263
+    ],
+    "cpvi_status": "not_applicable",
+    "cpvi_reason": "MAST publishes traces as one unsegmented transcript with no observation/message split, so there is no conditioning state and CPVI is undefined (docs/rq3a_schema_mapping.md section 4)"
+  },
+  "agreement": null
+}

@@ -17,6 +17,8 @@ centres the load on the gap. Dimensions are module constants (the task uses one 
 
 from __future__ import annotations
 
+import math
+
 import pymunk
 
 # T geometry (world units). Bar across the top, stem hanging below; see module docstring.
@@ -40,7 +42,8 @@ COG_Y = (_AREA_BAR * _BAR_CY + _AREA_STEM * _STEM_CY) / (_AREA_BAR + _AREA_STEM)
 # Convex bar geometry (world units) - the ACTIVE load. Same footprint as the T's crossbar, so the
 # arena scale and the grip span are unchanged; what changes is that there is no second member to
 # cross the gap independently. Rotation-required aperture band is [BAR_THICK, BAR_LEN) = [0.3, 1.4),
-# against the T's empty band. The shipped ladder sits at 1.20/0.80/0.50 (see sim/arena.py).
+# against the T's empty band. The shipped ladder sits at 1.20/0.80/0.64 (see sim/arena.py;
+# hard moved off 0.50 in DSE-059).
 BAR_LEN = 1.4
 BAR_THICK = 0.3
 
@@ -49,6 +52,21 @@ BAR_THICK = 0.3
 LOAD_COG_Y = 0.0
 LOAD_EXTENT_X = BAR_LEN  # x-extent at angle 0
 LOAD_EXTENT_Y = BAR_THICK  # y-extent at angle 0
+
+
+def extent_y(angle: float) -> float:
+    """The load's vertical span at ``angle`` - the projection a gap's clearance must exceed.
+
+    ``BAR_THICK`` at angle 0, ``BAR_LEN`` at pi/2, and neither constant anywhere between. Serialised
+    into all three state forms from prompt v8 (D26): run 232980 found agents quoting the angle and
+    then substituting ``BAR_THICK`` for this projection - 6.6% of messages attempted the
+    trigonometry at all, and 97.6% of pushes were issued at poses that could not fit the slit.
+
+    Its counterparty is ``arena.usable_gap``, NOT the nominal slit width. v9 fixed that: the wall
+    faces are rounded, so comparing this span against the declared width accepts poses that jam.
+    """
+    return LOAD_EXTENT_X * abs(math.sin(angle)) + LOAD_EXTENT_Y * abs(math.cos(angle))
+
 
 Vert = tuple[float, float]
 

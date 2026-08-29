@@ -191,6 +191,9 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 cd ~/Scratch/precept-research
 bash scripts/myriad/prefetch.sh        # image, then venv, then weights, then the encoder
+
+# Add the RQ3a corpora (~800 MB) if this session will run the judge replication:
+RQ3A_ROOT=$HOME/Scratch/rq3a bash scripts/myriad/prefetch.sh
 ```
 
 `scripts/myriad/shell.sh` is the entry point for everything that is *not* a jobscript — the dry-run
@@ -200,7 +203,8 @@ exits. It applies `--nv` only where there is a GPU, so the same invocation works
 
 
 `prefetch.sh` now owns all four, in that order, and each step is idempotent. It checks `gquota`
-before pulling anything, pulls the image, re-execs itself inside it, then builds `.venv` with
+before pulling anything, optionally pulls the RQ3a corpora when `RQ3A_ROOT` is set (on the host,
+where `curl` and `unzip` live), pulls the image, re-execs itself inside it, then builds `.venv` with
 `uv sync --extra serving --extra embed --python /usr/local/bin/python3.11` and asserts that
 pandas, pyarrow, scikit-learn and torch import — which is the check that proves the environment is
 the container's and not the host's.
@@ -345,7 +349,48 @@ requested. Cluster data is therefore never poolable with `local-lmstudio` pilot 
 which is the point, since the local 4-bit G1 reading is indicative only and the **verdict of record
 is the bf16 re-gate run here**.
 
-## 9. Getting the results back
+## 9. Submissions in flight — the D26 capability ablation
+
+Job 232980 floored at 1/96 for reasons `docs/experiment_design_log.md` (2026-08-29) sets out. Prompt
+v9 adds the load's pose-dependent span and the gap's usable clearance, `--max-steps` relaxes the
+certified budget, and `--thinking` turns on the Qwen3 reasoning trace. The ablation separates the three so the eventual RQ1 sweep is
+run on a configuration we can defend rather than the first one that happened to work.
+
+**Three qsubs, not one jobscript.** Same driver, same grid, three flag sets — `pilot.sh` already
+passes `"$@"` through to the driver, so this needs no new script, and three independent jobs can be
+scheduled concurrently where a single sequential one cannot. They write three distinct dataset
+directories; the hashes below are from `--dry-run` and are what each job must report.
+
+```bash
+cd ~/Scratch/precept-research
+SEEDS="$(seq -s, 0 11)"
+COMMON=(-l h_rt=4:00:00 -v DRIVER=preceptx-rq1 scripts/myriad/pilot.sh
+        --conditions C0 --difficulties easy,medium --seeds "$SEEDS" --no-analysis)
+
+# A1 - v9 at the certified budgets: the serialiser alone, against job 232980's matched cells.
+qsub -N precept-a1-v9-certified "${COMMON[@]}"                          # 9f46e0e34fab81cf
+
+# A2 - v9 with budget slack: the step budget alone, against A1.
+qsub -N precept-a2-v9-budget50  "${COMMON[@]}" --max-steps 50           # 8902072e1f47b6de
+
+# A3 - v9, budget slack, reasoning on: decode-time reasoning alone, against A2.
+qsub -N precept-a3-v9-thinking  "${COMMON[@]}" --max-steps 50 --thinking # 9fe1823c20d33c75
+```
+
+`--no-analysis` releases the GPU at the last episode. Analyse each afterwards on a login node, with
+no GPU and no time limit:
+
+```bash
+preceptx-analyse --dataset-hash <the hash the driver printed>
+```
+
+The v7 baseline is **not** re-run: job 232980 (`188a3d556b824e3e`) covered easy+medium at 32 seeds,
+a superset of this grid, so the contrast is drawn on matched cells (C0, easy+medium, seeds 0-11).
+
+A3 is the slow arm — a reasoning trace is several times the tokens of a v7 turn, so budget roughly
+four times A2's episode time. The 4h request is sized for it; A1 and A2 will finish well inside it.
+
+## 10. Getting the results back
 
 The pilot writes its verdict to Scratch and `runs/` is gitignored, so nothing leaves the cluster on
 its own. Pull the two small directories the run of record actually consists of:
@@ -366,7 +411,7 @@ Bring the Parquet dataset back too (`--include='*.parquet'`) when you want to re
 locally rather than trust the on-node run — it is the same estimator either way, but a local re-run
 is how you check that.
 
-## 10. Verified on the cluster, and what is still open
+## 11. Verified on the cluster, and what is still open
 
 Checked in the first live session, **25 August 2026** (`login12`, `node-l00a-006`):
 
@@ -416,14 +461,14 @@ Two items are closed by construction rather than by checking: the served revisio
 disagree with the manifest (it is read from the tier config), and the venv can no longer diverge
 from the lockfile (`uv sync` into the repo's `.venv`, which is what every script activates).
 
-## 11. Cost
+## 12. Cost
 
 Nothing here is billed. The Free allocation trades queue latency for cost, which suits development
 and the pilot; the three-monthly priority allocation is worth saving for the main RQ1 sweep. Every
 model call in this project is either local open-weight inference or the Myriad allocation — no
 hosted API is ever called.
 
-## 12. Changing these scripts
+## 13. Changing these scripts
 
 `tests/unit/scripts/test_myriad_container.py` runs the real scripts against a fake cluster: a stub
 `apptainer` on PATH that records how it was invoked and then runs the payload in-process with

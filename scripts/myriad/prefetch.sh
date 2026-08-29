@@ -6,6 +6,7 @@
 #
 #   bash scripts/myriad/prefetch.sh              # the 14B workhorse
 #   TIER=qwen8b bash scripts/myriad/prefetch.sh  # the V100-class fallback tier
+#   RQ3A_ROOT=$HOME/Scratch/rq3a bash scripts/myriad/prefetch.sh   # ...plus the RQ3a corpora
 #
 # It now also prepares the two things a GPU job cannot build for itself: the Apptainer image and
 # the virtual environment inside it (DSE-051). Both are idempotent - a second run re-uses them.
@@ -46,6 +47,14 @@ if [[ -z "${APPTAINER_CONTAINER:-}" ]]; then
     gquota
   else
     echo "[prefetch] gquota not found; check your quota headroom manually (~28 GB for the 14B tier)"
+  fi
+  # The RQ3a corpora are the same problem as the weights - ~800 MB a GPU job would otherwise
+  # download while holding a card - so they are pulled here too, on the host rather than inside
+  # the image, because curl and unzip are login-node tools and the image is not required to carry
+  # them. Opt-in: only the RQ3a job needs them, and they are useless to a simulator sweep.
+  if [[ -n "${RQ3A_ROOT:-}" ]]; then
+    echo "[prefetch] pulling the RQ3a corpora into $RQ3A_ROOT (~800 MB)"
+    bash "$REPO_ROOT/scripts/fetch_rq3a.sh" "$RQ3A_ROOT"
   fi
   ensure_image
   enter_container "$HERE/prefetch.sh" "$@"

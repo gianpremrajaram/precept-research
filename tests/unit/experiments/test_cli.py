@@ -74,3 +74,33 @@ def test_rq2_is_offline_and_needs_no_serving_pre_flight(
 def test_rq2_requires_the_dataset_hash() -> None:
     with pytest.raises(SystemExit):  # argparse exits 2; the hash is the only handle it has
         rq2([])
+
+
+@respx.mock
+def test_max_steps_broadcasts_over_the_certified_budgets(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # STEP_BUDGETS bounds an OPTIMAL policy; run 232980 saturated every one of 96 episodes, so the
+    # budget is a live constraint and the flag has to reach the sweep, not just the parser.
+    rq1(
+        [
+            "--dry-run",
+            "--conditions",
+            "C0",
+            "--difficulties",
+            "easy",
+            "--seeds",
+            "0,1",
+            "--max-steps",
+            "50",
+        ]
+    )
+    assert f"model calls:      {2 * 2 * 50}" in capsys.readouterr().out
+
+
+@respx.mock
+def test_omitting_max_steps_keeps_the_certified_budgets(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rq1(["--dry-run", "--conditions", "C0", "--difficulties", "easy", "--seeds", "0,1"])
+    assert f"model calls:      {2 * 2 * STEP_BUDGETS['easy']}" in capsys.readouterr().out

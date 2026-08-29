@@ -16,6 +16,7 @@ from numpy.random import Generator
 from pydantic import BaseModel, ConfigDict, Field
 
 from preceptx.data.schema import Condition, Serialisation
+from preceptx.sim.serialise import split_grid
 
 _C2_SENTINEL = "(no message yet)"  # B's delivered message at step 0 under the one-step delay
 
@@ -96,11 +97,16 @@ def _restrict(observation: str, serialisation: Serialisation, window_rows: int) 
 
 
 def _window_grid(grid: str, window_rows: int) -> str:
-    lines = grid.splitlines()
-    # The serialiser's constant legend header contains a literal "T": split it off before locating
-    # the load rows, and re-prepend it so B keeps the symbol key inside its restricted window.
-    has_legend = bool(lines) and lines[0].startswith("legend:")
-    header, rows = (lines[:1], lines[1:]) if has_legend else ([], lines)
+    # The header (legend, plus the derived clearance lines) is split off before locating the load
+    # rows - the legend contains a literal "T" - and only the LEGEND is re-prepended, so B keeps the
+    # symbol key and loses the clearance. That is the C3 treatment, not an omission: the numeric
+    # whitelist and the nl first-sentence rule already drop those lines, so re-prepending them here
+    # would have left the grid arm under a materially weaker restriction than the other two and
+    # confounded the condition contrast with serialisation. Selecting the legend BY NAME fails
+    # closed the way the numeric whitelist does - a header line added later is dropped from C3
+    # until someone deliberately admits it.
+    header, rows = split_grid(grid)
+    header = [line for line in header if line.startswith("legend:")]
     load_rows = [i for i, row in enumerate(rows) if "T" in row]
     if not load_rows:  # load off-grid: nothing to window (cannot happen in a valid scene)
         return grid

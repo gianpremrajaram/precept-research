@@ -43,7 +43,16 @@ from preceptx.sim.actions import ROTATION_STEP_DEG
 # arena's object and obstacle to agents manipulating a bar through a channel would reintroduce the
 # exact grounded-but-inferentially-wrong defect DSE-057 was spent falsifying. Landed before the
 # first successor model call, so no dataset is re-keyed.
-PROMPT_VERSION = "v7"
+# v8 (D26) adds the pose-dependent `load_extent_y` to all three state forms. Run 232980 floored at
+# 1/96 with the agents pushing into walls they could not pass: 99.9% of messages quoted the angle,
+# 6.6% attempted the projection, and 97.6% of E actions were issued at non-admitting poses. The
+# bump re-keys the dataset, so v7 (188a3d556b824e3e) stays the intact baseline for the contrast.
+# v9 corrects v8 before it ran. v8 gave the span but left the agent to compare it against the
+# DECLARED slit width, which is 2 x wall_radius wider than the aperture the walls impose, so the
+# prompt certified as passable up to 29% of the poses that actually jam (measured: the true limit
+# is 38.0/17.0/10.0 deg at 1.20/0.80/0.64). It now names `slit_clearance` beside the span. No v8
+# dataset exists, so nothing is superseded - the planned ablation arms re-key from v8 to v9.
+PROMPT_VERSION = "v9"
 
 _SYSTEM_A = (
     "You are agent A, the navigator in a two-agent cooperative-transport task. A straight "

@@ -1,0 +1,6 @@
+dataset_hash,sweep_hash,git_sha,task_generation,prompt_version,simulation_digest,conditions,difficulties,seeds,max_steps,thinking,job_id,raw_data,status,notes
+54ed65e6cc9e7d17,afcd6a53ee11edd7,9170a74,pre-DSE-059,v6,,"C0,C1,C2,C3,C4","easy,medium,hard",0-31,30/35/35,false,227886,not-released,superseded,"D23 characterisation sweep; 480 episodes. Actuator quantum tuned for the retired T load - see docs/rq1_227886_diagnosis.md. Not comparable to the rows below: different task."
+188a3d556b824e3e,2c9d3a487785141b,3824de6,DSE-059-063-corrected,v7,92b0c63b141ab074,C0,"easy,medium,hard",0-31,30/35/35,false,232980,release rq1-c0-smoke-188a3d556b824e3e,capability-smoke,"1/96 success. C0 only: no gradient, no gate verdict. Baseline arm for the D26 ablation."
+9f46e0e34fab81cf,,,DSE-059-063-corrected,v9,92b0c63b141ab074,C0,"easy,medium",0-11,30/35,false,,pending,planned,"D26 arm A1: the clearance line alone, against 188a3d556b824e3e's matched cells."
+8902072e1f47b6de,,,DSE-059-063-corrected,v9,92b0c63b141ab074,C0,"easy,medium",0-11,50,false,,pending,planned,"D26 arm A2: the step budget alone, against A1."
+9fe1823c20d33c75,,,DSE-059-063-corrected,v9,92b0c63b141ab074,C0,"easy,medium",0-11,50,true,,pending,planned,"D26 arm A3: decode-time reasoning alone, against A2."

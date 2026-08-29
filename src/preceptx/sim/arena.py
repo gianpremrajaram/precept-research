@@ -108,15 +108,26 @@ class Goal(BaseModel):
     radius: float = Field(gt=0)
 
 
+def usable_gap(slit_width: float, geometry: ArenaGeometry) -> float:
+    """The gap's FREE width: the nominal aperture less the rounded lip on each wall face.
+
+    ``build_arena`` gives every wall segment ``wall_radius``, so each face stands that far proud of
+    the authored edge and a load's extent must fit under THIS, never under ``slit_width``. Measured
+    against the simulator rather than argued on paper: pushing a bar east from a slit-centred pose,
+    the largest angle that actually threads is 38.0/17.0/10.0 deg at 1.20/0.80/0.64, which
+    ``extent_y <= usable_gap`` reproduces exactly and ``extent_y <= slit_width`` over-accepts by
+    6.5/4.5/4.0 deg - up to 29% of the poses that looser rule certifies jam in the channel.
+    """
+    return slit_width - 2.0 * geometry.wall_radius
+
+
 def alignment_tolerance() -> float:
     """How far off the slit centre a FLAT bar may sit and still clear the narrowest channel.
 
     Derived rather than authored: it is a pure function of the tightest aperture and the bar's
     thickness, so a change to either moves it automatically instead of leaving a stale constant.
     """
-    return (
-        min(_DIFFICULTY_SLITS.values()) - 2.0 * ArenaGeometry().wall_radius - LOAD_EXTENT_Y
-    ) / 2.0
+    return (usable_gap(min(_DIFFICULTY_SLITS.values()), ArenaGeometry()) - LOAD_EXTENT_Y) / 2.0
 
 
 # 80% of the tightest rung's tolerance: inside it for every difficulty, with margin for the settle.

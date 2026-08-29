@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import re
+import tempfile
 import time
 from pathlib import Path
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from preceptx.config import ConfigError
 from preceptx.data.schema import HandoffRecord
@@ -164,3 +166,64 @@ def test_second_encoder_config_promotes_the_sensitivity_encoder(tmp_path: Path) 
     assert second.revision == primary.second_encoder_revision != primary.revision
     assert second.second_encoder == primary.second_encoder  # the pair survives the promotion
     assert second.cache_dir == primary.cache_dir
+
+
+# ------------------------------------------------------------------ device determinism (DSE-064)
+
+
+def test_the_pinned_device_encodes_a_repeated_text_identically() -> None:
+    """The regression guard for the MPS divergence found while freezing the first RQ3a result.
+
+    sentence-transformers auto-selects a backend, and on Apple Silicon that is MPS, which returns
+    *substantively different* vectors for the same string depending on which batch it lands in -
+    cosine 0.543 to the first row, 62 of 64 rows below 0.999, on torch 2.10.0. Not float jitter,
+    and upstream of every CPVI number. The corpus makes it reachable rather than theoretical:
+    TraceElephant's messages are 1,166 unique strings over 2,488 slots, one of them repeated 316
+    times, so duplicates straddle batch boundaries constantly.
+
+    The assertion is on cosine, not bit-equality: CPU still carries ~1.8e-07 of elementwise float32
+    batch-order jitter, which is harmless and moves cosine by ~1e-12. The threshold sits far above
+    that and far below the MPS failure, so it separates "float noise" from "different vector"
+    rather than pinning an exact float. Loads the real encoder on purpose - a stub cannot exhibit a
+    backend's bug.
+    """
+    pytest.importorskip("sentence_transformers")
+    cfg = EncoderConfig(cache_dir=Path(tempfile.mkdtemp()))
+    assert cfg.device == "cpu", "the default device must stay the one verified deterministic"
+    rows = Featuriser(cfg).embed_texts(["InformationExtraction_Expert"] * (2 * cfg.batch_size))
+    cosine = rows @ rows[0] / (np.linalg.norm(rows, axis=1) * np.linalg.norm(rows[0]))
+    assert cosine.min() > 1.0 - 1e-6, (
+        f"the same string encoded to different vectors across a batch boundary "
+        f"(min cosine {cosine.min():.6f}); on MPS this reads ~0.54"
+    )
+
+
+def test_a_repeated_text_is_encoded_once_not_once_per_occurrence() -> None:
+    """Deduplication is a determinism property, not just a saving.
+
+    Encoding a string once per occurrence puts its occurrences in different batch slots, and
+    float32 batch-order jitter (~1.8e-07 even on CPU) then gives them slightly different vectors,
+    while the content-addressed cache stores exactly one. That is what made a cold run and every
+    later warm run disagree, by enough to reorder near-ties and move MRR in the fourth decimal.
+    """
+    seen: list[list[str]] = []
+
+    class _Counting:
+        def encode(
+            self,
+            sentences: list[str],
+            *,
+            batch_size: int,
+            normalize_embeddings: bool,
+            convert_to_numpy: bool,
+        ) -> NDArray[np.float64]:
+            seen.append(list(sentences))
+            return np.array([[float(len(s)), 1.0] for s in sentences], dtype=np.float64)
+
+    cfg = EncoderConfig(cache_dir=Path(tempfile.mkdtemp()))
+    texts = ["a", "bb", "a", "a", "bb"]
+    rows = Featuriser(cfg, encoder=_Counting()).embed_texts(texts)
+
+    assert seen == [["a", "bb"]], "the encoder saw a repeated text more than once"
+    assert rows.shape == (len(texts), 2), "the fan-out must restore one row per input"
+    assert [r[0] for r in rows] == [1.0, 2.0, 1.0, 1.0, 2.0], "rows are misaligned to their inputs"

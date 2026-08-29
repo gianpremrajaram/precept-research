@@ -57,6 +57,16 @@ class EncoderConfig(BaseModel):
     batch_size: int = Field(default=32, gt=0)
     normalize: bool = True
     cache_dir: Path = Field(default=Path(".embed_cache"))
+    # Pinned, not auto-selected. sentence-transformers picks the "best" backend it finds, which on
+    # Apple Silicon is MPS - and MPS returns *substantively different* vectors for the same string
+    # depending on which batch it lands in: measured on torch 2.10.0 / sentence-transformers 5.6.0,
+    # a text repeated 64 times across a 32-wide batch boundary encoded to vectors whose cosine to
+    # the first fell to 0.543, with 62 of 64 rows below 0.999. CPU on the identical call holds
+    # cosine at 0.999999999999 (~1.8e-07 of elementwise float32 jitter, which is the real floor).
+    # A 0.46 cosine gap is a different vector, not noise, and it sits upstream of every CPVI so
+    # the device is a reproducibility parameter and defaults to the backend verified deterministic.
+    # Override for a CUDA node only after running the determinism check in tests/unit/measure/.
+    device: str = Field(default="cpu", min_length=1)
 
 
 class EncoderBackend(Protocol):
@@ -107,7 +117,9 @@ class Featuriser:
                 "the featuriser needs the 'embed' extra: install with "
                 "`uv pip install -e '.[embed]'`"
             ) from exc
-        model = SentenceTransformer(self.cfg.name, revision=self.cfg.revision)
+        model = SentenceTransformer(
+            self.cfg.name, revision=self.cfg.revision, device=self.cfg.device
+        )
         return model  # type: ignore[no-any-return]  # untyped import duck-types EncoderBackend
 
     def _cache_path(self, text: str) -> Path:
@@ -115,22 +127,36 @@ class Featuriser:
         return self.cfg.cache_dir / f"{hashlib.sha256(key.encode()).hexdigest()}.npy"
 
     def embed_texts(self, texts: list[str]) -> NDArray[np.float64]:
-        """Embed ``texts`` to ``(len(texts), dim)``, serving cache hits and encoding only misses."""
+        """Embed ``texts`` to ``(len(texts), dim)``, serving cache hits and encoding only misses.
+
+        Deduplicated before encoding, then fanned back out. This is a determinism property, not an
+        optimisation: encoding is float32 and batch-order sensitive at ~1.8e-07, so encoding one
+        string once per occurrence gives its occurrences *slightly different* vectors, while the
+        content-addressed cache stores exactly one - which made a cold run and every later warm run
+        disagree, enough to reorder near-ties and move MRR in the fourth decimal. Encoding each
+        unique text once makes cold and warm identical by construction, on any backend. It is also
+        markedly cheaper on real corpora: TraceElephant's 2,488 handoff messages are 1,166 unique
+        strings, one of them repeated 316 times.
+
+        Indexing the output by text rather than by position also removes a latent misalignment: the
+        previous ``[v for v in vectors if v is not None]`` would have silently returned *fewer rows
+        than inputs*, shifting every downstream pairing, had any slot gone unfilled.
+        """
         if not texts:
             return np.empty((0, 0), dtype=np.float64)
-        vectors: list[NDArray[np.float64] | None] = [None] * len(texts)
-        miss_idx: list[int] = []
-        for i, text in enumerate(texts):  # one stat per text; load hits inline, collect misses
+        vectors: dict[str, NDArray[np.float64]] = {}
+        misses: list[str] = []
+        for text in dict.fromkeys(texts):  # unique, first-seen order; one stat per unique text
             path = self._cache_path(text)
             if path.exists():
-                vectors[i] = np.load(path)
+                vectors[text] = np.load(path)
             else:
-                miss_idx.append(i)
-        if miss_idx:
+                misses.append(text)
+        if misses:
             encoded: NDArray[np.float64] = (
                 self._backend()
                 .encode(
-                    [texts[i] for i in miss_idx],
+                    misses,
                     batch_size=self.cfg.batch_size,
                     normalize_embeddings=self.cfg.normalize,
                     convert_to_numpy=True,
@@ -138,10 +164,10 @@ class Featuriser:
                 .astype(np.float64)
             )
             self.cfg.cache_dir.mkdir(parents=True, exist_ok=True)
-            for j, i in enumerate(miss_idx):
-                vectors[i] = encoded[j]
-                np.save(self._cache_path(texts[i]), encoded[j])
-        return np.vstack([v for v in vectors if v is not None]).astype(np.float64)
+            for text, vector in zip(misses, encoded, strict=True):
+                vectors[text] = vector
+                np.save(self._cache_path(text), vector)
+        return np.vstack([vectors[t] for t in texts]).astype(np.float64)
 
     def featurise(
         self, records: list[HandoffRecord]

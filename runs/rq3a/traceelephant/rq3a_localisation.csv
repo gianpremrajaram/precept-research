@@ -1,0 +1,5 @@
+method,status,reason,n_traces_scored,n_traces_evaluated,n_traces_target_off_boundary,n_abstained,model_calls,top_k,step_accuracy,step_accuracy_ci,agent_accuracy,agent_accuracy_ci,top_k_accuracy,top_k_accuracy_ci,mrr,mrr_ci
+schema_validity,ok,,220,118,100,0,0,3,0.01694915254237288,"(0.0, 0.059322033898305086)",0.2627118644067797,"(0.1864406779661017, 0.3474576271186441)",0.288135593220339,"(0.211864406779661, 0.3813559322033898)",0.24440260192794938,"(0.21752971705570023, 0.282590076968579)"
+mean_cosine,ok,,220,118,100,0,0,3,0.09322033898305085,"(0.05084745762711865, 0.16101694915254236)",0.2542372881355932,"(0.1864406779661017, 0.3389830508474576)",0.2966101694915254,"(0.211864406779661, 0.3813559322033898)",0.2549752687313814,"(0.21149383609937078, 0.31246757852583873)"
+cpvi_transfer,unavailable,no frozen simulator statistic: the arena track has not produced one yet,0,0,0,0,0,3,,,,,,,,
+cpvi_refit,unavailable,no replay outcome labels for these steps (DSE-042 has not been run on them),0,0,0,0,0,3,,,,,,,,

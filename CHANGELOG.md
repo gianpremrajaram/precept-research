@@ -8,6 +8,35 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
 ## [Unreleased]
 
 ### Added
+- **`preceptx-rq3b` and the H6 causal-gate arms (`experiments/rq3b.py`, `experiments/cli.py`, DSE-025).** DSE-018 shipped the gate and its two score-blind controls; this is the experiment that uses them. RQ1 and RQ2 detect — this asks whether detection becomes enforcement.
+  - **`rq3b_sweeps`** derives four sweeps from one ungated base, differing *only* in `gate`, and refuses a base that is already gated (one arm's retry budget would otherwise reach all four). It asserts four distinct dataset hashes before returning: `SweepConfig.gate` is inside `dataset_hash_for`, so pooling an arm would not error — it would quietly average the treatment into its own control. The `off` arm keeps `gate=None` rather than `GateConfig(mode="off")`, which behaves identically in the loop but hashes as every ungated dataset to date, so the no-gate arm can reuse an existing RQ1 dataset instead of paying to re-run it.
+  - **`build_gate`** imports the threshold from a persisted `CalibrationReport` and never re-derives it; the statistic is re-fitted on the *calibration* records, not on the arm's own episodes, so the treatment cannot pick the operating point it is about to be judged at. A missing statistic key raises rather than failing open — a gate that cannot score would be recorded as a gated arm while behaving like the ungated one. Only the `active` arm is given a fitted statistic: a control holding one would read, in the artefact, as though it had seen the score it is defined to be blind to.
+  - **`analyse_rq3b`** works at the episode level (the unit the intervention resolves at) and tests gate-active against all three controls on both terminal success and steps — six contrasts as **one** Holm family, because H6 is a single hypothesis and correcting per-outcome would smuggle six tests in as two families of three. Reports bootstrap deltas with intervals and Cliff's delta, never bare significance. Requires all four arms and fails loud on a missing one.
+  - **`verdict` separates a null from an untestable comparison.** "The gate does not beat its score-blind controls" is a reportable finding about the statistic. Terminal success being *constant across every episode of every arm* is not — it means the grid produced no variance to move, which is the live risk after job 232980's 1/96, and is named as a statement about the grid rather than about the gate. Degeneracy is judged on the primary outcome alone: every gated arm re-prompts where the ungated one does not, so the arms' step counts differ on any real grid and a guard keyed on the (success, steps) pair would have let a wholly floored run through as "H6 NOT SUPPORTED". The verdict also names the correction it applied rather than hardcoding Holm.
+  - **The realised firing rate is measured per arm, not assumed.** If `matched_random` does not land within 0.05 of the active gate's, the run logs a warning: the rate-matched control was not matched, and its contrast is weaker evidence than it looks.
+  - `write_rq3b` emits `rq3b.json`, the mode and contrast CSVs, `verdict.md`, and outcome-by-mode CI figures. `--dry-run` prints all four arm hashes and states that the cost is four times the printed grid.
+- **Frozen artefacts for RQ1 job 232980 (`runs/rq1/188a3d556b824e3e/`).** Manifest, summary, a README that states in its own words that this is a C0-only capability grid and not a gradient or gate result, `lineage.csv` (one row per dataset generation, including the three planned D26 arms, so a reader can see which runs are comparable), and the SHA-256 of the raw-data release asset. The 96 Parquet parts stay out of Git and out of LFS.
+
+- **Prompt v9: the pose-dependent clearance and the gap's usable width in every state form (`sim/load.py`, `sim/arena.py`, `sim/serialise.py`, `agents/prompts.py`, D26).** Job 232980 floored at 1/96 with 97.6% of `E` actions issued at poses that could not fit the slit; 99.9% of messages quoted the angle and 6.6% attempted the projection.
+  - **`load.extent_y(angle)`** returns `1.4·|sin θ| + 0.3·|cos θ|` — `BAR_THICK` at 0, `BAR_LEN` at π/2, and neither constant anywhere between. The modal v7 error was substituting `BAR_THICK` for it at a near-vertical pose 4.7× wider than that.
+  - **`arena.usable_gap(slit_width, geometry)`** returns `slit_width − 2·wall_radius`, the aperture the walls actually impose: `build_arena` gives every segment a `wall_radius = 0.05` lip, so the free gap is 0.1 narrower than the declared width. It is the single source of truth — `alignment_tolerance()` now derives from it instead of repeating the subtraction. Verified against the simulator, not on paper: the largest angle a slit-centred bar actually threads is 38.0/17.0/10.0° at 1.20/0.80/0.64, which `extent_y ≤ usable_gap` reproduces exactly and `extent_y ≤ slit_width` over-accepts by 6.5/4.5/4.0° — 15%/21%/29% of the poses that looser rule certifies.
+  - **`serialise.clearance_line`** puts **both** scalars — `slit_clearance` and `load_extent_y` — in **all three** forms: numeric, grid header and NL. Isomorphism is the reason: withholding either from one form would make that form measure trigonometry rather than representation, which is not the axis the serialisation A/B exists for. The NL form named no aperture at all before this, so it could not have performed the comparison the line invites. It states two scalars, not a verdict — the comparison, the rotate-then-translate ordering, the y-alignment and the two-wall repetition remain the agent's inference.
+  - **`serialise.split_grid`** replaces line-counting in the two grid consumers. The grid header was one line (the legend) until v8 made it two, and both `_grid_load_centroid` and the C3 row window silently mis-indexed every raster row when it grew. A raster row is now recognised by its glyph alphabet (`T G # .`), which costs the same and does not need revisiting the next time the header changes.
+  - **C3 windowing re-prepends the legend only.** The numeric whitelist (`load=`, `contact=`) and the NL first-sentence rule both drop the clearance already, so keeping it in the grid header would have left the grid arm under a materially weaker C3 than the other two and confounded the condition contrast with the serialisation axis it is crossed against. The legend is selected **by name**, so a header line added later is dropped from C3 until someone deliberately admits it — the same fail-closed rule the numeric whitelist uses.
+  - `PROMPT_VERSION` v7 → v9, so v7 (`188a3d556b824e3e`) stays intact as the baseline arm rather than being resumed into. v8 named the span beside the *declared* width and never ran; the planned D26 arms re-key to `9f46e0e34fab81cf` / `8902072e1f47b6de` / `9fe1823c20d33c75`.
+- **`--max-steps` on `preceptx-rq1` / `preceptx-pilot` (`experiments/cli.py`).** Broadcasts one budget over the certified per-difficulty `STEP_BUDGETS`. The certificate bounds an *optimal* policy; all 96 episodes of job 232980 saturated their cap and the single success finished at step 28 of 30, so the budget is a live constraint. Omitting the flag keeps the certified budgets — it is not passed as `None`, which would fail the validator instead of falling back to the field's `default_factory`.
+- **`--thinking` on `preceptx-rq1` / `preceptx-pilot`.** Enables the Qwen3 reasoning trace via `chat_template_kwargs` and raises `max_tokens` 512 → 2048; at 512 a trace truncates mid-token and the structured action never arrives.
+
+- **`preceptx-rq3a`, the RQ3a driver (`experiments/rq3a_run.py`, `experiments/cli.py`, DSE-064).** DSE-031 shipped the pilot/RQ1/RQ2 entry points and listed "the gate and RQ3 drivers" as out of scope; the gate driver arrived with DSE-018, and this is the other half. Until now `analyse_rq3a` and the loaders, scorers and audits under it — roughly 1,800 lines — could only be reached from a test.
+  - **`run_rq3a`** loads one per-step corpus, scores every available method on it and builds the manifest in one call. `judge=None` and `with_mast=False` are *supported modes*, not degraded ones: the judge rows are absent and `cpvi_transfer` keeps its row with a reason, so an offline run is a complete artefact rather than a partial one.
+  - **`corpus_digest`** is the log substrate's analogue of `dataset_hash_for`: a sha256 over the loaded records in load order, so it is stable across a re-download or a re-zip and moves the moment an upstream HuggingFace upload is revised. Taken over what the analysis consumes, not over the downloaded bytes.
+  - **`RQ3aManifest`** is a third manifest type on its own version counter, beside `RunManifest` and `SweepManifest`. Neither of those describes a run over real logs — one requires an `ExperimentConfig`, the other a simulation fingerprint — and fabricating either would write invented physics into a manifest, the weakening DSE-041 already rejected when it kept `LogHandoffRecord` separate from `HandoffRecord`. Records corpus identity and counts, both primary and MAST, the encoder revision, the judge identity, the substrate label and `serve_env`.
+  - **`projected_judge_calls`** is the pre-flight cost: one call per trace for all-at-once, `ceil(log2 n)` for binary search, *n* for step-by-step. Each term is pinned by a test to some judge's real worst case, so the bound is neither exceeded nor loose — the all-no judge is the worst case for step-by-step and the *cheap* branch for binary search, and only the all-yes judge exercises the other half.
+  - **The CLI sits between `preceptx-rq1` and `preceptx-rq2`.** It reads a corpus off disk like the latter, but the three judge replications cost model calls, so the endpoint, the Hydra model block and `PRECEPTX_SERVING_SUBSTRATE` are demanded **only under `--judge`**. `--dry-run` prints the corpus counts and the judge's projected cost without constructing a client.
+- **`VLLMJudge`, the open-weight annotator for the three Who&When procedures (`experiments/rq3a_run.py`, DSE-065).** ~60 lines over the existing `LLMClient.structured()`, so the procedures stay in `rq3a.py` and no answer parsing leaks into the analysis.
+  - **Abstention is decoded, never caught.** The schemas offer `{"step": -1}` and `{"answer": "unsure"}` as reachable answers, and an out-of-range index is also an abstention. A `ServingError` is *not* converted: an abstention is a claim about the trace, an outage is not, and recording one as the other would put endpoint downtime into the results table as judge behaviour.
+  - Records `model_name`, `model_revision` and the resolved decoding into `JudgeIdentity`, which already carries the caveat that these are a replication against an open-weight tier and not the published frontier-annotator figures.
+
 - **Plannability and scripted-policy limbs on the feasibility certificate (`sim/feasibility.py`, DSE-060, DSE-063).** A certificate now has to show three things, because run 227886 passed the first and failed the other two invisibly.
   - `assert_plannable` replays a certified path and rejects it if any rotation differs from the free-space quantum by more than 0.5°. The DSE-058 certificates for medium and hard each threaded the channel on a **contact-truncated** rotation (34.68° and 42.49° against a 57.79° free quantum) landing inside the window by arithmetic luck — sound physics, but not a plan an agent could state while being told the quantum is constant.
   - `scripted_policy_solves` runs the obvious plan (rotate onto the nearest passing angle, then push east) from each jittered start and reports the share solved. A\* searches from the *canonical* pose, so a start-pose offset the action set cannot correct is structurally invisible to it — which is how a `y_range` the actuator could not close shipped unnoticed.
@@ -15,6 +44,74 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
   - `replay` and `measure_rotation_step` are the underlying instruments, exported so a diagnosis can use them without re-deriving the physics.
 - **`preceptx-analyse`, the offline half of `preceptx-rq1` (`experiments/cli.py`, DSE-062).** `--no-analysis` runs the episodes and stops; `preceptx-analyse --dataset-hash <h>` runs the analysis later from disk. Job 227886 held an A100 for 2h37m running statsmodels, and the analysis is also the only part that can fail *after* the episodes are paid for. No Hydra model resolution and no serving substrate, matching `preceptx-rq2`.
 - **`arena.alignment_tolerance()`** — how far off the slit centre a flat bar may sit and still clear the narrowest channel, derived from the tightest aperture and the bar thickness rather than authored, so a change to either moves it automatically.
+- **RQ1 job 227886 run evaluation and actuator diagnosis (`docs/rq1_227886_diagnosis.md`).** The
+  post-run analysis of the D23 characterisation sweep (dataset `54ed65e6cc9e7d17`, 480 episodes,
+  11,052 handoffs, Qwen3-14B). Documentation only - no estimator, simulator or config behaviour
+  changes here, and **nothing is applied to job 227886**, which stands as the diagnosed baseline.
+  - **The actuator root cause.** `StepConfig.angular_impulse = 0.5` was sized against the **T-load**
+    (moment 0.2927, ~34 deg/action, as its own comment still states). DSE-057 swapped in the convex
+    bar (moment **0.1708**, **1.71x** lighter to spin), so the same impulse now sweeps a **measured
+    49.1 deg +/- 16.9 deg per action** against threading windows of **90 / 44 / 17 deg** for easy /
+    medium / hard. On medium one action exceeds the whole tolerance window; on hard by 3x.
+    **100% / 69% / 22%** of C0 episodes ever reached a threadable pose. Re-derived targets:
+    `angular_impulse` ~ **0.20** for medium, ~ **0.08** for hard. Not applied.
+  - **The compounding change.** DSE-058's `hold_orientation = True` correctly closed a real
+    degeneracy (up to 114 deg of contact rotation threading the channel with no rotate command) but
+    removed the only source of sub-quantum angular adjustment in the same commit. Confirmed in the
+    data: `E`/`N`/`S`/`W` produce Delta-angle 0.0000 with sd 0.0000.
+  - **C1 is a collapsed policy, not a degraded channel.** `E` on **100%** of all 2,240 C1 handoffs -
+    zero rotations, zero N/S - with **21.7 collisions per episode** against C0's 3.2, and action
+    entropy **0.000** against 2.03-2.19 elsewhere. C1 is simultaneously the **highest** leakage-
+    corrected CPVI (**+0.118**) and the **only** 0/96 arm, so H2's mediator moves opposite to the
+    outcome.
+  - **The RQ1 contrasts are null under D23's declared estimand.** Every C0-Ck corrected CPVI
+    interval straddles zero; the C0-C4 gap is positive in **19/32** seeds (mean +0.027, sd 0.112).
+    On the outcome side only C1's Cliff's delta excludes zero (-0.063 [-0.115, -0.021]).
+  - **The pooled measurement is unaffected and at its strongest.** Leakage-corrected mean CPVI
+    **+0.0895 bits [+0.0753, +0.1036]** against a random-label control of -0.0021 and a permutation
+    null of +0.0034, with a **PVI - CPVI gap of +0.111** (54% of apparent message value is state
+    echo) - ~2x the three prior datasets, now replicated across four runs and two task geometries.
+    Groundedness: **99.98%** of quoted positions within 0.01 units of the true state.
+  - **Listening-target CPVI (new analysis, document only).** Scored within each condition so no
+    probe can read the condition tag, target = the recipient's next macro-action: C0 **+0.435**,
+    C2 **+0.449**, C3 **+0.403**, C4 **+0.462**, C1 **0.000** (single action class, undefined by
+    construction; nulls -0.007 to -0.016). **A gate thresholding the state target ranks the
+    collapsed arm first; one thresholding the recipient's next action ranks it last.**
+  - **Gate calibration on this dataset**, target realised failure, 0.2 budget, out-of-fold under an
+    episode group split: `info` **0.870** AUROC / ECE 0.0035, `fail` **0.870** / 0.0055, `cosine`
+    **0.619** / 0.000, at n = 11,052 (`ece_reliable: true`, a first). Sliced against the D23
+    identity check: `info`/`fail` hold at **0.838** with C1 excluded and 0.66-0.87 within condition,
+    so they read message content rather than the channel tag - **the RQ3b premise holds**. But
+    `cosine` falls to **0.522, chance**, without C1, so the one statistic that exists to answer the
+    circularity objection is the one most dependent on the degenerate arm, and must be reported so.
+  - **RQ2 on this dataset (`runs/54ed65e6cc9e7d17-rq2/`).** The D24 rule, fixed in code before any
+    of this run's output existed, **re-selects the frozen label**: `y_binary_progress` is the
+    recommended RQ3b gate target, chosen on encoder-invariance (0.689 vs 0.585) among the two
+    admissible candidates, with encoder rho above the 0.50 re-freeze flag so no re-freeze is
+    triggered. `y_discrete_config` carries the **highest** corrected CPVI of the four (**+0.153**
+    [+0.132, +0.174]) and `y_terminal_success` is the label anyone would want to gate on, and **both
+    are ruled inadmissible on minority share** (1.4% and 3.6% against the 0.10 floor) - the rule
+    caught this run's floor effect without being told about it.
+  - **H4 as specified is not supported.** Best corrected Spearman against CPVI is **+0.073**
+    [+0.007, +0.133] (`info`); `cosine` is **-0.019** [-0.078, +0.035], indistinguishable from zero.
+    For `info`/`fail` the **null exceeds the real correlation** (0.179 vs 0.106) - the artefact D24
+    built the null to catch. **But `fail` predicts failure at AUROC 0.869**, so the proxy->CPVI link
+    fails while the proxy->outcome link, which is the one RQ3b needs, holds.
+  - **H3 twin agreement.** Pooled Pearson 0.259, Spearman 0.489, Bland-Altman bias +0.029, limits of
+    agreement **[-0.710, +0.769]**, `n_kl_capped = 0`. The limits are +/-0.74 bits on a quantity
+    whose mean is 0.09, so the prospective twin is **not** a per-handoff substitute for CPVI and is
+    not written up as one; it works at the episode level (AUROC 0.832 pooled, 0.887 across cells).
+  - **`InfoStatistic` and `FailStatistic` are rank-identical** (Spearman **-1.000000** on their
+    out-of-fold scores; +/-0.474 against `cosine`). Expected - both are probe-backed on the same
+    embeddings predicting the same binary label - but the gate has **two** independent statistics,
+    not three, and `GateConfig.statistic_key` offers a choice between two of them that does not
+    exist.
+  - **Known-bad artefact flagged.** `_handoff_model`'s `vc={"episode": "0 + C(episode)"}` expands
+    480 episode dummies and does not converge (`|grad|` 4.2-8.3, "MLE may be on the boundary"), so
+    **the H1 p-values in `runs/54ed65e6cc9e7d17-report/rq1.json` are not trustworthy** and are
+    quoted nowhere; the episode-cluster bootstrap carries every interval reported. Two operational
+    notes from the same job: the offline analysis held an A100 for **2h37m** doing CPU-only
+    statistics, and every figure was skipped for a missing `viz` extra in the container.
 - **RQ2 measurement analysis (`experiments/rq2.py`, DSE-022).** The offline H3/H4 analysis over an
   existing RQ1 dataset: twin agreement, proxy tracking, the encoder-sensitivity rescore and the
   four-label comparison. Runs no grid and issues no model call, so it is a pure read of artefacts
@@ -318,6 +415,9 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
     `gate/integration.py`, `gate/controls.py` and `agents/graph.py`. Nothing touches a served model.
 
 ### Changed
+- **`SweepConfig.thinking` makes decode-time reasoning part of dataset identity (`experiments/sweep.py`).** Carried only on `ServingConfig`, which `dataset_hash_for` never reads, the thinking and non-thinking arms of the D26 ablation would have hashed alike and the writer's resume path would have appended both into one directory — the pooling failure `prompt_version` and the simulation digest already exist to prevent. `False` is dropped from the hash payload exactly as `gate=None` is, so no dataset recorded to date re-keys; pinned by a test in both directions.
+- **`scripts/myriad/pilot.sh` drives RQ3a too, rather than gaining a sibling jobscript (DSE-066).** The serve/wait/trap machinery is identical for every driver, so the `DRIVER` switch grew a `preceptx-rq3a` branch instead of a second copy: its `--root` is the **corpus** root (`RQ3A_ROOT`, required), not `RUNS_ROOT`, which would have pointed it at an empty tree, and `--judge` is implied because it is the only part of RQ3a that makes a model call — a GPU job without it would hold an A100 to run sklearn.
+- **`scripts/myriad/prefetch.sh` pulls the RQ3a corpora when `RQ3A_ROOT` is set.** Same reasoning as the weights and the encoder: ~800 MB downloaded inside a GPU job is allocation spent on network I/O, and dead outright if compute nodes have no outbound route. Pulled on the host branch rather than inside the image, because `curl` and `unzip` are login-node tools the image is not required to carry.
 - **The orientation hold now prevents contact rotation instead of reverting it (`sim/actions.py`, DSE-059).** `hold_orientation` restored the pre-action angle *after* the settle, which stops the rotation being **recorded** but not from **happening**: from a 30° start on medium (geometric window ±17.2°) the load rotates itself to 0.48° under contact torque, slips through the channel, and is written back as 30.00°. Two consequences, both live in run 227886 — the DSE-058 degeneracy was hidden rather than closed (medium's realised window was ±32.6°), and the recorded angle was not the angle at which the load passed the gap. Now implemented as an **infinite moment for the duration of a non-rotate action**, which reproduces geometric fit to **0.01°** across seven apertures and is monotone in aperture; restore-after erred by up to 20.03° and was non-monotone. Angle drift over ten pushes is exactly 0.0.
 - **The rotation quantum is authored and the impulse derived from it (`sim/actions.py`, DSE-059).** `ROTATION_STEP_DEG = 12.0` with `angular_impulse` computed through a measured constant (`DEG_PER_UNIT_IMPULSE = 115.582`), reversing the direction that caused the bug: the old default was an impulse authored directly for the T's moment of inertia and silently inherited by a bar of 1.71× smaller moment, turning 34°/action into 57.79°. Free rotation is **exactly deterministic** (sd `0.000000` across 37 start angles at seven impulses), so the constant is exact and any spread in a real run is contact truncation. Sizing is a **lattice** argument, not `step < window`: with half-turn symmetry and bidirectional rotation the reachable set is `θ₀ + m·step (mod 180°)`, which is not monotone in the step — 9.25° leaves hard unreachable where 11.67° reaches it.
 - **`_ANG_RES` is derived from the rotation step and refuses to load above it (`sim/feasibility.py`, DSE-059).** The planner's pose-dedup bucket was a bare 18°, correct against a 57.8° step and silently wrong the moment the step fell below it — a bucket wider than the step collapses consecutive rotations into one search state, so the planner prunes the poses the threading manoeuvre needs.
@@ -328,6 +428,14 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
 - **`ENVIRONMENT_SCHEMA_VERSION` 2 → 3 (`sim/fingerprint.py`).** `hold_orientation` is fingerprinted by *value* and its value did not change — DSE-059 altered what `True` means — so the schema version is what re-keys the dataset. This is exactly the case that field exists for. The module docstring claimed `StepConfig` was not fingerprinted while the code hashed it; corrected.
 - **The prompt states the action quanta (`agents/prompts.py`, `PROMPT_VERSION` → v7, DSE-059).** "about 1.03 units" per push and "exactly 12 degrees" per rotation. Hard tolerates no miscount, so leaving the step implicit would make it a constant-*discovery* task and the capability arm would measure the wrong thing; stating it follows standard practice in embodied spatial-reasoning benchmarks. A unit test asserts the stated numbers against the live actuator.
 - **`InfoStatistic` retired in favour of `FailStatistic` (`gate/statistics.py`, `gate/calibration.py`, DSE-061).** They rank handoffs identically — Spearman **−1.000000**, exactly, since for a binary outcome the entropy of `g_cond` is a symmetric unimodal function of the probability `FailStatistic` reports — so the gate had two statistics rather than three, and a result "holding for both" held once. `FailStatistic` survives as the one monotone in the quantity the gate is calibrated against. The class is **kept, not deleted**, so pre-DSE-061 artefacts still unpickle, and `resolve_statistic_key` maps `"info"` → `"fail"` with a warning so recorded manifests and configs still load.
+- **`docs/experiment_design_log.md` and `docs/methodology.md` §10.5: D25 added.** The first
+  register entry written **after a result was read**, and marked as such throughout. Records the
+  actuator diagnosis, the four correction paths considered and rejected (re-pointing the frozen
+  `Y`; the 32B factorial at full scale; re-tuning `angular_impulse` and re-running *this* grid;
+  repairing rather than demoting the H1 mixed model), and fixes that apply only to a future task
+  generation with a different `dataset_hash`. **No threshold in §5, §6 or §9.10 moves.** The §10.5
+  preamble is amended to admit post-hoc entries as a third and weaker category rather than folding
+  D25 in with D23-D24: what bounds D25 is not blindness but scope.
 - **The task is now the SUCCESSOR convex-bar channel benchmark (DSE-058).** Result-affecting: it
   re-keys every dataset. Adopted after the T-load benchmark was falsified as a rotation-necessity
   manipulation (DSE-057) - it is a declared successor task, **not** a repair of the T arena, and is
@@ -393,6 +501,14 @@ result-affecting changes get an entry; result-affecting changes also re-freeze t
       centroid check to buy nothing.
 
 ### Fixed
+- **The embedding encoder returned different vectors for the same string (`measure/featuriser.py`).** `sentence-transformers` auto-selects a backend; on Apple Silicon that is **MPS**, which encodes one repeated text to *substantively different* vectors depending on which batch it lands in. On `torch 2.10.0` / `sentence-transformers 5.6.0` against the pinned `BAAI/bge-base-en-v1.5@a5beb1e3`, a string repeated 64 times across a 32-wide batch boundary read **min cosine 0.542745** to its own first row, 62 of 64 rows below 0.999; the same call on CPU holds 0.999999999999 (≈1.8e-07 elementwise, ordinary float32 jitter). A 0.46 cosine gap is a different vector, not noise.
+  - **Blast radius is the whole measurement stack, not one experiment.** The same `Featuriser` feeds `e_s`/`e_m` to the CPVI estimator, the retrospective/prospective twin, `CosineStatistic`, the gate calibration and the G2 pilot gate. Any of those computed from a local analysis on an Apple-Silicon machine is unreliable.
+  - **How it surfaced.** A gratuitous re-run of an identical RQ3a command moved a headline number (TraceElephant `mean_cosine` step accuracy 0.093220 → 0.101695). `embed_texts` caches by content hash and writes one vector per unique text, so a *cold* run sees up to 316 different vectors for TraceElephant's most-repeated message while every *warm* run sees the single cached one. Nothing crashed and no status flipped.
+  - **Fix, part one:** `EncoderConfig.device`, defaulting to `"cpu"` and passed explicitly to `SentenceTransformer`. A regression test encodes one string across two batch widths and asserts min cosine above `1 - 1e-6` — above CPU's float floor, far below the MPS failure — so it separates jitter from a wrong vector without pinning a float.
+  - **Fix, part two: `embed_texts` deduplicates before encoding and fans back out.** Pinning the device left the cold-versus-warm asymmetry itself in place, with a second and much smaller cause that only became visible once the first was gone: two warm runs agreed bit-for-bit while cold-versus-warm still moved MRR in the fourth decimal (0.254741 → 0.254975). CPU's own 1.8e-07 batch jitter reorders near-ties, because a cold run encodes a repeated string once *per occurrence* — each in a different batch slot — while the cache stores one vector for it. Encoding each unique text once makes cold and warm identical by construction on any backend, and is markedly cheaper (TraceElephant: 2,488 message slots → 1,166 encodes).
+  - **A latent misalignment closed in the same function.** The old `[v for v in vectors if v is not None]` would have returned *fewer rows than inputs* had any slot gone unfilled, silently shifting every downstream `e_s`/`e_m` pairing. The result is now indexed by text, so alignment holds by construction.
+  - **Not covered either way: CUDA.** Job 227886's analysis ran on an A100 on Myriad, a different kernel path. The cluster results are neither implicated nor cleared; the check has not been run there.
+  - The local `.embed_cache` (50,975 vectors, a mix of poisoned and correct) is purged, and both RQ3a runs redone.
 - **A calibrated gate could name a statistic that no longer exists.** `GateConfig.statistic_key` now resolves retired keys through a validator rather than failing at construction, so configs recorded before DSE-061 load unchanged.
 - **The runtime-gate arm now keys its own dataset (`experiments/sweep.py`, `experiments/runner.py`).**
   Found while wiring DSE-018 and DSE-022 onto one branch; it would have surfaced as a wrong RQ3b
