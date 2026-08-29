@@ -1,0 +1,74 @@
+{
+  "target": "realised_failure",
+  "dataset_hash": "8902072e1f47b6de",
+  "provenance": {
+    "encoder_name": "BAAI/bge-base-en-v1.5",
+    "encoder_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "second_encoder": "sentence-transformers/all-mpnet-base-v2",
+    "second_encoder_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+    "probe": {
+      "probe": "logistic",
+      "variance_model": "homoscedastic",
+      "c": 1.0,
+      "max_iter": 1000,
+      "n_splits": 5,
+      "n_repeats": 1,
+      "mlp_hidden": 64,
+      "seed": 0
+    },
+    "git_sha": "fc20275351b1fa04bb155c90ce3ec12f12a3159f",
+    "timestamp": "2026-08-29T13:44:07.296623+00:00"
+  },
+  "n": 1013,
+  "n_bins": 10,
+  "ece_reliable": true,
+  "statistics": [
+    {
+      "key": "fail",
+      "threshold": 0.7426546450921462,
+      "orientation": 1.0,
+      "firing_rate": 0.20039486673247778,
+      "auroc": 0.5926928343222272,
+      "ece": 0.0370256373079211,
+      "n_classes": 2,
+      "reliability": [
+        {
+          "p_mean": 0.4518818739716744,
+          "y_rate": 0.875,
+          "count": 8
+        },
+        {
+          "p_mean": 0.561324094395132,
+          "y_rate": 0.20754716981132076,
+          "count": 53
+        },
+        {
+          "p_mean": 0.6652432702738686,
+          "y_rate": 0.6734177215189874,
+          "count": 395
+        },
+        {
+          "p_mean": 0.7250575577380007,
+          "y_rate": 0.7468581687612208,
+          "count": 557
+        }
+      ]
+    },
+    {
+      "key": "cosine",
+      "threshold": 0.8369113113349155,
+      "orientation": 1.0,
+      "firing_rate": 0.20039486673247778,
+      "auroc": 0.5036193518941123,
+      "ece": 2.6995705857402186e-6,
+      "n_classes": 1,
+      "reliability": [
+        {
+          "p_mean": 0.6910140822655446,
+          "y_rate": 0.6910167818361304,
+          "count": 1013
+        }
+      ]
+    }
+  ]
+}

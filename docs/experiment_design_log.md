@@ -15,7 +15,164 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
-## 2026-08-29 (latest) — G1 declared against a pilot that moved the failure, and the thinking arm that could never have run
+## 2026-08-29 (latest) — RQ3a's headline method finally reported, and the refit arm reclassified from unrun to undefined
+
+- **Area:** the RQ3a external-validity design (§9.8) — which methods the H5 comparison actually
+  contains, what defines the refit regime's outcome, and what the published baselines are as of
+  today. Also the arena→logs seam: nothing in the repo persisted a calibrated statistic.
+- **Status:** transfer arm **reported and frozen** on both corpora; refit arm **undefined pending
+  replay**, with counts; baselines **re-anchored** and verified against primary sources.
+
+**Trigger.** RQ3a's frozen result (28 Aug) tabulated seven methods and carried numbers for two:
+`schema_validity` and `mean_cosine`. Both CPVI regimes — the methods H5 is *about* — read
+`unavailable`, and the judge replications had never run. The external-validity track, which the
+fallback ladder designates as able to carry the dissertation alone, was reporting only its controls.
+
+**Finding 1 — the transfer arm was blocked on an artefact nothing wrote.** `transfer_scores` needs a
+persisted `Statistic` and the orientation its calibration measured. `save_statistic` and
+`write_report` had shipped in DSE-017/DSE-018 and were called nowhere outside a unit test; no
+calibration existed on disk. `RQ3aConfig.transfer_key` additionally defaulted to `"s_info"` — the
+paper's notation, not a `Statistic.key`, and pointing at a statistic DSE-061 had retired. It could
+never have loaded. Neither fault was visible because `transfer_dir` was always `None`, so the arm
+short-circuited before either mattered. This is the same reachability failure as D27's unreachable
+RQ3a driver and the illusory `statistic_key`: **code that exists, is tested, and is not reachable
+from any entry point.** Third instance; it is now worth auditing for deliberately.
+
+**Finding 2 — the refit arm's stated fallback is degenerate, and this was measurable.** DSE-042
+provides that "trace-success (the cheap label) is computed for every trace regardless, so the refit
+arm has a fallback if replay is cut". Counted on 29 Aug:
+
+| corpus | traces | failed | succeeded | unlabelled |
+|---|---|---|---|---|
+| TraceElephant | 220 | 44 | **0** | 176 |
+| Who&When | 184 | 184 | **0** | 0 |
+
+Only TraceElephant's 44 SWE-bench traces carry a `tests_status`, and all 44 failed. The other 176
+carry a `ground_truth`, but the corpus ships each trace **truncated at the mistake step** — the
+final step's completion is a `tool_calls` continuation, not an answer — so ground-truth matching
+cannot recover an outcome. D22 established the corpus is failure-only; this establishes the stronger
+consequence: **no annotation-free outcome can be constructed from the shipped data at all**, so
+counterfactual replay is not the preferred route to the refit arm, it is the only one. The reason
+string said "DSE-042 has not been run on them", which reads as pending and understated this.
+
+**Finding 3 — the baselines had moved twice more.** Verified against each paper's own abstract or
+results table (`docs/rq3a_baselines.md`). AgenTracer's margin is "up to 18.18% over Gemini-2.5-Pro
+and Claude-4-Sonnet", not the "roughly 18% relative" the review carried. Who&When Pro (Jul 2026)
+reports **73.9%** step accuracy — but on 12,326 trajectories whose failures were *injected after
+replaying a successful prefix*, so the decisive step is placed by construction. The same
+all-at-once protocol scores 14.2% on Who&When and 73.9% on Who&When Pro — but on different models
+fourteen months apart, and the later paper reports no original-Who&When row to match them on, so
+this is *suggestive* of a substrate effect rather than a controlled demonstration of one. What makes
+model capability an implausible sole explanation is that generic frontier models were still below
+10% on Who&When step attribution in September 2025.
+AgentForesight (May 2026) had already been treated in §7; what had not been stated is that
+prospectivity *alone* is no longer a novelty claim.
+
+**Impact.** Without the transfer arm, H5 was answerable only in the negative, and the fallback track
+could not have carried the dissertation. Without the census, the write-up would have described a
+pending run rather than a corpus property. Without the re-anchoring, the thesis would have been
+measured against a floor beaten three times inside fifteen months.
+
+**Risk reduced.** (a) The external-validity fallback now produces a result on its primary substrate
+independent of the Myriad queue and of G1. (b) The refit arm's absence is now a *stated corpus
+finding* rather than an unexplained gap in a table. (c) The baselines cannot be challenged in the
+viva as superseded, and the contribution no longer rests on an axis a 2026 paper has occupied.
+
+**Correction paths considered and rejected.** *Fitting the refit probe on the corpus annotation* —
+rejected: the annotation is what localisation is scored against, so fitting on it is the exact
+circularity this design exists to avoid. *Treating the 176 unlabelled traces as successes* —
+rejected: it invents the class the arm is short of, which is the same error in the opposite
+direction. *Waiting for the G1 confirmation before calibrating* — rejected: the plan is unchanged by
+either gate outcome (below), so waiting bought nothing and cost the whole queue window.
+
+**The fix.** `preceptx-calibrate` fits and persists the statistics (`fit_statistics` on the whole
+set, distinct from `calibrate`'s discarded cross-fit folds, which supply the honest held-out
+diagnostics). `preceptx-rq3a --transfer <dir>` wires the arm and **reads the orientation from the
+report rather than accepting it as a flag** — a hand-entered sign would silently invert every number
+in the table. The threshold is deliberately *not* transferred: it is an operating point on the
+arena's score distribution, and the log corpora are a different distribution, so every metric stays
+rank-based and the arm makes no pass/fail claim. `OutcomeCensus` records the counts above in the
+result and the manifest. The baselines table is `docs/rq3a_baselines.md`.
+
+**Result of the fix.** Statistic `fail`, calibrated on the v9 A2 pilot (`8902072e1f47b6de`, n=1013
+handoffs over 24 episodes, held-out AUROC 0.593 with an episode-cluster 95% CI of [0.444, 0.737],
+orientation +1), transferred unchanged:
+
+| corpus | method | agent acc. | step acc. | MRR | model calls |
+|---|---|---|---|---|---|
+| TraceElephant (118 eval.) | schema validity | 0.263 | 0.017 | 0.244 | 0 |
+| | mean cosine | 0.254 | 0.093 | 0.255 | 0 |
+| | **cpvi_transfer** | **0.576 [0.492, 0.661]** | **0.169 [0.110, 0.246]** | **0.376** | **0** |
+| Who&When (150 eval.) | schema validity | 0.327 | 0.007 | 0.225 | 0 |
+| | **mean cosine** | 0.367 | **0.273** | **0.448** | 0 |
+| | cpvi_transfer | 0.367 | 0.180 | 0.381 | 0 |
+
+**The split between the two corpora is the finding, not a mixed result.** On TraceElephant the
+transferred statistic beats both baselines on every metric with non-overlapping intervals on agent
+accuracy. On Who&When it does not beat mean cosine. Who&When records agent *outputs* only, so its
+observations are **reconstructed** from preceding messages — a statistic that conditions on the
+observation has degraded conditioning to work with, while a statistic that only compares message to
+observation (cosine) is unaffected by the same degradation. D14 moved the substrate to TraceElephant
+on exactly this observability argument, made a priori; it now has a measurement behind it. The
+`reconstructed_observation` flag that DSE-041 required on every Who&When row is what makes the two
+rows safe to read side by side.
+
+**The Who&When tie is an aggregation coincidence, not a rank identity.** Both `mean_cosine` and
+`cpvi_transfer` score 0.367 agent accuracy there — the same 55 of 150 — which after DSE-061 retired
+`InfoStatistic` for being rank-identical to `FailStatistic` is a pattern worth checking rather than
+assuming. It is not one. The two methods share only **17** of those 55 traces; each is right on 38
+the other is wrong on, and their within-trace Spearman correlation is 0.03. On TraceElephant they
+are *anti*-correlated (within-trace ρ = −0.24, median −0.50), and the transfer arm's 68 agent hits
+overlap the cosine baseline's 30 on only 10. So the transferred statistic is not a dressed-up
+cosine: on the primary corpus it ranks against cosine and wins, and on Who&When the two are close to
+orthogonal and happen to land on the same total. Post-hoc diagnostic on the frozen scores — it
+changes no reported metric — computed as the Spearman correlation of the two methods' risk columns
+within each trace, plus the overlap of their agent-accuracy hit sets.
+
+**Why Who&When reports 182 traces against a 184-trace corpus.** Two traces
+(`Algorithm-Generated/0bb3b44a…`, `Algorithm-Generated/71345b0a…`) run a single expert end to end and
+contain no inter-agent handoff, so `handoffs_only` drops them before scoring. A boundary measure has
+nothing to measure where there is no boundary; the manifest carries both counts (`counts.traces`
+184, `metrics.rq3a.n_traces` 182) and they are now reconcilable from this note. Within the scored
+set the accounting is closed in the artefact itself: `LocalisationMetrics` gained
+`n_traces_not_evaluable`, so `scored = evaluated + off_boundary + not_evaluable` holds on every row
+— on TraceElephant 220 = 118 + 100 + 2, the two being traces that carry no decisive-step annotation.
+
+**What this does not yet claim.** The published 53.5% / 14.2% figures come from LLM-judge
+procedures, and that arm has not run (`judge` and `agreement` are still `null`). No comparison to
+the published methods is stated until it does. DSE-024 stays open on that basis.
+
+**And the transferred statistic is not established as better than chance at home.** Its held-out
+AUROC of 0.593 carries an episode-cluster 95% CI of [0.444, 0.737] over the pilot's 24 episodes
+(2,000 resamples of episodes, the same clustering `calibrate` cross-fits on), so "weak but real"
+overstates it: the interval straddles 0.5, and 10.8% of resamples land at or below it. That is a
+statement about the *pilot*, not about the transfer arm, and the two are different estimands —
+ranking a handful of handoffs within one trace against an annotation is a materially easier problem
+than predicting prospective episode failure from a single handoff, and the transfer result is
+measured with its own intervals on its own substrate. It is nonetheless the honest caveat on the
+statistic being transferred: it was calibrated on 24 episodes, and the orientation `+1` that the
+transfer arm multiplies by is chosen by the sign of that same underpowered AUROC. Re-keying to the
+G1 confirmation (60 episodes, unseen seeds) is what tightens it, and it is one CLI re-run.
+
+**So what.**
+1. **The fallback track has a positive result.** RQ3a can now report that a statistic fitted on a
+   physics simulator and applied *unchanged* to real multi-agent traces localises the responsible
+   agent at 57.6% where the surface baselines reach 26%, at zero model calls. Probe transfer across
+   substrates had no established result in the V-information literature; §9.8 framed a null there as
+   the reportable outcome. It is not a null.
+2. **The plan was invariant to G1, and that is its strongest property.** Calibration fits on
+   handoffs; G1 counts episode successes against a threshold. Neither reads the other, so the
+   confirmation dataset can serve both, and if G1 *fails*, the A2-calibrated statistic is what is
+   kept anyway — this branch stops being the external-validity track and becomes the headline one.
+3. **A corpus with a non-failure class now exists.** Long-Horizon Agent Trajectory Attribution (Aug
+   2026, 1,300+ trajectories, 30.3% task-aligned) is the first tabulated corpus that is not
+   failure-only. It is a live correction path for the refit arm that does not require building a
+   replay harness, and is recorded here rather than acted on: changing substrate again is a design
+   decision, not a fix.
+
+---
+
+## 2026-08-29 — G1 declared against a pilot that moved the failure, and the thinking arm that could never have run
 
 - **Area:** the G1 capability gate (thresholds, seed allocation and consequence map), the RQ1
   confirmation design, the `<think>` contract in `serving/client.py`, and two single-condition

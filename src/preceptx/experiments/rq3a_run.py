@@ -59,7 +59,9 @@ from preceptx.serving.client import ChatMessage, LLMClient
 
 logger = logging.getLogger(__name__)
 
-RQ3A_MANIFEST_VERSION = 1
+# 2 (DSE-024): the transfer regime went live, so the manifest records which arena dataset
+# trained the statistic that was applied here. A v1 artefact predates the transfer arm.
+RQ3A_MANIFEST_VERSION = 2
 """Bump on any breaking change to :class:`RQ3aManifest`.
 
 On its own counter, independent of ``MANIFEST_VERSION`` and ``SWEEP_MANIFEST_VERSION``: the log
@@ -256,6 +258,10 @@ class RQ3aManifest(BaseModel):
     # the revision is lifted out here so the manifest alone answers "which encoder produced this".
     encoder_revision: str
     cfg: RQ3aConfig
+    # Which arena dataset trained the transferred statistic. `cfg` records the directory and key;
+    # this records the substrate, so the manifest alone answers "transferred from what?" without
+    # resolving a path that may not outlive the run.
+    transfer_train_dataset_hash: str | None = None
     # Judge identity, absent on a no-judge run. `serving_substrate` is demanded of any run that
     # makes model calls, for the reason DSE-031 gives: local-pilot and Myriad data must stay
     # permanently distinguishable, and an unlabelled artefact cannot be told apart after the fact.
@@ -281,6 +287,7 @@ def build_rq3a_manifest(
     command: list[str],
     mast_digest: str | None = None,
     mast_counts: CorpusCounts | None = None,
+    transfer_train_dataset_hash: str | None = None,
     artefact_paths: dict[str, str] | None = None,
 ) -> RQ3aManifest:
     """Assemble the manifest from the finished result plus the live environment."""
@@ -296,6 +303,7 @@ def build_rq3a_manifest(
         mast_counts=mast_counts,
         encoder_revision=result.provenance.encoder_revision,
         cfg=cfg,
+        transfer_train_dataset_hash=transfer_train_dataset_hash,
         judge_model=None if judge is None else judge.model_name,
         judge_revision=None if judge is None else judge.model_revision,
         judge_decoding=None if judge is None else judge.decoding,
@@ -332,6 +340,7 @@ def run_rq3a(
     judge: JudgeBackend | None = None,
     with_mast: bool = True,
     command: list[str] | None = None,
+    transfer_train_dataset_hash: str | None = None,
 ) -> RQ3aRun:
     """Load one corpus, score every available method on it, and build the manifest.
 
@@ -364,6 +373,7 @@ def run_rq3a(
             command=command or [],
             mast_digest=None if mast_records is None else corpus_digest(mast_records),
             mast_counts=None if mast_records is None else count_trace_corpus(mast_records),
+            transfer_train_dataset_hash=transfer_train_dataset_hash,
             artefact_paths={"rq3a": "rq3a.json", "table": "rq3a_localisation.csv"},
         ),
     )

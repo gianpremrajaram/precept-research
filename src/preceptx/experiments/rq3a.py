@@ -49,7 +49,7 @@ from sklearn.metrics import cohen_kappa_score
 from preceptx.analysis.stats import AnalysisProvenance, bootstrap_ci, build_provenance
 from preceptx.config import ConfigError
 from preceptx.data.logs import LogHandoffRecord, LogTraceRecord
-from preceptx.gate.statistics import GateError, load_statistic
+from preceptx.gate.statistics import GateError, load_statistic, resolve_statistic_key
 from preceptx.measure.featuriser import Featuriser
 from preceptx.measure.pvi_cpvi import ProbeConfig, cpvi, pvi
 
@@ -181,6 +181,76 @@ def trace_targets(records: Sequence[LogHandoffRecord]) -> dict[str, TraceTarget]
             decisive_agent=str(agent) if isinstance(agent, str) and agent.strip() else None,
         )
     return out
+
+
+# --------------------------------------------------------------------------------------------
+# The refit regime's outcome, and the census that says whether one exists
+# --------------------------------------------------------------------------------------------
+
+
+class OutcomeCensus(BaseModel):
+    """What annotation-free outcome the corpus actually supplies for the refit regime.
+
+    DSE-042 provides for the refit arm to fall back on the cheap trace-level outcome if
+    counterfactual replay is cut. Whether that fallback is *available* is an empirical property of
+    the corpus, not a design choice, so it is counted and recorded rather than assumed. ``usable``
+    is false whenever the labels are absent or single-class - either way there is nothing for a
+    probe to separate, and the difference between "not run yet" and "cannot be run" matters.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str
+    traces_failed: int
+    traces_succeeded: int
+    traces_unlabelled: int
+    steps_labelled: int
+    usable: bool
+    reason: str
+
+
+def trace_outcome_labels(records: Sequence[LogHandoffRecord]) -> dict[tuple[str, int], bool]:
+    """Broadcast each trace's annotation-free outcome onto its steps (DSE-042's cheap fallback).
+
+    ``trace_failed is None`` contributes no label: the corpus records no harness outcome for that
+    trace, and defaulting it either way would invent the class the refit arm is short of.
+    """
+    return {
+        (r.trace_id, r.step): bool(r.trace_failed) for r in records if r.trace_failed is not None
+    }
+
+
+def outcome_census(records: Sequence[LogHandoffRecord], *, source: str) -> OutcomeCensus:
+    """Count the refit regime's available outcome classes, and say why a refit can or cannot run."""
+    per_trace = {r.trace_id: r.trace_failed for r in records}
+    failed = sum(1 for v in per_trace.values() if v is True)
+    succeeded = sum(1 for v in per_trace.values() if v is False)
+    labelled = sum(1 for r in records if r.trace_failed is not None)
+    if failed and succeeded:
+        return OutcomeCensus(
+            source=source,
+            traces_failed=failed,
+            traces_succeeded=succeeded,
+            traces_unlabelled=len(per_trace) - failed - succeeded,
+            steps_labelled=labelled,
+            usable=True,
+            reason="",
+        )
+    present = "failures" if failed else "non-failures" if succeeded else "no labelled traces"
+    return OutcomeCensus(
+        source=source,
+        traces_failed=failed,
+        traces_succeeded=succeeded,
+        traces_unlabelled=len(per_trace) - failed - succeeded,
+        steps_labelled=labelled,
+        usable=False,
+        reason=(
+            f"the corpus supplies {present} only ({failed} failed, {succeeded} succeeded, "
+            f"{len(per_trace) - failed - succeeded} unlabelled of {len(per_trace)} traces), so the "
+            "trace-level fallback is single-class and only counterfactual replay (DSE-042) can "
+            "define an outcome here"
+        ),
+    )
 
 
 # --------------------------------------------------------------------------------------------
@@ -414,6 +484,11 @@ def transfer_scores(
     against realised outcomes (``oriented = orientation * raw``, higher = more failure-risk). It is
     required rather than defaulted: getting the sign wrong silently inverts every localisation
     number, so an absent orientation is ``unavailable``, not an assumption.
+
+    The calibrated *threshold* is deliberately not transferred, only the orientation. A threshold is
+    an operating point on the arena's score distribution; these corpora are free-text traces from a
+    different distribution, so the cut-point does not carry even where the ordering does. Every
+    metric downstream is rank-based for that reason, and this arm makes no pass/fail claim.
     """
     method = "cpvi_transfer"
     if dir is None:
@@ -429,7 +504,7 @@ def transfer_scores(
             reason="statistic present but no calibrated orientation; refusing to guess the sign",
         )
     try:
-        stat = load_statistic(key, dir=dir)
+        stat = load_statistic(resolve_statistic_key(key), dir=dir)
     except GateError as exc:
         return MethodScores(method=method, status="unavailable", reason=str(exc))
     e_s = featuriser.embed_texts([s.observation for s in steps])
@@ -449,13 +524,18 @@ def refit_scores(
     featuriser: Featuriser,
     labels: Mapping[tuple[str, int], bool],
     cfg: ProbeConfig,
+    *,
+    label_source: str = "replay",
 ) -> MethodScores:
     """Refit probes on the logs themselves, cross-fit by trace (the refit regime).
 
-    ``labels`` is the per-step outcome from the counterfactual replay labeller (DSE-042), keyed
-    ``(trace_id, step)``. It is *not* the corpus annotation: fitting on the annotation and then
-    scoring localisation against it is the circularity this whole design avoids. Risk is the
-    negated CPVI - a step whose message carries little conditional information is the suspect one.
+    ``labels`` is the per-step outcome, keyed ``(trace_id, step)`` - from the counterfactual replay
+    labeller (DSE-042) or, where replay has not run, from DSE-042's cheap trace-level fallback.
+    ``label_source`` names which, because "no labels" and "labels that cannot separate" are
+    different findings and a reason string that conflates them misreports the corpus. Either way it
+    is *not* the corpus annotation: fitting on the annotation and then scoring localisation against
+    it is the circularity this whole design avoids. Risk is the negated CPVI - a step whose message
+    carries little conditional information is the suspect one.
 
     Both single-class labels and a single trace return ``not_applicable``: an all-failure corpus
     (Who&When is 184/184) has nothing for a probe to separate, and one trace cannot be held out.
@@ -466,7 +546,7 @@ def refit_scores(
         return MethodScores(
             method=method,
             status="unavailable",
-            reason="no replay outcome labels for these steps (DSE-042 has not been run on them)",
+            reason=f"no {label_source} outcome labels for these steps",
         )
     y = np.array([int(labels[(s.trace_id, s.step)]) for s in labelled], dtype=int)
     trace_ids = np.array([s.trace_id for s in labelled])
@@ -475,7 +555,10 @@ def refit_scores(
         return MethodScores(
             method=method,
             status="not_applicable",
-            reason=f"replay labels are single-class ({int(y[0])}) on this corpus; nothing to fit",
+            reason=(
+                f"{label_source} labels are single-class ({int(y[0])}) on this corpus; "
+                "nothing to fit"
+            ),
         )
     if len(np.unique(groups)) < 2:
         return MethodScores(
@@ -495,7 +578,7 @@ def refit_scores(
         reason=(
             None
             if len(labelled) == len(steps)
-            else f"scored the {len(labelled)} of {len(steps)} steps carrying a replay label"
+            else f"scored the {len(labelled)} of {len(steps)} steps carrying a {label_source} label"
         ),
     )
 
@@ -530,6 +613,10 @@ class LocalisationMetrics(BaseModel):
     n_traces_scored: int = 0
     n_traces_evaluated: int = 0  # traces whose annotated step is inside the scored set
     n_traces_target_off_boundary: int = 0  # annotated step exists but was not scored
+    # In the scored set but not evaluable: no decisive-step annotation, or the method skipped it.
+    # Present so scored = evaluated + off_boundary + not_evaluable closes; a residual bucket with no
+    # counter is what forced the "220 - 118 - 100 = 2 unexplained" reading of the first freeze.
+    n_traces_not_evaluable: int = 0
     n_abstained: int = 0
     model_calls: int = 0
     top_k: int = 0
@@ -575,16 +662,19 @@ def evaluate(
     hit_topk: list[float] = []
     recip: list[float] = []
     off_boundary = 0
+    not_evaluable = 0
     for trace_id, trace in grouped.items():
         target = targets.get(trace_id)
         if target is None or target.decisive_step is None:
+            not_evaluable += 1
             continue
         positions = {s.step: i for i, s in enumerate(trace)}
         if target.decisive_step not in positions:
             off_boundary += 1
             continue
         if any((s.trace_id, s.step) not in risk for s in trace):
-            continue  # the method did not score this trace at all
+            not_evaluable += 1  # the method did not score this trace at all
+            continue
         ranks = _ranks(np.array([risk[(s.trace_id, s.step)] for s in trace], dtype=np.float64))
         rank = float(ranks[positions[target.decisive_step]])
         hit_step.append(float(rank == 1.0))
@@ -600,6 +690,7 @@ def evaluate(
             reason="no trace carries an annotated decisive step inside the scored steps",
             n_traces_scored=len({s.trace_id for s in scores.scores}),
             n_traces_target_off_boundary=off_boundary,
+            n_traces_not_evaluable=not_evaluable,
             n_abstained=scores.n_abstained,
             model_calls=scores.model_calls,
             top_k=top_k,
@@ -622,6 +713,7 @@ def evaluate(
         n_traces_scored=len({s.trace_id for s in scores.scores}),
         n_traces_evaluated=len(hit_step),
         n_traces_target_off_boundary=off_boundary,
+        n_traces_not_evaluable=not_evaluable,
         n_abstained=scores.n_abstained,
         model_calls=scores.model_calls,
         top_k=top_k,
@@ -792,7 +884,9 @@ class RQ3aConfig(BaseModel):
     audit_sample: int = Field(default=30, ge=1)
     audit_seed: int = Field(default=0, ge=0)
     # Transfer regime inputs; absent means the regime reports "unavailable" rather than guessing.
-    transfer_key: str = "s_info"
+    # The key is a `Statistic.key` ("fail"/"cosine"), not the paper's s_* notation; it defaulted to
+    # "s_info" until DSE-024, which no `load_statistic` could ever have resolved.
+    transfer_key: str = "fail"
     transfer_dir: Path | None = None
     transfer_orientation: float | None = None
 
@@ -809,6 +903,7 @@ class RQ3aResult(BaseModel):
     tie_policy: str = TIE_POLICY
     provenance: AnalysisProvenance
     methods: list[LocalisationMetrics]
+    outcomes: OutcomeCensus
     judge: JudgeIdentity | None = None
     mast: MastCategoryResult | None = None
     agreement: AgreementAudit | None = None
@@ -826,9 +921,13 @@ def analyse_rq3a(
     """Score every method on one corpus and evaluate them against its annotations.
 
     ``judge`` absent skips the three published-method replications (they are the only methods that
-    cost model calls); ``labels`` absent leaves the refit regime ``unavailable``; ``mast_traces``
-    absent omits the trace-level arm. Each omission is visible in the result rather than silently
-    changing what the table compares.
+    cost model calls); ``mast_traces`` absent omits the trace-level arm. Each omission is visible in
+    the result rather than silently changing what the table compares.
+
+    ``labels`` absent does *not* leave the refit regime unavailable by default: it falls back to the
+    corpus's own trace-level outcome, which is what DSE-042 provides for when replay is cut. The
+    census on the result then records whether that fallback had two classes to separate, so an
+    unavailable refit row carries the measured reason instead of an assumed one.
     """
     cfg = cfg or RQ3aConfig()
     if not records:
@@ -837,6 +936,9 @@ def analyse_rq3a(
     if not steps:
         raise RQ3aError("no steps to score: the corpus has no inter-agent handoffs")
     targets = trace_targets(records)
+    label_source = "replay" if labels is not None else "trace-outcome"
+    refit_labels = labels if labels is not None else trace_outcome_labels(records)
+    census = outcome_census(records, source=label_source)
 
     produced = [
         schema_validity_scores(steps),
@@ -848,7 +950,7 @@ def analyse_rq3a(
             dir=cfg.transfer_dir,
             orientation=cfg.transfer_orientation,
         ),
-        refit_scores(steps, featuriser, labels or {}, cfg.probe),
+        refit_scores(steps, featuriser, refit_labels, cfg.probe, label_source=label_source),
     ]
     judge_scores: MethodScores | None = None
     if judge is not None:
@@ -868,6 +970,7 @@ def analyse_rq3a(
         handoffs_only=cfg.handoffs_only,
         provenance=build_provenance(featuriser.cfg, cfg.probe),
         methods=methods,
+        outcomes=census,
         judge=None
         if judge is None
         else JudgeIdentity(
@@ -918,6 +1021,7 @@ def manifest_metrics(result: RQ3aResult) -> dict[str, object]:
             "unavailable": {
                 m.method: m.reason for m in result.methods if m.status != "ok" and m.reason
             },
+            "outcomes": result.outcomes.model_dump(mode="json"),
             "agreement": None
             if result.agreement is None
             else result.agreement.model_dump(mode="json"),

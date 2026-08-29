@@ -349,7 +349,7 @@ requested. Cluster data is therefore never poolable with `local-lmstudio` pilot 
 which is the point, since the local 4-bit G1 reading is indicative only and the **verdict of record
 is the bf16 re-gate run here**.
 
-## 9. Submissions in flight — the G1 confirmation and the thinking probe
+## 9. Submissions in flight — the G1 confirmation, the thinking probe, the RQ3a judge
 
 The D26 ablation is **done**. A1 (`9f46e0e34fab81cf`) and A2 (`8902072e1f47b6de`) completed on
 29 Aug; A3 (`9fe1823c20d33c75`) crashed pre-episode on the `<think>` contract bug and wrote no
@@ -388,8 +388,12 @@ qsub -N precept-g1-confirm -l h_rt=4:00:00 -v DRIVER=preceptx-rq1 scripts/myriad
    the git SHA plus a dirty bit; a run launched from uncommitted work writes unreachable provenance
    into the artefact that *defines the gate*. Push, check the SHA out on the cluster, then submit.
 2. **Actually compare the dry-run hash** against `86ecbbdf35322dc3` as declared in `lineage.csv`.
-   Pinning an expected hash only works if someone diffs it. While you are there, note the hash
-   lattice is itself evidence the fingerprint covers the right fields: v7↔A1 differ (serialiser),
+   Pinning an expected hash only works if someone diffs it. **Done at `dc70c54`** — the dry-run
+   still prints `86ecbbdf35322dc3` / sweep `2e201daa64f6c4ac`, so PR #74's provenance hardening did
+   not re-key the gate. (The D26 arms *did* re-key between planning and submission, all three of
+   them, because 5d0b901 moved the prompt from v8 to v9; that is recorded per-row in `lineage.csv`.)
+   While you are there, note the hash lattice is itself evidence the fingerprint covers the right
+   fields: v7↔A1 differ (serialiser),
    A1↔A2 differ (`max_steps`), A2↔A3 differ (`thinking`), A2↔confirmation differ (seeds) — four
    deliberate re-keys, each matching exactly one intended change and nothing else.
 3. **One job, one reservation.** With a 12.5% rerun-instability rate, splitting the confirmation
@@ -430,6 +434,52 @@ qsub -N precept-a3-v9-thinking -l h_rt=6:00:00 -v DRIVER=preceptx-rq1 scripts/my
 Submit this **after** the confirmation reads out, not alongside it: the gate is the priority call on
 the queue, and a thinking trace is several times the tokens of a non-thinking turn, so budget
 roughly four times A2's episode time. The 6h request is sized for that, not for the grid.
+
+### 9c. The RQ3a judge replication — the last unrun arm of the H5 comparison
+
+The RQ3a offline arms are **done and frozen** (`runs/rq3a/traceelephant/`, `runs/rq3a/who_and_when/`)
+— schema validity, mean cosine, the transferred CPVI statistic and the MAST secondary all cost zero
+model calls and ran on a laptop. What is left is the only part that needs a GPU: re-implementing the
+three published Who&When procedures (all-at-once, binary search, step-by-step) against the served
+tier, plus the human-agreement audit that reads off them. Until it runs, `judge` and `agreement` are
+`null` in both results and **no comparison to the published 53.5% / 14.2% is stated**, because those
+figures come from LLM-judge procedures and nothing in the current table is one.
+
+`pilot.sh` already routes `DRIVER=preceptx-rq3a` and implies `--judge`; flags after the script name
+reach the driver, which is how the corpus and the transfer arm are selected. **Pass `--transfer`**:
+without it the judge run would re-emit `cpvi_transfer` as `unavailable` and the finished table would
+lose the row the offline run just produced.
+
+**`--transfer` takes the calibration directory, not the frozen run directory.** The committed
+`runs/rq1/8902072e1f47b6de/` carries `calibration.json` but not the probe — the joblib is a trained
+artefact and is gitignored — so the statistic must be refit on the cluster first. Two offline
+commands on a login node, no GPU, before the `qsub`:
+
+```bash
+scripts/myriad/fetch.sh 8902072e1f47b6de   # or it is already under ~/Scratch from the pilot
+uv run preceptx-calibrate --dataset-hash 8902072e1f47b6de   # -> runs/8902072e1f47b6de-calibration/
+```
+
+The driver refuses a `--transfer` directory it cannot load the statistic out of, so a mistake here
+costs a second rather than the 8h reservation. Then:
+
+```bash
+# Corpus must already be on disk: scripts/myriad/prefetch.sh with RQ3A_ROOT set.
+# Cost it first on a login node - no GPU, no model calls:
+#   preceptx-rq3a --root ~/Scratch/rq3a --corpus traceelephant --judge --dry-run
+qsub -N precept-rq3a-judge -l h_rt=8:00:00 \
+  -v DRIVER=preceptx-rq3a,RQ3A_ROOT=$HOME/Scratch/rq3a scripts/myriad/pilot.sh \
+  --corpus traceelephant --transfer runs/8902072e1f47b6de-calibration
+```
+
+**Upper-bound judge calls, measured not guessed:** 3,428 for TraceElephant (220 traces, 2,488
+handoffs) and 4,380 for Who&When (184 traces, 3,505 handoffs). They are upper bounds because
+step-by-step stops at its first yes. The calls are prefill-dominated — each carries a whole
+transcript — so wall-clock must be calibrated against measured node throughput before the 8h request
+is trusted; run TraceElephant first and time it before committing to Who&When.
+
+**Priority.** Behind the G1 confirmation and behind 9b. RQ3a's evidential value does not depend on
+this arm — the transfer result stands on its own — so it is the last of the three to spend GPU on.
 
 ## 10. Getting the results back
 

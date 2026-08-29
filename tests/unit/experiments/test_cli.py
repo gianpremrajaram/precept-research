@@ -13,9 +13,17 @@ from pathlib import Path
 import pytest
 import respx
 
+from preceptx.analysis.stats import build_provenance
 from preceptx.config import ConfigError
 from preceptx.data.writer import DatasetError
-from preceptx.experiments.cli import pilot, rq1, rq2
+from preceptx.experiments.cli import _transfer_config, pilot, rq1, rq2
+from preceptx.gate.calibration import (
+    CalibrationReport,
+    StatisticCalibration,
+    write_report,
+)
+from preceptx.measure.featuriser import EncoderConfig
+from preceptx.measure.pvi_cpvi import ProbeConfig
 from preceptx.sim.feasibility import STEP_BUDGETS
 
 
@@ -104,3 +112,72 @@ def test_omitting_max_steps_keeps_the_certified_budgets(
 ) -> None:
     rq1(["--dry-run", "--conditions", "C0", "--difficulties", "easy", "--seeds", "0,1"])
     assert f"model calls:      {2 * 2 * STEP_BUDGETS['easy']}" in capsys.readouterr().out
+
+
+# ------------------------------------------------------- the RQ3a transfer arm's wiring (DSE-024)
+
+
+def _calibration(dir: Path, *, keys: dict[str, float]) -> Path:
+    """A calibration.json from the real models, so the fixture cannot drift from the schema."""
+    dir.mkdir(parents=True, exist_ok=True)
+    report = CalibrationReport(
+        dataset_hash="d0",
+        provenance=build_provenance(EncoderConfig(), ProbeConfig()),
+        n=100,
+        n_bins=10,
+        ece_reliable=False,
+        statistics=[
+            StatisticCalibration(
+                key=key,
+                threshold=0.5,
+                orientation=orientation,
+                firing_rate=0.2,
+                auroc=0.6,
+                ece=0.0,
+                n_classes=2,
+                reliability=[],
+            )
+            for key, orientation in keys.items()
+        ],
+    )
+    for key in keys:
+        # `_transfer_config` and `load_statistic` both check presence only, so presence is enough.
+        (dir / f"{key}.manifest.json").touch()
+    return write_report(report, dir)
+
+
+def test_transfer_arm_is_off_unless_a_calibration_is_named() -> None:
+    cfg, train_hash = _transfer_config(None, "fail")
+    assert cfg.transfer_dir is None and cfg.transfer_orientation is None and train_hash is None
+
+
+def test_transfer_orientation_is_read_from_the_report_never_typed(tmp_path: Path) -> None:
+    """A hand-entered sign would silently invert every localisation number in the table."""
+    _calibration(tmp_path, keys={"fail": -1.0})
+    cfg, train_hash = _transfer_config(tmp_path, "fail")
+    assert cfg.transfer_orientation == -1.0 and cfg.transfer_key == "fail"
+    assert cfg.transfer_dir == tmp_path and train_hash == "d0"
+
+
+def test_transfer_resolves_a_retired_key_against_the_report(tmp_path: Path) -> None:
+    _calibration(tmp_path, keys={"fail": 1.0})
+    cfg, _ = _transfer_config(tmp_path, "info")  # DSE-061 retired "info"
+    assert cfg.transfer_key == "fail"
+
+
+def test_a_transfer_dir_that_cannot_supply_the_arm_fails_loud(tmp_path: Path) -> None:
+    """Wiring errors raise; they do not degrade into an unavailable row that reads as "not run"."""
+    with pytest.raises(ConfigError, match="preceptx-calibrate"):
+        _transfer_config(tmp_path, "fail")
+
+    _calibration(tmp_path / "cal", keys={"cosine": 1.0})
+    with pytest.raises(ConfigError, match="has no statistic 'fail'"):
+        _transfer_config(tmp_path / "cal", "fail")
+
+
+def test_a_frozen_run_dir_without_the_joblib_fails_loud(tmp_path: Path) -> None:
+    """A frozen run dir has the report but not the probe: catch it here, not 8h into a job."""
+    _calibration(tmp_path, keys={"fail": 1.0})
+    (tmp_path / "fail.manifest.json").unlink()
+    with pytest.raises(ConfigError, match="no persisted 'fail' statistic"):
+        _transfer_config(tmp_path, "fail")

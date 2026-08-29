@@ -33,9 +33,11 @@ from preceptx.experiments.rq3a import (
     localisation_steps,
     manifest_metrics,
     mast_category,
+    outcome_census,
     refit_scores,
     results_table,
     schema_validity_scores,
+    trace_outcome_labels,
     trace_targets,
     transfer_scores,
     write_rq3a,
@@ -76,6 +78,7 @@ def _trace(
     mistake_step: int | str | None = 1,
     mistake_agent: str | None = "coder",
     agents: list[str] | None = None,
+    trace_failed: bool | None = None,
 ) -> list[LogHandoffRecord]:
     names = agents or ["planner", "coder"] * n_steps
     return [
@@ -88,6 +91,7 @@ def _trace(
             is_handoff=True,
             observation=f"obs {trace_id} {i}",
             message=("bad message" if i == mistake_step else f"fine message {i}"),
+            trace_failed=trace_failed,
             annotations={"mistake_step": mistake_step, "mistake_agent": mistake_agent},
         )
         for i in range(n_steps)
@@ -200,6 +204,18 @@ def test_evaluate_reports_targets_that_fall_outside_the_scored_steps() -> None:
     assert m.step_accuracy is None  # an empty cell, never a zero that reads as a measurement
 
 
+def test_evaluate_accounts_for_every_scored_trace() -> None:
+    """scored = evaluated + off_boundary + not_evaluable; an uncounted residual reads as a bug."""
+    records = [*_trace("t0", 3, mistake_step=1), *_trace("t1", 3, mistake_step=None)]
+    steps = localisation_steps(records)
+    m = evaluate(_scores("s", steps, [1.0] * len(steps)), steps, trace_targets(records), n_boot=200)
+    assert m.n_traces_not_evaluable == 1  # t1 carries no decisive step to score against
+    assert (
+        m.n_traces_scored
+        == m.n_traces_evaluated + m.n_traces_target_off_boundary + m.n_traces_not_evaluable
+    )
+
+
 def test_evaluate_keeps_the_row_when_a_method_is_unavailable() -> None:
     m = evaluate(
         MethodScores(method="cpvi_transfer", status="unavailable", reason="no probe"),
@@ -237,6 +253,42 @@ def test_transfer_is_unavailable_without_a_statistic_or_an_orientation(tmp_path:
     assert missing.status == "unavailable" and "s_info" in (missing.reason or "")
 
 
+def test_transfer_resolves_a_key_retired_by_dse_061(tmp_path: Path) -> None:
+    """A manifest or config naming 'info' must find the survivor, not report a missing statistic."""
+    steps = localisation_steps(_trace("t0", 3))
+    out = transfer_scores(steps, _featuriser(tmp_path), key="info", dir=tmp_path, orientation=1.0)
+    assert out.status == "unavailable"
+    assert "'fail'" in (out.reason or "")  # resolved past the retired alias before looking
+
+
+# ------------------------------------------------------------------ the refit regime's outcome
+
+
+def test_trace_outcome_labels_drop_unlabelled_traces() -> None:
+    records = _trace("t0", 3, trace_failed=True) + _trace("t1", 3, trace_failed=None)
+    labels = trace_outcome_labels(records)
+    assert set(labels) == {("t0", 0), ("t0", 1), ("t0", 2)}
+    assert all(labels.values())
+
+
+def test_outcome_census_reports_a_usable_fallback_when_both_classes_are_present() -> None:
+    records = _trace("t0", 3, trace_failed=True) + _trace("t1", 3, trace_failed=False)
+    census = outcome_census(records, source="trace-outcome")
+    assert census.usable and census.reason == ""
+    assert (census.traces_failed, census.traces_succeeded, census.traces_unlabelled) == (1, 1, 0)
+    assert census.steps_labelled == 6
+
+
+def test_outcome_census_measures_the_degeneracy_rather_than_asserting_it() -> None:
+    """The shape of both real corpora: failures and unlabelled traces, no non-failure class."""
+    records = _trace("t0", 3, trace_failed=True) + _trace("t1", 3, trace_failed=None)
+    census = outcome_census(records, source="trace-outcome")
+    assert not census.usable
+    assert (census.traces_failed, census.traces_succeeded, census.traces_unlabelled) == (1, 0, 1)
+    assert "1 failed, 0 succeeded, 1 unlabelled of 2 traces" in census.reason
+    assert "DSE-042" in census.reason  # replay is named as the only remaining route
+
+
 def test_refit_is_not_applicable_on_a_single_class_corpus(tmp_path: Path) -> None:
     """Who&When is 184/184 failures; a probe has nothing to separate, and that is not an error."""
     steps = localisation_steps(_trace("t0", 4))
@@ -257,7 +309,32 @@ def test_refit_scores_the_labelled_steps_and_says_how_many(tmp_path: Path) -> No
 def test_refit_is_unavailable_without_replay_labels(tmp_path: Path) -> None:
     steps = localisation_steps(_trace("t0", 3))
     out = refit_scores(steps, _featuriser(tmp_path), {}, ProbeConfig(n_repeats=1))
-    assert out.status == "unavailable" and "DSE-042" in (out.reason or "")
+    assert out.status == "unavailable" and "no replay outcome labels" in (out.reason or "")
+
+
+def test_refit_reasons_name_the_label_source_they_actually_used(tmp_path: Path) -> None:
+    """ "No labels" and "labels that cannot separate" are different findings about a corpus.
+
+    Before DSE-024 every unavailable refit row blamed DSE-042 for not having run, which reads as
+    "pending" - and on both RQ3a corpora the truth is stronger: no annotation-free non-failure class
+    exists, so no amount of running the labeller as specified would produce one.
+    """
+    steps = localisation_steps(_trace("t0", 4))
+    feat, probe = _featuriser(tmp_path), ProbeConfig(n_repeats=1)
+
+    absent = refit_scores(steps, feat, {}, probe, label_source="trace-outcome")
+    assert absent.status == "unavailable"
+    assert "no trace-outcome outcome labels" in (absent.reason or "")
+
+    single = refit_scores(
+        steps,
+        feat,
+        {(s.trace_id, s.step): True for s in steps},
+        probe,
+        label_source="trace-outcome",
+    )
+    assert single.status == "not_applicable"
+    assert "trace-outcome labels are single-class" in (single.reason or "")
 
 
 # ------------------------------------------------------------------ the judge replications
@@ -389,3 +466,26 @@ def test_analyse_rq3a_runs_every_method_and_keeps_unavailable_rows(tmp_path: Pat
     assert isinstance(block, dict)
     assert block["tie_policy"] == result.tie_policy
     assert "cpvi_transfer" in block["unavailable"]
+    assert block["outcomes"]["source"] == "replay"  # labels were supplied, so no fallback was used
+
+
+def test_analyse_falls_back_to_the_trace_outcome_when_replay_has_not_run(tmp_path: Path) -> None:
+    """DSE-042's stated fallback, actually wired - and its census records whether it could work."""
+    # Six traces, not two: the refit cross-fits by trace, so a two-trace grid gives every fold a
+    # single-class training set and the probe cannot fit at all.
+    records = [
+        r for i in range(6) for r in _trace(f"t{i}", 6, mistake_step=3, trace_failed=bool(i % 2))
+    ]
+    result = analyse_rq3a(records, _featuriser(tmp_path), cfg=_FAST)
+    assert result.outcomes.source == "trace-outcome" and result.outcomes.usable
+    assert {m.method: m.status for m in result.methods}["cpvi_refit"] == "ok"
+
+    degenerate = analyse_rq3a(
+        _trace("t0", 6, trace_failed=True) + _trace("t1", 6, trace_failed=True),
+        _featuriser(tmp_path),
+        cfg=_FAST,
+    )
+    assert not degenerate.outcomes.usable
+    by_method = {m.method: m for m in degenerate.methods}
+    assert by_method["cpvi_refit"].status == "not_applicable"
+    assert "trace-outcome labels are single-class" in (by_method["cpvi_refit"].reason or "")

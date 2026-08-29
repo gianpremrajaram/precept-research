@@ -36,6 +36,9 @@ runs/local/
 # fetch.sh's staging area: a mirror of the cluster, never the frozen copy. Frozen artefacts are
 # promoted deliberately into runs/rq1/<hash>/ instead.
 runs/myriad/
+# preceptx-calibrate's working directory: the joblibs are trained probes and are already
+# covered by *.joblib, and calibration.json is promoted into runs/rq1/<hash>/ when frozen.
+runs/*-calibration/
 runs/bench/smoke/
 *.npy
 *.joblib
