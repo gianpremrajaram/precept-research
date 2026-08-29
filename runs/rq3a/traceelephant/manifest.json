@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
-  "git_sha": "dc70c54af2c5ce6a94b1818b762f1ff69fb57a87",
-  "git_dirty": true,
+  "git_sha": "20c67d14370dc7d174196aabef2429adfce9decf",
+  "git_dirty": false,
   "corpus": "traceelephant",
   "corpus_digest": "ab666509dc934108",
   "corpus_root": "/Users/gianpremrajaram/data/rq3a",
@@ -81,7 +81,7 @@
     "joblib": "1.5.3",
     "sentence-transformers": "5.6.0"
   },
-  "timestamp": "2026-08-29T14:45:31.100414+00:00",
+  "timestamp": "2026-08-29T16:15:49.386494+00:00",
   "metrics": {
     "rq3a": {
       "corpus": "traceelephant",
