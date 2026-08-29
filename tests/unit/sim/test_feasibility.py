@@ -25,11 +25,22 @@ from preceptx.sim.feasibility import (
     FeasibilityResult,
     PlannabilityError,
     assert_plannable,
+    oracle_action,
     replay,
     scripted_policy_solves,
     solve,
 )
 from preceptx.sim.outcomes import reached_goal
+
+
+def test_oracle_action_aligns_onto_the_lattice_then_pushes() -> None:
+    """The per-pose form of the scripted policy G3's correctness limb scores against."""
+    assert oracle_action(0.0) == "E"  # already flat: push
+    assert oracle_action(math.radians(30.0)) == "ROT-"  # rotated +: unwind
+    assert oracle_action(math.radians(-30.0)) == "ROT+"
+    assert oracle_action(math.pi) == "E"  # the bar is symmetric under a half-turn
+    # Inside half a rotation step of flat there is no step to take, so the policy pushes.
+    assert oracle_action(math.radians(ROTATION_STEP_DEG / 2.0 - 0.1)) == "E"
 
 
 def test_easy_solvable_and_budget_pads_the_optimum() -> None:

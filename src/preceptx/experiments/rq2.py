@@ -114,7 +114,10 @@ class RQ2Config(BaseModel):
     # Each draw of the tracking bootstrap recomputes two rank correlations rather than one mean, so
     # it is the costly one; 500 draws is enough for a two-decimal interval on a correlation.
     n_boot_track: int = Field(default=500, ge=50)
-    n_shuffle: int = Field(default=20, ge=0)  # within-condition permutations; 0 disables the null
+    # 200 to match RQ1's audit. Here the null is *averaged* rather than thresholded, so the gain
+    # is variance not resolution: a noisy null attenuates every shuffle-corrected correlation,
+    # which is the H4 headline. Repeats are dropped inside the null, so 200 stays cheap.
+    n_shuffle: int = Field(default=200, ge=0)  # within-condition permutations; 0 disables
     alpha: float = Field(default=0.05, gt=0, lt=1)
     low_cpvi_quantile: float = Field(default=0.25, gt=0, lt=1)  # "low CPVI" = this bottom quantile
     seed: int = Field(default=0, ge=0)

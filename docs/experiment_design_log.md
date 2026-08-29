@@ -15,7 +15,248 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
-## 2026-08-29 (latest) — RQ3a's headline method finally reported, and the refit arm reclassified from unrun to undefined
+## 2026-08-29 (latest) — the gate learns to tell "grounded" from "right", and immediately says the pair is not right
+
+- **Area:** G3's second limb (declared at F0, previously unimplemented), the permutation criterion
+  behind it, the RD-15 audit's resolution, and the step budget the E3 verdict of record runs at.
+- **Trigger:** the confirmation passed G1 at 0.500 with grounding at 0.9998, and neither number can
+  distinguish this corpus from attempt 2's — which scored 0.999 grounding while reasoning wrongly.
+  Submitting E3 without closing that would have bought a verdict nobody could interpret.
+
+**Finding 1 — the reference policy was already in the repo, one function away.** `certify()` requires
+a scripted *rotate onto the lattice point nearest flat, then push east* policy to solve 16/16
+jittered starts at every shipped difficulty, or the task does not certify. That makes it a
+**sufficient** reference plan for every pose, and its per-pose form is four lines. No A* per handoff,
+no new physics: `alignment_rotations` was extracted from `scripted_policy_solves` so the two cannot
+drift, and `oracle_action` wraps it.
+
+**Finding 2 — the threshold must be a null, not a number, and the two failure modes prove it.**
+A fixed floor would have been chosen after seeing a corpus, which is the forbidden move. The limb
+instead thresholds on a **within-episode permutation null of B's own actions**: shuffling actions
+inside an episode preserves that episode's action habits exactly and destroys only their link to the
+pose. The two failures the limb exists to catch are *invariant* under that permutation — always-push-
+east (projection blindness) and always-rotate (attempt 2's defect) score exactly the null by
+construction — so neither can pass by being lucky about a base rate. The level is the null's
+one-sided 95th percentile, **not** RD-15's beat-every-permutation criterion: at 200 permutations that
+is *p* ≤ 0.005, an order of magnitude stricter than the hypothesis tests the gate exists to license.
+
+**Finding 3 — on first application the limb fails the corpus that just passed G1, decisively.**
+
+| read | value |
+|---|---|
+| oracle-action agreement | **0.285** |
+| null 95th percentile (the gate) | 0.322 |
+| null mean (state-blind rate) | 0.315 |
+| permutation *p* | **1.000** |
+| grounding limb, same corpus | 0.9998 |
+
+The pair matches the certified plan **less** often than its own actions do when shuffled. Three
+independent supporting reads say the same thing and do not depend on the limb's tie-breaking near
+90°: only **4 of 60** episodes ever bring the load within 6° of alignment (0.65 % of 2,597 handoffs);
+**rotation-direction agreement is 0.519** on 1,400 rotations, a coin flip at SE 0.013; and mean
+|misalignment| runs 84.5° at the first handoff to 36.3° at the last, which is what a bounded random
+walk does from a broadside start, not what convergence looks like. ROT+ and ROT- are issued 723 and
+678 times — near-perfect balance, the signature of oscillation rather than correction.
+
+**Finding 4 — the verdict of record carries an unlogged step-budget deviation.** The confirmation ran
+`--max-steps 50` broadcast to all difficulties against certified budgets of 30/35/35. That was never
+logged. It is logged now, in PREREGISTRATION §6, and E3 runs at 50 as well — so that one gate does
+not describe two task parameterisations. Finding 3 is the independent reason the extra steps bought
+nothing: more budget buys more random walk.
+
+**Finding 5 — the RD-15 audit was quoting a floor as if it were a result.** At 20 permutations the
+smallest expressible *p* is 1/21 = 0.0476, so "the observed CPVI exceeded all 20 permutations" — the
+strongest statement the test can make — printed as a marginal pass. `n_shuffle` is now 200 in both
+RQ1 and RQ2 (the null costs ~2 min on a 2.6k-handoff cell). In RQ2 the null is *averaged* rather than
+thresholded, so there the gain is variance, not resolution: a noisy null attenuates every
+shuffle-corrected correlation, which is the H4 headline.
+
+- **Impact.** G3 can now separate *says what is true* from *concludes what is right*, and the first
+  thing it says is that the v9 corpus does the first and not the second. The `proceed` path is
+  blocked on evidence rather than on missing code. Both non-GPU blockers on E3 are closed — the
+  length-matched contrast turned out to need nothing built, only checking: it is wired, stratifies on
+  *delivered* length (the right covariate, since C1's cap acts on delivery), and populates at the E3
+  cell's 20 episodes per condition.
+- **Risk reduced.** The one this project has already been burned by: certifying a run healthy on a
+  fidelity check while its reasoning is wrong. Attempt 2 shipped on exactly that, and the fallback
+  ladder fired because of it. A second occurrence is now detectable *before* the GPU spend.
+- **Correction path if the limb is wrong rather than the corpus.** The oracle is a sufficient policy,
+  not a unique optimum — position never enters it, and near 90° both rotation directions are near
+  ties, so a disagreement means "not the certified plan", not "wrong". Direction agreement at 0.519
+  is the check that does not depend on either caveat, and it agrees. If E3 returns a real gradient
+  while this limb still reads at chance, the limb is the thing to revisit, not the result.
+- **The fix.** `sim/feasibility.oracle_action` + `alignment_rotations`; `pilot.g3_correctness` with
+  the permutation null; the limb wired into `run_pilot`'s gate list beside the grounding limb, never
+  replacing it; `n_shuffle` 20 → 200.
+- **Result.** 570 tests pass. The limb reads FAIL on `86ecbbdf35322dc3` and its criterion, its
+  reference policy and its level are all recorded in PREREGISTRATION before the E3 cell exists.
+- **So-what.** This is a **prospective prediction about E3**, and that is the point of writing it
+  down today. If C0→C4 comes back flat or sign-inverted, the mechanism is already on the record and
+  named: B is not acting on the pose, so degrading the message about the pose cannot change much. If
+  the gradient shows up anyway, then message content is doing work through some channel other than
+  the rotation decision — which would be a more interesting result than a clean pass, and one this
+  limb is what makes visible.
+
+---
+
+## 2026-08-29 (earlier) — G1 passes by nothing, the measurement primitive replicates, and the transfer arm gets worse when its calibration gets better
+
+- **Area:** the E3 gate (G1 verdict of record, G2's assessability, G3's missing limb), the RQ2
+  measurement-primitive claim, and the RQ3a transfer arm's calibration source.
+- **Trigger:** the G1 confirmation read out (job 236653, `86ecbbdf35322dc3`, 60 episodes, 2,597
+  handoffs, 37 min on one A100). Every downstream question was waiting on it.
+
+**Finding 1 — G1 passes at exactly the threshold, and the two live statements of that threshold
+disagreed.** Easy C0 came in at **10/20 = 0.500** against a pre-registered *≥ 0.5*: a pass on `>=`,
+Wilson 95% **[0.299, 0.701]**. A design whose true rate is 0.5 passes this gate about half the time,
+so it is reported as a pass on the letter of the declaration, never as demonstrated capability.
+Separately, `docs/myriad.md` §9a had paraphrased the gate as *easy ≥ 8/20 and medium ≥ 3/20* — 0.40
+easy plus a medium clause that the register does not contain. Both readings are satisfied here
+(easy 10, medium 3), so the verdict is not in dispute; at easy 8/20 or 9/20 the project would have
+had two documents disagreeing about a gate outcome, with the more permissive one in the runbook the
+submitter actually reads. §9a now quotes PREREGISTRATION §6 instead of paraphrasing it.
+
+**Finding 2 — the measurement primitive replicates on disjoint seeds while the outcome does not.**
+Seeds 12–31 never informed anything about seeds 0–11's estimates, and yet:
+
+| quantity | A2 pilot (24 ep, seeds 0–11) | confirmation (60 ep, seeds 12–31) |
+|---|---|---|
+| mean CPVI | 0.1876 [0.115, 0.249] | **0.1853 [0.152, 0.217]** |
+| mean PVI | 0.2728 | 0.2695 |
+| **PVI − CPVI gap** | 0.0851 | **0.0842** |
+| control CPVI | −0.0024 | −0.0016 |
+| selectivity | 0.1900 | 0.1869 |
+
+Every line agrees to about 1%, with the interval roughly halving. Over the same change the matched
+outcome rate moved 0.417 → 0.325 (easy 0.583 → 0.500, medium 0.250 → 0.150). **The outcome is
+seed-sensitive; the measurement is not.** That is the property a measurement primitive has to have,
+and it is now measured on held-out seeds rather than assumed. The shuffled-message audit puts the
+observed CPVI above **all** permutations (null mean −0.0010, max 0.0020, ***p* = 0.00498** — the
+1/201 floor, not a marginal result; the audit was regenerated at 200 permutations later the same
+day, see the entry above, and at 20 it could only express this as *p* = 0.0476), and selectivity
+0.187 against a control task at −0.002 carries the Hewitt–Liang separation.
+
+**Finding 3 — G2 is unassessed and G3's declared second limb does not exist.** The confirmation is
+C0 only, so there is no condition contrast: `contrasts` is empty, the mixed model refuses to fit
+("only condition C0 is present, so C(condition) is rank-deficient"), and G2 is *unassessable* rather
+than failed — it spends no retune. More seriously, G3's grounding limb scored **0.9998** here, and
+that number is worth almost nothing on its own: attempt 2 scored 0.999 on a corpus whose modal
+*inference* was wrong, which is exactly why PREREGISTRATION declares a second limb — agreement with
+the oracle's next action — due at F0. It is declared and **not implemented**; `pilot.py` carries the
+grounding limb only, while an oracle already exists in `sim/feasibility.py`. So the check that would
+tell us whether the v9 clearance line fixed what it was built to fix is the one not built. This is
+the fourth instance of the reachability pattern in this project, and the first where the unreachable
+thing is a *gate limb* rather than a helper. *(Closed the same day — see the entry above, which is
+where the limb's first reading lives; this paragraph stands as written at the time.)*
+
+**Finding 4 — a better-calibrated statistic transferred slightly worse, and the pre-declaration is
+what settles which one is frozen.** Re-keying the RQ3a transfer arm to the confirmation was declared
+unconditionally in `runs/rq1/8902072e1f47b6de/README.md` before this run existed. At home the
+re-keyed statistic is unambiguously better: `fail` AUROC **0.593 → 0.754**, episode-cluster CI
+[0.444, 0.737] → **[0.638, 0.870]** with no resample at or below 0.5, and `ece_reliable` true for the
+first time (n = 2,597). On the log corpora it is not:
+
+| corpus | metric | A2 calibration | confirmation calibration |
+|---|---|---|---|
+| TraceElephant | agent acc. | 0.576 [0.492, 0.661] | **0.525 [0.432, 0.610]** |
+| | step acc. | 0.169 | 0.110 |
+| | MRR | 0.376 | 0.315 |
+| Who&When | agent acc. | 0.367 | 0.333 |
+| | step acc. | 0.180 | **0.207** |
+| | MRR | 0.381 | **0.415** |
+
+The frozen result is now the confirmation calibration, because the re-key was declared before the
+numbers existed and adopting the weaker headline is what the declaration obliges. Two readings, both
+kept: **(a) the headline claim is robust** — `cpvi_transfer` beats both surface baselines on
+TraceElephant agent accuracy under *two independent calibrations*, with non-overlapping intervals
+both times against 0.263 and 0.254, which is a stronger statement than the single-calibration
+version; **(b) home AUROC does not predict transfer quality.** Last session's argument for why a weak
+home AUROC did not invalidate the transfer result was that the two are different estimands. That
+argument now cuts the other way and is reported doing so.
+
+**Finding 5 — H4 is falsified in its literal form, and the gate works anyway.** `preceptx-rq2` had
+never been run on 60 episodes; it is offline and free, so it was. H4 states that *a target-free
+runtime statistic tracks CPVI closely enough to gate on*. On this dataset the tracking is absent:
+
+| statistic | Spearman vs CPVI (shuffle-corrected) | AUROC for low CPVI | AUROC for realised failure |
+|---|---|---|---|
+| `fail` | **+0.052 [−0.100, 0.201]** | 0.355 | **0.754** |
+| `info` | −0.052 [−0.201, 0.100] | 0.645 | 0.246 |
+| `cosine` | −0.007 [−0.123, 0.124] | 0.602 | 0.431 |
+
+*(Correlations regenerated at 200 permutations later the same day — see the entry above. At 20 the
+reading was +0.025 [−0.113, 0.155] / −0.025 / −0.007; every interval still spans zero and the
+AUROCs do not depend on the null, so the conclusion is unchanged.)*
+
+`fail` predicts realised failure at 0.754 while correlating with CPVI at essentially zero, and
+`info` is its exact rank-inverse (the DSE-061 identity, visible here as 0.246 = 1 − 0.754). So the
+statistic that gates well is **not** a CPVI proxy, and the statistic that tracks CPVI does not
+predict failure. The pre-registration anticipated this shape precisely — agreement with CPVI is *"a
+reported correlation, never a calibration target"* — which is why the result is reportable rather
+than fatal. What it changes is the **claim RQ3b is allowed to make**: the gate cannot be justified as
+an approximation to CPVI. It must be justified as a statistic calibrated directly against realised
+outcomes, with CPVI as the offline construct it is measured *beside*, not *by*. That is a narrower
+and more defensible contribution, and it is the circularity guard (R5) paying for itself — a project
+that had calibrated against CPVI would have manufactured a correlation here and never seen this.
+
+**Finding 6 — the Phase-2 freeze now has its evidence, on the pre-declared rule.** Y is confirmed as
+`y_binary_progress` by the selection rule declared in `experiments/rq2.py` before any RQ1 outcome was
+read (admissibility, then encoder-invariance, then twin agreement, with corrected effect size only a
+tie-break inside 0.05). Corrected CPVI by label: `y_binary_progress` 0.1869 [0.156, 0.218],
+`y_continuous_displacement` 0.2447 [0.168, 0.321], `y_terminal_success` 0.0585 [0.027, 0.098],
+`y_discrete_config` 0.1167 but **inadmissible** (minority share 0.027). The encoder-sensitivity check
+ran: primary CPVI 0.1858 against the second encoder's 0.1519, ρ = 0.842, and
+`label_ranking_invariant` is **true** — the ranking of candidate outcomes is not an artefact of
+`bge-base-en-v1.5`. H3's twins rank-agree at Spearman **0.612** but agree loosely pointwise
+(Bland–Altman bias 0.071, limits [−0.844, 0.986] against a mean CPVI of 0.19); the rank claim is the
+one the data supports and the numeric-equivalence claim is not made.
+
+**Impact.** G1 is settled and RQ1 is unblocked to the extent one gate can unblock it. RQ2's central
+claim — that CPVI is a stable per-handoff quantity — has a held-out replication instead of a single
+in-sample estimate. RQ3a's transfer arm rests on a statistic that is now demonstrably informative at
+home, and on two calibrations rather than one.
+
+**Risk reduced.** (a) A gate verdict that could have been contested between two internal documents is
+now single-sourced to the register. (b) The transfer arm's biggest stated caveat — "the transferred
+statistic is not established above chance at home" — is closed by measurement, not by argument.
+(c) The RQ3a headline is no longer a one-calibration result.
+
+**Correction paths considered and rejected.** *Keeping the A2 calibration because its TraceElephant
+number is higher* — rejected: that is selecting a calibration set on the test outcome, the exact
+researcher degree of freedom the pre-declaration exists to remove. *Reporting only the confirmation
+and dropping the A2 row* — rejected: the comparison is the robustness evidence, and hiding a
+sensitivity because it is unflattering is the same error in quieter form. *Treating G3 0.9998 as a
+pass* — rejected on the register's own reasoning; the limb is missing, so the gate is reported as
+grounding-limb only. *Re-running G1 on more seeds because 0.500 is uncomfortable* — rejected: the
+gate was declared once and evaluated once, and re-reading it after seeing 0.500 is optional stopping.
+
+**The fix.** `runs/rq1/86ecbbdf35322dc3/` is frozen with the manifest, summary, calibration and the
+full reading. `docs/myriad.md` §9a is rewritten: G1 marked done, the paraphrase corrected to quote
+the register, and the **E3 re-gate** (C0/C1/C3/C4 × easy/hard × seeds 0–9, `preceptx-pilot`'s own
+cell) promoted to the next submission with both candidate hashes costed. The RQ3a artefacts are
+re-frozen on `86ecbbdf35322dc3` and their manifests say so in `transfer_train_dataset_hash`.
+
+**Result of the fix.** G1 PASS (0.500, [0.299, 0.701]); G2 unassessed pending its cell; G3
+grounding-limb 0.9998, second limb outstanding. RQ3a re-frozen: TraceElephant `cpvi_transfer` agent
+0.525 [0.432, 0.610] against schema validity 0.263 and mean cosine 0.254, at zero model calls.
+
+**So what.**
+1. **The gate held on unseen seeds, and only just.** Every number in this project that depends on
+   G1 should carry [0.299, 0.701] with it. The honest framing is that the task is *marginally*
+   solvable by this pair at easy difficulty, which is precisely enough for a gradient study and not
+   enough for a capability claim.
+2. **The strongest RQ2 evidence in the project arrived as a side effect.** A held-out replication of
+   CPVI, PVI, the gap, the control and selectivity to within 1% is worth more to the measurement
+   argument than any single-run point estimate, and it came free with a capability gate.
+3. **The next GPU spend is the E3 re-gate, not the main sweep.** G2 is the only unassessed gate with
+   a declared cell, and running the RQ1 condition sweep before it would be out of protocol. Two
+   things must land first and neither needs a GPU: G3's oracle-agreement limb, and the length-matched
+   contrast (CPVI's partial Spearman against message length is 0.439 here, and `length_matched` is
+   empty only because one condition has nothing to match across).
+
+---
+
+## 2026-08-29 — RQ3a's headline method finally reported, and the refit arm reclassified from unrun to undefined
 
 - **Area:** the RQ3a external-validity design (§9.8) — which methods the H5 comparison actually
   contains, what defines the refit regime's outcome, and what the published baselines are as of

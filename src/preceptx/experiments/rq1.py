@@ -89,7 +89,10 @@ class RQ1Config(BaseModel):
     probe: ProbeConfig = Field(default_factory=lambda: ProbeConfig(n_repeats=5))
     n_boot: int = Field(default=2000, ge=100)  # for the cheap one-sample/effect-size CIs
     n_boot_mediation: int = Field(default=400, ge=50)  # model-refit bootstrap; costlier per draw
-    n_shuffle: int = Field(default=20, ge=0)  # within-condition perms for the RD-15 null; 0 = off
+    # 200, not 20: the permutation p-value floors at 1/(n+1), so 20 permutations report a real
+    # dominance of the null as p = 0.048 - indistinguishable in print from a marginal pass. At
+    # 200 the same outcome quotes as p < 0.005, and the null costs ~2 min on a 2.6k-handoff cell.
+    n_shuffle: int = Field(default=200, ge=0)  # within-condition perms for the RD-15 null; 0 = off
     alpha: float = Field(default=0.05, gt=0, lt=1)
     correction: Literal["holm", "bh"] = "holm"
     # The overlap-restricted length control (PREREGISTRATION section 5). Three bins with a floor of

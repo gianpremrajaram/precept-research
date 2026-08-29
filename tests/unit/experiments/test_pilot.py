@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from pathlib import Path
 
 import numpy as np
@@ -15,12 +16,14 @@ from preceptx.experiments.pilot import (
     PilotConfig,
     g1_capability,
     g2_signal,
+    g3_correctness,
     g3_groundedness,
     render_report,
     run_pilot,
     write_pilot_report,
 )
 from preceptx.measure.featuriser import EncoderConfig, Featuriser
+from preceptx.sim.feasibility import oracle_action
 
 
 class _MsgEncoder:
@@ -57,7 +60,10 @@ def _rec(
     state: dict[str, float] | None = None,
     y_progress: bool | None = None,  # per-handoff progress label; defaults to the episode outcome
     observation: str | None = None,  # None -> a restricted view distinct from A's state_str
+    angle: float | None = None,  # load pose (rad); None -> step-varying, as a real episode
+    taken: str | None = None,  # B's macro action; None -> the oracle's (a competent pair)
 ) -> HandoffRecord:
+    angle = math.radians(15.0 * step) if angle is None else angle
     return HandoffRecord(
         episode_id=ep,
         step=step,
@@ -71,8 +77,8 @@ def _rec(
         observation=observation if observation is not None else f"partial {ep} s{step}",
         message_raw=message,
         message_delivered=message,
-        action={},
-        pre_state={},
+        action={"action": taken or oracle_action(angle)},
+        pre_state={"angle": angle},
         post_state={},
         progress=0.0,
         success=success,
@@ -255,6 +261,38 @@ def test_g3_grounded_passes_hallucinated_fails() -> None:
     ]
     bad = g3_groundedness(hallucinated, PilotConfig())
     assert not bad.passed and bad.value == 0.0  # fabricated coordinates ground nothing
+
+
+def _pose_cell(taken: str | None) -> list[HandoffRecord]:
+    """One episode of 20 handoffs alternating aligned (oracle E) and 30 deg off (ROT-)."""
+    return [
+        _rec("e0", i, "C0", success=True, angle=math.radians(30.0 * (i % 2)), taken=taken)
+        for i in range(20)
+    ]
+
+
+def test_g3_correctness_fails_a_state_blind_agent() -> None:
+    # Always-push-east is the projection-blindness failure and always-rotate is attempt 2's. Both
+    # are invariant under permutation, so each sits exactly on its own null - which is the point of
+    # a permutation threshold: neither can pass by being lucky about the base rate.
+    for habit in ("E", "ROT-"):
+        res = g3_correctness(_pose_cell(habit), n_perm=50)
+        assert res.value == pytest.approx(res.detail["state_blind_mean"]) and not res.passed
+        assert res.assessable and res.detail["p_value"] == pytest.approx(1.0)
+
+
+def test_g3_correctness_passes_an_agent_that_reads_the_pose() -> None:
+    res = g3_correctness(_pose_cell(None), n_perm=50)  # None -> the oracle's own action
+    assert res.passed and res.value == 1.0
+    assert res.detail["p_value"] == pytest.approx(1 / 51)  # dominates every permutation
+
+
+def test_g3_correctness_is_unassessable_when_the_oracle_never_varies() -> None:
+    # Every pose aligned: the reference action is constant, so agreement measures habit, not
+    # reading. Unassessable rather than passed - the same discipline G2 applies to a flat label.
+    records = [_rec(f"e{i}", 0, "C0", success=True, angle=0.0) for i in range(4)]
+    res = g3_correctness(records, n_perm=50)
+    assert not res.assessable and not res.passed and "UNASSESSABLE" in res.note
 
 
 def test_run_pilot_recommendation_tracks_attempt(tmp_path: Path) -> None:

@@ -328,6 +328,29 @@ def assert_plannable(
         )
 
 
+def alignment_rotations(angle_rad: float) -> int:
+    """Signed count of ROT steps from ``angle_rad`` to the lattice point nearest flat (mod 180).
+
+    Positive means the load is rotated positively and wants ``ROT-``. The bar is symmetric under a
+    half-turn, so flat mod 180 is the only alignment the channel cares about.
+    """
+    theta = math.degrees(angle_rad) % 180.0
+    return round((theta if theta <= 90.0 else theta - 180.0) / ROTATION_STEP_DEG)
+
+
+def oracle_action(angle_rad: float) -> MacroAction:
+    """The scripted policy's next action from a pose: align onto the lattice, then push east.
+
+    The per-pose form of the plan ``scripted_policy_solves`` executes, which ``certify`` requires to
+    solve every jittered start of every shipped difficulty. That makes it a *sufficient* reference
+    policy, not the unique optimal action - position never enters, because pushing east is enough
+    once the load is aligned. G3's correctness limb scores agreement against it (PREREGISTRATION
+    §7).
+    """
+    k = alignment_rotations(angle_rad)
+    return "ROT-" if k > 0 else "ROT+" if k < 0 else "E"
+
+
 def scripted_policy_solves(
     difficulty: Difficulty, *, seeds: int = 10, step_cfg: StepConfig | None = None
 ) -> tuple[int, int]:
@@ -346,8 +369,7 @@ def scripted_policy_solves(
         scenario = make_scenario(difficulty, rng=np.random.default_rng(seed))
         body = scenario.load
         # rotations onto the lattice point nearest flat (mod 180), then push east for the remainder
-        theta = math.degrees(body.angle) % 180.0
-        k = round((theta if theta <= 90.0 else theta - 180.0) / ROTATION_STEP_DEG)
+        k = alignment_rotations(body.angle)
         plan: list[MacroAction] = ["ROT-" if k > 0 else "ROT+"] * abs(k)
         plan += ["E"] * (budget - len(plan))
         for action in plan[:budget]:

@@ -1,0 +1,210 @@
+{
+  "dataset_hash": "86ecbbdf35322dc3",
+  "n_handoffs": 2597,
+  "primary_y": "y_binary_progress",
+  "provenance": {
+    "encoder_name": "BAAI/bge-base-en-v1.5",
+    "encoder_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "second_encoder": "sentence-transformers/all-mpnet-base-v2",
+    "second_encoder_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+    "probe": {
+      "probe": "logistic",
+      "variance_model": "homoscedastic",
+      "c": 1.0,
+      "max_iter": 1000,
+      "n_splits": 5,
+      "n_repeats": 5,
+      "mlp_hidden": 64,
+      "seed": 0
+    },
+    "git_sha": "8a994bb7038e5bfccc632847d04894bbc27cd011",
+    "timestamp": "2026-08-29T18:51:54.591944+00:00"
+  },
+  "twin": [
+    {
+      "scope": "pooled",
+      "agreement": {
+        "n": 2597,
+        "pearson_r": 0.33526215137201476,
+        "spearman_rho": 0.6121694127393774,
+        "ba_bias": 0.07130258986859397,
+        "ba_loa_low": -0.8438721181782439,
+        "ba_loa_high": 0.9864772979154318,
+        "n_kl_capped": 0
+      }
+    },
+    {
+      "scope": "C0",
+      "agreement": {
+        "n": 2597,
+        "pearson_r": 0.33526215137201476,
+        "spearman_rho": 0.6121694127393774,
+        "ba_bias": 0.07130258986859397,
+        "ba_loa_low": -0.8438721181782439,
+        "ba_loa_high": 0.9864772979154318,
+        "n_kl_capped": 0
+      }
+    }
+  ],
+  "proxies": [
+    {
+      "key": "info",
+      "n": 2597,
+      "declared_orientation": -1.0,
+      "spearman_cpvi": -0.01190687794399256,
+      "spearman_ci": [
+        -0.1267662220129585,
+        0.12291547465756987
+      ],
+      "spearman_shuffled": 0.04053525934227638,
+      "spearman_shuffled_ci": [
+        -0.035748347980813486,
+        0.1171866072557431
+      ],
+      "spearman_corrected": -0.05244213728626894,
+      "spearman_corrected_ci": [
+        -0.2008352730372137,
+        0.10023244467474185
+      ],
+      "auroc_low_cpvi": 0.6449610841136264,
+      "auroc_failure": 0.24616161616161616
+    },
+    {
+      "key": "fail",
+      "n": 2597,
+      "declared_orientation": -1.0,
+      "spearman_cpvi": 0.01190687794399256,
+      "spearman_ci": [
+        -0.12291547465756993,
+        0.12676622201295842
+      ],
+      "spearman_shuffled": -0.04053525934227638,
+      "spearman_shuffled_ci": [
+        -0.1171866072557431,
+        0.03574834798081343
+      ],
+      "spearman_corrected": 0.05244213728626894,
+      "spearman_corrected_ci": [
+        -0.10023244467474186,
+        0.20083527303721369
+      ],
+      "auroc_low_cpvi": 0.35503891588637354,
+      "auroc_failure": 0.7538383838383838
+    },
+    {
+      "key": "cosine",
+      "n": 2597,
+      "declared_orientation": -1.0,
+      "spearman_cpvi": 0.06980817198516027,
+      "spearman_ci": [
+        -0.023919080291685782,
+        0.17531003812717438
+      ],
+      "spearman_shuffled": 0.07693534180308753,
+      "spearman_shuffled_ci": [
+        0.002463032475691554,
+        0.14927566943800313
+      ],
+      "spearman_corrected": -0.007127169817927256,
+      "spearman_corrected_ci": [
+        -0.12312971500221523,
+        0.12372871894098551
+      ],
+      "auroc_low_cpvi": 0.6022168227252973,
+      "auroc_failure": 0.4305196896501245
+    }
+  ],
+  "labels": [
+    {
+      "label": "y_binary_progress",
+      "kind": "binary",
+      "status": "ok",
+      "reason": null,
+      "n": 2597,
+      "coverage": 1.0,
+      "minority_share": 0.32306507508663845,
+      "mean_cpvi": 0.18576329767006838,
+      "mean_cpvi_shuffled": -0.0008827474128285082,
+      "corrected_mean_cpvi": 0.18664604508289692,
+      "corrected_ci": [
+        0.15555130047566051,
+        0.21823481317016757
+      ],
+      "encoder_rho": 0.842449404722285,
+      "twin_rho": 0.6121694127393774,
+      "admissible": true
+    },
+    {
+      "label": "y_continuous_displacement",
+      "kind": "continuous",
+      "status": "ok",
+      "reason": null,
+      "n": 2597,
+      "coverage": 1.0,
+      "minority_share": null,
+      "mean_cpvi": 0.23948721999037992,
+      "mean_cpvi_shuffled": -0.005567888758140361,
+      "corrected_mean_cpvi": 0.24505510874852032,
+      "corrected_ci": [
+        0.16798275912863783,
+        0.3214392417871494
+      ],
+      "encoder_rho": 0.7241846404763577,
+      "twin_rho": null,
+      "admissible": true
+    },
+    {
+      "label": "y_discrete_config",
+      "kind": "multiclass",
+      "status": "ok",
+      "reason": null,
+      "n": 2597,
+      "coverage": 1.0,
+      "minority_share": 0.026954177897574125,
+      "mean_cpvi": 0.11661069050209887,
+      "mean_cpvi_shuffled": -0.0004905699129796447,
+      "corrected_mean_cpvi": 0.11710126041507851,
+      "corrected_ci": [
+        0.06620473844815267,
+        0.1812668303883063
+      ],
+      "encoder_rho": 0.8534062280650765,
+      "twin_rho": 0.5082455642702933,
+      "admissible": false
+    },
+    {
+      "label": "y_terminal_success",
+      "kind": "binary",
+      "status": "ok",
+      "reason": null,
+      "n": 2597,
+      "coverage": 1.0,
+      "minority_share": 0.11436272622256449,
+      "mean_cpvi": 0.05800180714667426,
+      "mean_cpvi_shuffled": -0.0006352915772633986,
+      "corrected_mean_cpvi": 0.05863709872393765,
+      "corrected_ci": [
+        0.027271039473301326,
+        0.09835665421812516
+      ],
+      "encoder_rho": 0.8230851253048581,
+      "twin_rho": 0.3522135561951597,
+      "admissible": true
+    }
+  ],
+  "encoders": {
+    "primary_name": "BAAI/bge-base-en-v1.5",
+    "primary_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "second_name": "sentence-transformers/all-mpnet-base-v2",
+    "second_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+    "ran": true,
+    "primary_mean_cpvi": 0.18576329767006838,
+    "second_mean_cpvi": 0.15191749913070582,
+    "rho_primary_second": 0.842449404722285,
+    "label_ranking_invariant": true
+  },
+  "recommended_y": "y_binary_progress",
+  "recommended_encoder": "BAAI/bge-base-en-v1.5",
+  "recommendation_note": "Recommended gate target for RQ3b: y_binary_progress. Chosen by the rule declared in experiments/rq2.py before any RQ1 outcome was read - admissibility first, then encoder-invariance, then the label's own twin agreement, and corrected effect size only as a tie-break inside 0.05. RQ1's frozen primary Y (y_binary_progress) is unchanged by this either way; the register forbids re-pointing it after results.",
+  "figures": {}
+}
