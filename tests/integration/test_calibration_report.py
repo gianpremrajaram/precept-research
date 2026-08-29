@@ -17,8 +17,10 @@ from preceptx.gate.calibration import (
     CalibrationConfig,
     CalibrationReport,
     calibrate,
+    fit_statistics,
     write_report,
 )
+from preceptx.gate.statistics import load_statistic, save_statistic
 from preceptx.measure.featuriser import EncoderConfig, Featuriser
 
 
@@ -94,3 +96,29 @@ def test_calibration_runs_and_persists_report(tmp_path) -> None:  # type: ignore
     assert path.exists()
     reloaded = CalibrationReport.model_validate_json(path.read_text())
     assert reloaded == report  # round-trips through the persisted JSON
+
+
+def test_fit_statistics_persist_and_reload_for_transfer(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The producer half of the RQ3a transfer regime: fit on all of it, persist, reload, score.
+
+    ``calibrate`` cross-fits by episode so its AUROC and threshold are honest held-out numbers,
+    then discards the folds. A statistic that will be *applied* to another substrate wants every
+    labelled handoff behind it, which is what ``fit_statistics`` returns; the report beside it says
+    how far to trust it. Pinned end to end because nothing wrote either artefact before DSE-024.
+    """
+    records = _dataset()
+    feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "cache"), encoder=_HashEncoder())
+    report = calibrate(records, feat, dataset_hash="d0", cfg=CalibrationConfig(n_bins=5))
+    stats = fit_statistics(records, feat)
+    assert {s.key for s in stats} == {s.key for s in report.statistics}
+
+    for stat in stats:
+        save_statistic(stat, encoder=feat.cfg, train_dataset_hash="d0", dir=tmp_path / "cal")
+    e_s, e_m = feat.featurise(records)
+    fail = load_statistic("fail", dir=tmp_path / "cal")
+    scores = fail.score(e_s, e_m)
+    assert len(scores) == len(records) and np.all(np.isfinite(scores))
+    # Fitted on the whole set, so it separates the planted classes on that set - the held-out
+    # AUROC in the report, not this, is the number that says whether it generalises.
+    failed = np.array([not r.success for r in records])
+    assert scores[failed].mean() != scores[~failed].mean()

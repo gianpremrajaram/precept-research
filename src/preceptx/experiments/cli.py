@@ -53,7 +53,14 @@ from preceptx.experiments.rq3a_run import (
 from preceptx.experiments.rq3b import GATE_MODES, rq3b_sweeps, run_rq3b, write_rq3b
 from preceptx.experiments.runner import run_grid
 from preceptx.experiments.sweep import SweepConfig, dataset_hash_for, expand, sweep_hash
-from preceptx.gate.calibration import CalibrationReport
+from preceptx.gate.calibration import (
+    CalibrationConfig,
+    CalibrationReport,
+    calibrate,
+    fit_statistics,
+    write_report,
+)
+from preceptx.gate.statistics import resolve_statistic_key, save_statistic
 from preceptx.measure.featuriser import EncoderConfig, Featuriser, second_encoder_config
 from preceptx.serving.client import LLMClient, ServingConfig, ServingError
 
@@ -386,6 +393,56 @@ def rq3b(argv: list[str] | None = None) -> int:
     return 0
 
 
+def calibrate_cmd(argv: list[str] | None = None) -> int:
+    """``preceptx-calibrate``: fit and persist the gate statistics from an existing dataset.
+
+    Offline, no GPU, shaped like ``preceptx-analyse``. It is the only producer of the two artefacts
+    the rest of the stack consumes and neither of which anything wrote before: ``calibration.json``
+    (thresholds and orientations, which ``preceptx-rq3b`` imports rather than re-deriving) and the
+    per-statistic joblib (which the RQ3a transfer regime loads and applies to log corpora).
+
+    The target is realised episode failure, never CPVI - the R5 circularity guard lives in
+    ``gate.calibration``; this entry point only chooses which dataset supplies the outcomes.
+    """
+    parser = argparse.ArgumentParser(
+        prog="preceptx-calibrate",
+        description="Calibrate and persist the runtime gate statistics (offline).",
+    )
+    parser.add_argument("--dataset-hash", required=True, help="dataset supplying the outcomes")
+    parser.add_argument("--root", type=Path, default=Path("runs"), help="dataset root")
+    parser.add_argument("--out", type=Path, help="output dir (default: <root>/<hash>-calibration)")
+    parser.add_argument(
+        "--firing-rate-budget",
+        type=float,
+        default=CalibrationConfig.model_fields["firing_rate_budget"].default,
+        help="max fraction of handoffs the chosen threshold may block",
+    )
+    parser.add_argument("--verbose", action="store_true", help="DEBUG-level logging")
+    parsed = parser.parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if parsed.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
+    )
+
+    d_hash = cast(str, parsed.dataset_hash)
+    cfg = CalibrationConfig(firing_rate_budget=parsed.firing_rate_budget)
+    records = load_records(d_hash, root=parsed.root)
+    featuriser = Featuriser(EncoderConfig())
+    report = calibrate(records, featuriser, dataset_hash=d_hash, cfg=cfg)
+
+    out = cast(Path, parsed.out) if parsed.out else Path(parsed.root) / f"{d_hash}-calibration"
+    write_report(report, out)
+    for stat in fit_statistics(records, featuriser, cfg=cfg):
+        save_statistic(stat, encoder=featuriser.cfg, train_dataset_hash=d_hash, dir=out)
+    logger.info(
+        "calibration written to %s (n=%d, keys=%s)",
+        out,
+        report.n,
+        ", ".join(f"{s.key} auroc={s.auroc}" for s in report.statistics),
+    )
+    return 0
+
+
 def analyse(argv: list[str] | None = None) -> int:
     """``preceptx-analyse``: run the RQ1 analysis over an existing dataset. Offline, no GPU.
 
@@ -456,6 +513,29 @@ def rq2(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _transfer_config(dir: Path | None, key: str) -> tuple[RQ3aConfig, str | None]:
+    """Build the RQ3a config, reading the transfer arm's orientation off the calibration report.
+
+    The sign is looked up, never typed: ``orientation`` is what the calibration measured against
+    realised failure, and a hand-entered ``-1`` would silently invert every localisation number in
+    the table. A ``--transfer`` directory with no report for the requested key is a wiring error and
+    raises, rather than falling back to an unavailable arm that looks like an absent one.
+    """
+    if dir is None:
+        return RQ3aConfig(), None
+    path = dir / "calibration.json"
+    if not path.exists():
+        raise ConfigError(f"no calibration.json under {dir}; produce it with preceptx-calibrate")
+    report = CalibrationReport.model_validate_json(path.read_text())
+    resolved = resolve_statistic_key(key)
+    cal = next((s for s in report.statistics if s.key == resolved), None)
+    if cal is None:
+        available = ", ".join(sorted(s.key for s in report.statistics))
+        raise ConfigError(f"{path} has no statistic {resolved!r} (has: {available})")
+    cfg = RQ3aConfig(transfer_dir=dir, transfer_key=resolved, transfer_orientation=cal.orientation)
+    return cfg, report.dataset_hash
+
+
 def rq3a(argv: list[str] | None = None) -> int:
     """``preceptx-rq3a``: score every localisation method on a real multi-agent corpus (DSE-064).
 
@@ -481,6 +561,16 @@ def rq3a(argv: list[str] | None = None) -> int:
         help="replicate the three Who&When procedures against the served tier (costs model calls)",
     )
     parser.add_argument("--no-mast", action="store_true", help="drop the trace-level MAST arm")
+    parser.add_argument(
+        "--transfer",
+        type=Path,
+        help="calibration dir from preceptx-calibrate: enables the cpvi_transfer arm",
+    )
+    parser.add_argument(
+        "--transfer-key",
+        default=RQ3aConfig.model_fields["transfer_key"].default,
+        help="which persisted statistic to transfer (DSE-061 retired 'info')",
+    )
     parser.add_argument("--model", default="qwen14b", help="Hydra model group serving the judge")
     parser.add_argument("--base-url", default=ServingConfig.model_fields["base_url"].default)
     parser.add_argument("--timeout", type=float, default=60.0, help="per-request timeout (s)")
@@ -498,7 +588,7 @@ def rq3a(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
     )
 
-    cfg = RQ3aConfig()
+    cfg, train_hash = _transfer_config(parsed.transfer, parsed.transfer_key)
     corpus = cast(str, parsed.corpus)
     if parsed.dry_run:
         # Loading is not a model call, and the counts are the whole point of a pre-flight here:
@@ -534,6 +624,7 @@ def rq3a(argv: list[str] | None = None) -> int:
             judge=judge,
             with_mast=not parsed.no_mast,
             command=list(sys.argv),
+            transfer_train_dataset_hash=train_hash,
         )
 
     out = cast(Path, parsed.out) if parsed.out else cast(Path, parsed.root) / f"{corpus}-rq3a"

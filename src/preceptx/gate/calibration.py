@@ -231,11 +231,7 @@ def calibrate(
             _ECE_RELIABLE_MIN,
         )
     e_s, e_m = featuriser.featurise(records)
-    # InfoStatistic is not calibrated: DSE-061 retired it as rank-identical to FailStatistic.
-    factories: list[Callable[[], Statistic]] = [
-        lambda: FailStatistic(cfg.probe),
-        CosineStatistic,
-    ]
+    factories = statistic_factories(cfg.probe)
     return CalibrationReport(
         dataset_hash=dataset_hash,
         provenance=build_provenance(featuriser.cfg, cfg.probe),
@@ -244,6 +240,36 @@ def calibrate(
         ece_reliable=len(records) >= _ECE_RELIABLE_MIN,
         statistics=[_calibrate_one(f, records, e_s, e_m, cfg) for f in factories],
     )
+
+
+def statistic_factories(probe: ProbeConfig) -> list[Callable[[], Statistic]]:
+    """The statistics a calibration covers, in report order.
+
+    InfoStatistic is absent: DSE-061 retired it as rank-identical to FailStatistic. One list, so a
+    report and the statistics persisted beside it can never disagree about which keys exist.
+    """
+    return [lambda: FailStatistic(probe), CosineStatistic]
+
+
+def fit_statistics(
+    records: list[HandoffRecord], featuriser: Featuriser, *, cfg: CalibrationConfig | None = None
+) -> list[Statistic]:
+    """Fit each calibrated statistic on the WHOLE calibration set, for persistence and transfer.
+
+    Distinct from what ``calibrate`` fits: that cross-fits by episode so the reported AUROC, ECE and
+    threshold are honest held-out numbers. Those folds are diagnostics and are discarded. A
+    statistic that will be *applied* elsewhere - the RQ3a transfer regime - wants every labelled
+    handoff behind it, and the held-out numbers in the report beside it say how far to trust it.
+    """
+    cfg = cfg or CalibrationConfig()
+    failure_label(records)  # fail loud on unlabelled data before any compute, as `calibrate` does
+    e_s, e_m = featuriser.featurise(records)
+    out: list[Statistic] = []
+    for factory in statistic_factories(cfg.probe):
+        stat = factory()
+        stat.fit(e_s, e_m, stat.label(records))
+        out.append(stat)
+    return out
 
 
 def write_report(report: CalibrationReport, dir: Path | str) -> Path:

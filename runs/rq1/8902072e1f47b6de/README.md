@@ -21,4 +21,12 @@ task with outcome variance.
 `seed_sensitivity` reports the per-seed success rate rather than a C0-minus-hardest gap — see
 DSE-067 in `docs/experiment_design_log.md` for why the old code returned zeros instead.
 
+**It also backs the RQ3a transfer arm.** `calibration.json` here is this run's gate calibration
+(`preceptx-calibrate --dataset-hash 8902072e1f47b6de`), against realised episode failure and never
+CPVI: `fail` threshold 0.743, orientation +1, held-out AUROC 0.593, ECE 0.037 over n=1013; `cosine`
+AUROC 0.504, i.e. chance, and single-class by construction. The `fail` statistic fitted on this
+dataset is what `runs/rq3a/*/` transfers to the log corpora — the joblib itself is a trained probe
+and is gitignored, so it is refit from this dataset rather than committed. Re-key the transfer arm
+to the G1 confirmation when that reads out: same configuration, 3x the episodes, unseen seeds.
+
 Raw Parquet is not committed. Refetch with `scripts/myriad/fetch.sh 8902072e1f47b6de`.

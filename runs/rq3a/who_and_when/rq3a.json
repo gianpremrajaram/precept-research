@@ -19,8 +19,8 @@
       "mlp_hidden": 64,
       "seed": 0
     },
-    "git_sha": "1cb90acb11d5c9bfa6832cd46754f5808f3204ad",
-    "timestamp": "2026-08-28T22:09:55.705280+00:00"
+    "git_sha": "fc20275351b1fa04bb155c90ce3ec12f12a3159f",
+    "timestamp": "2026-08-29T13:45:21.846692+00:00"
   },
   "methods": [
     {
@@ -87,27 +87,39 @@
     },
     {
       "method": "cpvi_transfer",
-      "status": "unavailable",
-      "reason": "no frozen simulator statistic: the arena track has not produced one yet",
-      "n_traces_scored": 0,
-      "n_traces_evaluated": 0,
-      "n_traces_target_off_boundary": 0,
+      "status": "ok",
+      "reason": null,
+      "n_traces_scored": 182,
+      "n_traces_evaluated": 150,
+      "n_traces_target_off_boundary": 32,
       "n_abstained": 0,
       "model_calls": 0,
       "top_k": 3,
-      "step_accuracy": null,
-      "step_accuracy_ci": null,
-      "agent_accuracy": null,
-      "agent_accuracy_ci": null,
-      "top_k_accuracy": null,
-      "top_k_accuracy_ci": null,
-      "mrr": null,
-      "mrr_ci": null
+      "step_accuracy": 0.18,
+      "step_accuracy_ci": [
+        0.12666666666666668,
+        0.2466666666666667
+      ],
+      "agent_accuracy": 0.36666666666666664,
+      "agent_accuracy_ci": [
+        0.2866666666666667,
+        0.44666666666666666
+      ],
+      "top_k_accuracy": 0.48,
+      "top_k_accuracy_ci": [
+        0.4,
+        0.56
+      ],
+      "mrr": 0.38132803619140493,
+      "mrr_ci": [
+        0.3335439920242557,
+        0.43621507172434415
+      ]
     },
     {
       "method": "cpvi_refit",
-      "status": "unavailable",
-      "reason": "no replay outcome labels for these steps (DSE-042 has not been run on them)",
+      "status": "not_applicable",
+      "reason": "trace-outcome labels are single-class (1) on this corpus; nothing to fit",
       "n_traces_scored": 0,
       "n_traces_evaluated": 0,
       "n_traces_target_off_boundary": 0,
@@ -124,7 +136,28 @@
       "mrr_ci": null
     }
   ],
+  "outcomes": {
+    "source": "trace-outcome",
+    "traces_failed": 184,
+    "traces_succeeded": 0,
+    "traces_unlabelled": 0,
+    "steps_labelled": 4092,
+    "usable": false,
+    "reason": "the corpus supplies failures only (184 failed, 0 succeeded, 0 unlabelled of 184 traces), so the trace-level fallback is single-class and only counterfactual replay (DSE-042) can define an outcome here"
+  },
   "judge": null,
-  "mast": null,
+  "mast": {
+    "status": "ok",
+    "reason": null,
+    "n_traces": 1642,
+    "n_positive": 876,
+    "category_information_bits": 0.08822807131928986,
+    "category_information_ci": [
+      0.07040305695528654,
+      0.10665309964114263
+    ],
+    "cpvi_status": "not_applicable",
+    "cpvi_reason": "MAST publishes traces as one unsegmented transcript with no observation/message split, so there is no conditioning state and CPVI is undefined (docs/rq3a_schema_mapping.md section 4)"
+  },
   "agreement": null
 }

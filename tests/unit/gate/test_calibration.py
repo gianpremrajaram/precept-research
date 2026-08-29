@@ -13,8 +13,10 @@ from preceptx.gate.calibration import (
     _platt_reliability,
     _safe_auroc,
     calibrate,
+    statistic_factories,
 )
-from preceptx.gate.statistics import FailStatistic
+from preceptx.gate.statistics import CosineStatistic, FailStatistic
+from preceptx.measure.pvi_cpvi import ProbeConfig
 
 
 def test_group_split_prevents_optimistic_auroc() -> None:
@@ -72,3 +74,14 @@ def test_calibrate_target_is_failure_never_cpvi() -> None:
     # tests/integration/test_calibration_report.py.
     params = set(inspect.signature(calibrate).parameters)
     assert "cpvi" not in params and "cpvi_scores" not in params  # cannot calibrate against CPVI
+
+
+def test_persisted_statistics_cover_exactly_the_calibrated_keys() -> None:
+    """One factory list behind the report and the joblibs, so the two cannot disagree.
+
+    The transfer regime (DSE-024) loads a statistic by the key it read from the report; a report
+    listing a key with no statistic beside it would be a silently unavailable arm.
+    """
+    keys = {f().key for f in statistic_factories(ProbeConfig(n_repeats=1))}
+    assert keys == {FailStatistic.key, CosineStatistic.key}
+    assert "info" not in keys  # retired by DSE-061 as rank-identical to "fail"

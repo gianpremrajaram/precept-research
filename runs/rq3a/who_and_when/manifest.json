@@ -1,6 +1,6 @@
 {
-  "manifest_version": 1,
-  "git_sha": "1cb90acb11d5c9bfa6832cd46754f5808f3204ad",
+  "manifest_version": 2,
+  "git_sha": "fc20275351b1fa04bb155c90ce3ec12f12a3159f",
   "git_dirty": true,
   "corpus": "who_and_when",
   "corpus_digest": "0aa22b23ee5965c0",
@@ -15,8 +15,17 @@
     "outcome_unknown": 0,
     "reconstructed_observations": true
   },
-  "mast_digest": null,
-  "mast_counts": null,
+  "mast_digest": "e46786e3a27fc66b",
+  "mast_counts": {
+    "corpus": "mast",
+    "traces": 1642,
+    "steps": 0,
+    "handoffs": 0,
+    "failures": 1237,
+    "non_failures": 405,
+    "outcome_unknown": 0,
+    "reconstructed_observations": false
+  },
   "encoder_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
   "cfg": {
     "probe": {
@@ -35,10 +44,11 @@
     "handoffs_only": true,
     "audit_sample": 30,
     "audit_seed": 0,
-    "transfer_key": "s_info",
-    "transfer_dir": null,
-    "transfer_orientation": null
+    "transfer_key": "fail",
+    "transfer_dir": "runs/8902072e1f47b6de-calibration",
+    "transfer_orientation": 1.0
   },
+  "transfer_train_dataset_hash": "8902072e1f47b6de",
   "judge_model": null,
   "judge_revision": null,
   "judge_decoding": null,
@@ -50,7 +60,8 @@
     "/Users/gianpremrajaram/data/rq3a",
     "--corpus",
     "who_and_when",
-    "--no-mast",
+    "--transfer",
+    "runs/8902072e1f47b6de-calibration",
     "--out",
     "runs/rq3a/who_and_when"
   ],
@@ -70,7 +81,7 @@
     "joblib": "1.5.3",
     "sentence-transformers": "5.6.0"
   },
-  "timestamp": "2026-08-28T22:09:56.227589+00:00",
+  "timestamp": "2026-08-29T13:45:23.591778+00:00",
   "metrics": {
     "rq3a": {
       "corpus": "who_and_when",
@@ -82,12 +93,20 @@
       "statuses": {
         "schema_validity": "ok",
         "mean_cosine": "ok",
-        "cpvi_transfer": "unavailable",
-        "cpvi_refit": "unavailable"
+        "cpvi_transfer": "ok",
+        "cpvi_refit": "not_applicable"
       },
       "unavailable": {
-        "cpvi_transfer": "no frozen simulator statistic: the arena track has not produced one yet",
-        "cpvi_refit": "no replay outcome labels for these steps (DSE-042 has not been run on them)"
+        "cpvi_refit": "trace-outcome labels are single-class (1) on this corpus; nothing to fit"
+      },
+      "outcomes": {
+        "source": "trace-outcome",
+        "traces_failed": 184,
+        "traces_succeeded": 0,
+        "traces_unlabelled": 0,
+        "steps_labelled": 4092,
+        "usable": false,
+        "reason": "the corpus supplies failures only (184 failed, 0 succeeded, 0 unlabelled of 184 traces), so the trace-level fallback is single-class and only counterfactual replay (DSE-042) can define an outcome here"
       },
       "agreement": null
     }
