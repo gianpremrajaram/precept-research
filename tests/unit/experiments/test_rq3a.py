@@ -204,6 +204,18 @@ def test_evaluate_reports_targets_that_fall_outside_the_scored_steps() -> None:
     assert m.step_accuracy is None  # an empty cell, never a zero that reads as a measurement
 
 
+def test_evaluate_accounts_for_every_scored_trace() -> None:
+    """scored = evaluated + off_boundary + not_evaluable; an uncounted residual reads as a bug."""
+    records = [*_trace("t0", 3, mistake_step=1), *_trace("t1", 3, mistake_step=None)]
+    steps = localisation_steps(records)
+    m = evaluate(_scores("s", steps, [1.0] * len(steps)), steps, trace_targets(records), n_boot=200)
+    assert m.n_traces_not_evaluable == 1  # t1 carries no decisive step to score against
+    assert (
+        m.n_traces_scored
+        == m.n_traces_evaluated + m.n_traces_target_off_boundary + m.n_traces_not_evaluable
+    )
+
+
 def test_evaluate_keeps_the_row_when_a_method_is_unavailable() -> None:
     m = evaluate(
         MethodScores(method="cpvi_transfer", status="unavailable", reason="no probe"),

@@ -388,8 +388,12 @@ qsub -N precept-g1-confirm -l h_rt=4:00:00 -v DRIVER=preceptx-rq1 scripts/myriad
    the git SHA plus a dirty bit; a run launched from uncommitted work writes unreachable provenance
    into the artefact that *defines the gate*. Push, check the SHA out on the cluster, then submit.
 2. **Actually compare the dry-run hash** against `86ecbbdf35322dc3` as declared in `lineage.csv`.
-   Pinning an expected hash only works if someone diffs it. While you are there, note the hash
-   lattice is itself evidence the fingerprint covers the right fields: v7↔A1 differ (serialiser),
+   Pinning an expected hash only works if someone diffs it. **Done at `dc70c54`** — the dry-run
+   still prints `86ecbbdf35322dc3` / sweep `2e201daa64f6c4ac`, so PR #74's provenance hardening did
+   not re-key the gate. (The D26 arms *did* re-key between planning and submission, all three of
+   them, because 5d0b901 moved the prompt from v8 to v9; that is recorded per-row in `lineage.csv`.)
+   While you are there, note the hash lattice is itself evidence the fingerprint covers the right
+   fields: v7↔A1 differ (serialiser),
    A1↔A2 differ (`max_steps`), A2↔A3 differ (`thinking`), A2↔confirmation differ (seeds) — four
    deliberate re-keys, each matching exactly one intended change and nothing else.
 3. **One job, one reservation.** With a 12.5% rerun-instability rate, splitting the confirmation
@@ -446,13 +450,26 @@ reach the driver, which is how the corpus and the transfer arm are selected. **P
 without it the judge run would re-emit `cpvi_transfer` as `unavailable` and the finished table would
 lose the row the offline run just produced.
 
+**`--transfer` takes the calibration directory, not the frozen run directory.** The committed
+`runs/rq1/8902072e1f47b6de/` carries `calibration.json` but not the probe — the joblib is a trained
+artefact and is gitignored — so the statistic must be refit on the cluster first. Two offline
+commands on a login node, no GPU, before the `qsub`:
+
+```bash
+scripts/myriad/fetch.sh 8902072e1f47b6de   # or it is already under ~/Scratch from the pilot
+uv run preceptx-calibrate --dataset-hash 8902072e1f47b6de   # -> runs/8902072e1f47b6de-calibration/
+```
+
+The driver refuses a `--transfer` directory it cannot load the statistic out of, so a mistake here
+costs a second rather than the 8h reservation. Then:
+
 ```bash
 # Corpus must already be on disk: scripts/myriad/prefetch.sh with RQ3A_ROOT set.
 # Cost it first on a login node - no GPU, no model calls:
 #   preceptx-rq3a --root ~/Scratch/rq3a --corpus traceelephant --judge --dry-run
 qsub -N precept-rq3a-judge -l h_rt=8:00:00 \
   -v DRIVER=preceptx-rq3a,RQ3A_ROOT=$HOME/Scratch/rq3a scripts/myriad/pilot.sh \
-  --corpus traceelephant --transfer runs/rq1/8902072e1f47b6de
+  --corpus traceelephant --transfer runs/8902072e1f47b6de-calibration
 ```
 
 **Upper-bound judge calls, measured not guessed:** 3,428 for TraceElephant (220 traces, 2,488

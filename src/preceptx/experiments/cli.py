@@ -519,7 +519,9 @@ def _transfer_config(dir: Path | None, key: str) -> tuple[RQ3aConfig, str | None
     The sign is looked up, never typed: ``orientation`` is what the calibration measured against
     realised failure, and a hand-entered ``-1`` would silently invert every localisation number in
     the table. A ``--transfer`` directory with no report for the requested key is a wiring error and
-    raises, rather than falling back to an unavailable arm that looks like an absent one.
+    raises, rather than falling back to an unavailable arm that looks like an absent one. The
+    persisted joblib is checked here for the same reason: ``transfer_scores`` degrades a missing one
+    to ``unavailable``, which on a judge run would spend the GPU allocation and lose the row.
     """
     if dir is None:
         return RQ3aConfig(), None
@@ -532,6 +534,13 @@ def _transfer_config(dir: Path | None, key: str) -> tuple[RQ3aConfig, str | None
     if cal is None:
         available = ", ".join(sorted(s.key for s in report.statistics))
         raise ConfigError(f"{path} has no statistic {resolved!r} (has: {available})")
+    if not (dir / f"{resolved}.manifest.json").exists():
+        raise ConfigError(
+            f"{dir} carries a report but no persisted {resolved!r} statistic. --transfer wants the "
+            "*-calibration directory preceptx-calibrate wrote, not a frozen run directory: the "
+            "joblib is a trained probe and is gitignored, so refit it with preceptx-calibrate "
+            f"--dataset-hash {report.dataset_hash} first."
+        )
     cfg = RQ3aConfig(transfer_dir=dir, transfer_key=resolved, transfer_orientation=cal.orientation)
     return cfg, report.dataset_hash
 

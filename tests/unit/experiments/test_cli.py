@@ -140,6 +140,9 @@ def _calibration(dir: Path, *, keys: dict[str, float]) -> Path:
             for key, orientation in keys.items()
         ],
     )
+    for key in keys:
+        # `_transfer_config` and `load_statistic` both check presence only, so presence is enough.
+        (dir / f"{key}.manifest.json").touch()
     return write_report(report, dir)
 
 
@@ -170,3 +173,11 @@ def test_a_transfer_dir_that_cannot_supply_the_arm_fails_loud(tmp_path: Path) ->
     _calibration(tmp_path / "cal", keys={"cosine": 1.0})
     with pytest.raises(ConfigError, match="has no statistic 'fail'"):
         _transfer_config(tmp_path / "cal", "fail")
+
+
+def test_a_frozen_run_dir_without_the_joblib_fails_loud(tmp_path: Path) -> None:
+    """A frozen run dir has the report but not the probe: catch it here, not 8h into a job."""
+    _calibration(tmp_path, keys={"fail": 1.0})
+    (tmp_path / "fail.manifest.json").unlink()
+    with pytest.raises(ConfigError, match="no persisted 'fail' statistic"):
+        _transfer_config(tmp_path, "fail")

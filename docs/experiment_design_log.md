@@ -59,9 +59,12 @@ string said "DSE-042 has not been run on them", which reads as pending and under
 results table (`docs/rq3a_baselines.md`). AgenTracer's margin is "up to 18.18% over Gemini-2.5-Pro
 and Claude-4-Sonnet", not the "roughly 18% relative" the review carried. Who&When Pro (Jul 2026)
 reports **73.9%** step accuracy — but on 12,326 trajectories whose failures were *injected after
-replaying a successful prefix*, so the decisive step is placed by construction. The **same**
-all-at-once protocol scores 14.2% on Who&When and 73.9% on Who&When Pro, which is the cleanest
-available demonstration that these accuracies index the substrate at least as much as the method.
+replaying a successful prefix*, so the decisive step is placed by construction. The same
+all-at-once protocol scores 14.2% on Who&When and 73.9% on Who&When Pro — but on different models
+fourteen months apart, and the later paper reports no original-Who&When row to match them on, so
+this is *suggestive* of a substrate effect rather than a controlled demonstration of one. What makes
+model capability an implausible sole explanation is that generic frontier models were still below
+10% on Who&When step attribution in September 2025.
 AgentForesight (May 2026) had already been treated in §7; what had not been stated is that
 prospectivity *alone* is no longer a novelty claim.
 
@@ -91,8 +94,9 @@ arena's score distribution, and the log corpora are a different distribution, so
 rank-based and the arm makes no pass/fail claim. `OutcomeCensus` records the counts above in the
 result and the manifest. The baselines table is `docs/rq3a_baselines.md`.
 
-**Result of the fix.** Statistic `fail`, calibrated on the v9 A2 pilot (`8902072e1f47b6de`, n=1013,
-held-out AUROC 0.593, orientation +1), transferred unchanged:
+**Result of the fix.** Statistic `fail`, calibrated on the v9 A2 pilot (`8902072e1f47b6de`, n=1013
+handoffs over 24 episodes, held-out AUROC 0.593 with an episode-cluster 95% CI of [0.444, 0.737],
+orientation +1), transferred unchanged:
 
 | corpus | method | agent acc. | step acc. | MRR | model calls |
 |---|---|---|---|---|---|
@@ -113,9 +117,42 @@ on exactly this observability argument, made a priori; it now has a measurement 
 `reconstructed_observation` flag that DSE-041 required on every Who&When row is what makes the two
 rows safe to read side by side.
 
+**The Who&When tie is an aggregation coincidence, not a rank identity.** Both `mean_cosine` and
+`cpvi_transfer` score 0.367 agent accuracy there — the same 55 of 150 — which after DSE-061 retired
+`InfoStatistic` for being rank-identical to `FailStatistic` is a pattern worth checking rather than
+assuming. It is not one. The two methods share only **17** of those 55 traces; each is right on 38
+the other is wrong on, and their within-trace Spearman correlation is 0.03. On TraceElephant they
+are *anti*-correlated (within-trace ρ = −0.24, median −0.50), and the transfer arm's 68 agent hits
+overlap the cosine baseline's 30 on only 10. So the transferred statistic is not a dressed-up
+cosine: on the primary corpus it ranks against cosine and wins, and on Who&When the two are close to
+orthogonal and happen to land on the same total. Post-hoc diagnostic on the frozen scores — it
+changes no reported metric — computed as the Spearman correlation of the two methods' risk columns
+within each trace, plus the overlap of their agent-accuracy hit sets.
+
+**Why Who&When reports 182 traces against a 184-trace corpus.** Two traces
+(`Algorithm-Generated/0bb3b44a…`, `Algorithm-Generated/71345b0a…`) run a single expert end to end and
+contain no inter-agent handoff, so `handoffs_only` drops them before scoring. A boundary measure has
+nothing to measure where there is no boundary; the manifest carries both counts (`counts.traces`
+184, `metrics.rq3a.n_traces` 182) and they are now reconcilable from this note. Within the scored
+set the accounting is closed in the artefact itself: `LocalisationMetrics` gained
+`n_traces_not_evaluable`, so `scored = evaluated + off_boundary + not_evaluable` holds on every row
+— on TraceElephant 220 = 118 + 100 + 2, the two being traces that carry no decisive-step annotation.
+
 **What this does not yet claim.** The published 53.5% / 14.2% figures come from LLM-judge
 procedures, and that arm has not run (`judge` and `agreement` are still `null`). No comparison to
 the published methods is stated until it does. DSE-024 stays open on that basis.
+
+**And the transferred statistic is not established as better than chance at home.** Its held-out
+AUROC of 0.593 carries an episode-cluster 95% CI of [0.444, 0.737] over the pilot's 24 episodes
+(2,000 resamples of episodes, the same clustering `calibrate` cross-fits on), so "weak but real"
+overstates it: the interval straddles 0.5, and 10.8% of resamples land at or below it. That is a
+statement about the *pilot*, not about the transfer arm, and the two are different estimands —
+ranking a handful of handoffs within one trace against an annotation is a materially easier problem
+than predicting prospective episode failure from a single handoff, and the transfer result is
+measured with its own intervals on its own substrate. It is nonetheless the honest caveat on the
+statistic being transferred: it was calibrated on 24 episodes, and the orientation `+1` that the
+transfer arm multiplies by is chosen by the sign of that same underpowered AUROC. Re-keying to the
+G1 confirmation (60 episodes, unseen seeds) is what tightens it, and it is one CLI re-run.
 
 **So what.**
 1. **The fallback track has a positive result.** RQ3a can now report that a statistic fitted on a

@@ -613,6 +613,10 @@ class LocalisationMetrics(BaseModel):
     n_traces_scored: int = 0
     n_traces_evaluated: int = 0  # traces whose annotated step is inside the scored set
     n_traces_target_off_boundary: int = 0  # annotated step exists but was not scored
+    # In the scored set but not evaluable: no decisive-step annotation, or the method skipped it.
+    # Present so scored = evaluated + off_boundary + not_evaluable closes; a residual bucket with no
+    # counter is what forced the "220 - 118 - 100 = 2 unexplained" reading of the first freeze.
+    n_traces_not_evaluable: int = 0
     n_abstained: int = 0
     model_calls: int = 0
     top_k: int = 0
@@ -658,16 +662,19 @@ def evaluate(
     hit_topk: list[float] = []
     recip: list[float] = []
     off_boundary = 0
+    not_evaluable = 0
     for trace_id, trace in grouped.items():
         target = targets.get(trace_id)
         if target is None or target.decisive_step is None:
+            not_evaluable += 1
             continue
         positions = {s.step: i for i, s in enumerate(trace)}
         if target.decisive_step not in positions:
             off_boundary += 1
             continue
         if any((s.trace_id, s.step) not in risk for s in trace):
-            continue  # the method did not score this trace at all
+            not_evaluable += 1  # the method did not score this trace at all
+            continue
         ranks = _ranks(np.array([risk[(s.trace_id, s.step)] for s in trace], dtype=np.float64))
         rank = float(ranks[positions[target.decisive_step]])
         hit_step.append(float(rank == 1.0))
@@ -683,6 +690,7 @@ def evaluate(
             reason="no trace carries an annotated decisive step inside the scored steps",
             n_traces_scored=len({s.trace_id for s in scores.scores}),
             n_traces_target_off_boundary=off_boundary,
+            n_traces_not_evaluable=not_evaluable,
             n_abstained=scores.n_abstained,
             model_calls=scores.model_calls,
             top_k=top_k,
@@ -705,6 +713,7 @@ def evaluate(
         n_traces_scored=len({s.trace_id for s in scores.scores}),
         n_traces_evaluated=len(hit_step),
         n_traces_target_off_boundary=off_boundary,
+        n_traces_not_evaluable=not_evaluable,
         n_abstained=scores.n_abstained,
         model_calls=scores.model_calls,
         top_k=top_k,

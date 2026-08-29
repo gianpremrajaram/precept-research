@@ -13,9 +13,13 @@
 
 ## 1. The baselines table
 
-Accuracies are the best reported by each paper for that substrate. **They are not mutually
-comparable**: the substrates differ in observability, in how the decisive step is defined, and in
-whether the failure was naturally occurring or injected. Section 2 says what may be compared.
+Accuracies are the best reported by each paper for that substrate, except where a row names a
+narrower cell for commensurability — the Who&When Pro row is its **text** modality, the only one of
+its three that Who&When has; the same model and method reach 70.4% and 74.9% agent accuracy on
+image and video traces (Table 4), which are not comparable to a text-only benchmark at all.
+**The rows are not mutually comparable**: the substrates differ in observability, in how the
+decisive step is defined, and in whether the failure was naturally occurring or injected. Section 2
+says what may be compared.
 
 | Method / benchmark | Agent acc. | Step acc. | Substrate | Date | Source |
 |---|---|---|---|---|---|
@@ -29,7 +33,7 @@ whether the failure was naturally occurring or injected. Section 2 says what may
 | TraceElephant — dynamic agentic | **66.7%** *(secondary)* | **33.3%** | as above, with ground truth | Apr 2026 | as above |
 | TraceElephant — dynamic agentic, no ground truth | 60.6% | 27.6% | as above, ground truth withheld | Apr 2026 | as above |
 | AgentForesight-7B | \+19.9% over GPT-4.1 / DeepSeek-V4-Pro | 3× lower step-localisation error | AFTraj-2K: 2,276 trajectories (1,162 safe, 1,114 unsafe), **online, prefix-only** | May 2026 | [arXiv:2605.08715](https://arxiv.org/abs/2605.08715) |
-| Who&When Pro — all-at-once, Qwen3.5-122B | 57.5% | **73.9%** | 12,326 **injected-fault** trajectories, 3 modalities, 26 benchmarks, all failures | Jul 2026 | [arXiv:2607.09996](https://arxiv.org/abs/2607.09996) |
+| Who&When Pro — all-at-once, Qwen3.5-122B, **text traces** | 57.5% | **73.9%** | 12,326 **injected-fault** trajectories, 3 modalities, 26 benchmarks, all failures | Jul 2026 | [arXiv:2607.09996](https://arxiv.org/abs/2607.09996) |
 | Long-Horizon Agent Trajectory Attribution | Hit@1 0.537 / MRR 0.713 | — | 1,300+ trajectories; **includes non-failures** (30.3% task-aligned, 39.4% unsafe, 30.3% refusals) | Aug 2026 | [arXiv:2608.06909](https://arxiv.org/abs/2608.06909) |
 
 **Two readings of this table are wrong and must be pre-empted.**
@@ -37,8 +41,13 @@ whether the failure was naturally occurring or injected. Section 2 says what may
 *Who&When Pro's 73.9% step accuracy does not mean step attribution was solved.* Its pipeline
 "injects a failure only after exactly replaying a successful prefix", so the decisive step is
 placed by construction and is recoverable by construction. Who&When's 14.2% is over naturally
-occurring decisive errors. The five-fold jump is a change of substrate, not of method — the same
-all-at-once protocol produces both.
+occurring decisive errors. The same all-at-once protocol produces both figures — but **not the same
+model, and not model-matched**: Who&When Pro reports no original-Who&When row (its Table 1 compares
+dataset statistics, not performance), so the 14.2% is 2025 models and the 73.9% is Qwen3.5-122B in
+2026. The five-fold jump is therefore *suggestive* of a substrate effect rather than a clean
+demonstration of one. What makes model capability an implausible sole explanation is the middle row
+of the table: generic frontier reasoning models were still below 10% on Who&When step attribution
+in September 2025, so the intervening capability gain would have to be extraordinary to carry it.
 
 *Step accuracy exceeding agent accuracy on Who&When Pro is a property of injected faults*, and is
 the inverse of the ordering on every naturally annotated corpus in the table. Quoting the 73.9% as
@@ -116,3 +125,10 @@ The **secondary** mark in §1 flags the one figure whose table row two reads dis
 (TraceElephant dynamic-agentic agent accuracy, 65.9% vs 66.7%); both readings place it above the
 static-agentic row, and the exact value must be taken from Table 2 of the paper before submission.
 Every other tabulated figure was read consistently.
+
+Re-verified 29 August 2026 against the HTML full text after a cross-model review challenged one row.
+Who&When Pro's 57.5% / 73.9% is confirmed as the Qwen3.5-122B all-at-once **text-modality** cell of
+Table 4, and that paper reports **no** original-Who&When performance row — which is why §1's
+substrate reading is now stated as suggestive rather than as a same-model demonstration. Who&When's
+53.5% / 14.2% and AgenTracer's "+18.18% over Gemini-2.5-Pro and Claude-4-Sonnet" are verbatim from
+their abstracts.
