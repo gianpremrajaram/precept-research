@@ -131,8 +131,11 @@ class LLMClient:
     def chat(self, messages: list[ChatMessage], *, max_tokens: int | None = None) -> str:
         """Return the assistant message content for a chat completion.
 
-        Fails loud on thinking-mode output: a ``<think>`` block in the A->B message is a category
-        error (the channel would degrade reasoning, not the instruction), never a degraded mode.
+        A ``<think>`` block never reaches the caller, because the channel degrades the INSTRUCTION
+        and a truncation applied to a reasoning dump would measure something else. Unsolicited, it
+        is a category error and raises; solicited (``enable_thinking``, the DSE-067 probe arm) the
+        trace is stripped and only the message after ``</think>`` is returned. Either way it fails
+        loud rather than passing reasoning down the channel as a degraded mode.
         """
         try:
             response = self._client.chat.completions.create(
@@ -157,10 +160,27 @@ class LLMClient:
                 "it is ignoring chat_template_kwargs - set ServingConfig.thinking_switch"
             )
         if "<think>" in content:
-            raise ServingError(
-                "thinking-mode output detected ('<think>' in the completion); disable it via "
-                "chat_template_kwargs={'enable_thinking': False} on the serving config"
-            )
+            if not self._config.chat_template_kwargs.get("enable_thinking"):
+                raise ServingError(
+                    "thinking-mode output detected ('<think>' in the completion); disable it via "
+                    "chat_template_kwargs={'enable_thinking': False} on the serving config"
+                )
+            # Thinking was asked for, so the trace is expected - but it still must not reach the
+            # channel: `apply_channel` degrades the INSTRUCTION, and a truncation applied to a
+            # reasoning dump measures something else entirely. Strip it here, at the boundary.
+            _, sep, tail = content.partition("</think>")
+            if not sep:
+                # An unclosed tag means the trace ate the whole token budget. The remainder is not
+                # a message and passing it on would inject raw reasoning into the channel.
+                raise ServingError(
+                    "thinking trace was truncated before '</think>'; the completion carries no "
+                    "message - raise max_tokens on the serving config"
+                )
+            content = tail.strip()
+            if not content:
+                raise ServingError(
+                    "thinking-mode completion closed its trace but carried no message after it"
+                )
         return content
 
     def structured(

@@ -349,67 +349,115 @@ requested. Cluster data is therefore never poolable with `local-lmstudio` pilot 
 which is the point, since the local 4-bit G1 reading is indicative only and the **verdict of record
 is the bf16 re-gate run here**.
 
-## 9. Submissions in flight — the D26 capability ablation
+## 9. Submissions in flight — the G1 confirmation and the thinking probe
 
-Job 232980 floored at 1/96 for reasons `docs/experiment_design_log.md` (2026-08-29) sets out. Prompt
-v9 adds the load's pose-dependent span and the gap's usable clearance, `--max-steps` relaxes the
-certified budget, and `--thinking` turns on the Qwen3 reasoning trace. The ablation separates the three so the eventual RQ1 sweep is
-run on a configuration we can defend rather than the first one that happened to work.
+The D26 ablation is **done**. A1 (`9f46e0e34fab81cf`) and A2 (`8902072e1f47b6de`) completed on
+29 Aug; A3 (`9fe1823c20d33c75`) crashed pre-episode on the `<think>` contract bug and wrote no
+Parquet. What they established, and what is therefore no longer worth GPU time, is in the design
+log's 2026-08-29 G1 entry. The short version: prompt v9's clearance line is the mechanism (6 easy
+seeds gained, 0 lost, McNemar *p* = 0.031); the step budget is **not** (*p* = 0.63 / 1.00); and
+those two runs are the **pilot**, not the gate.
 
-**Three qsubs, not one jobscript.** Same driver, same grid, three flag sets — `pilot.sh` already
-passes `"$@"` through to the driver, so this needs no new script, and three independent jobs can be
-scheduled concurrently where a single sequential one cannot. They write three distinct dataset
-directories; the hashes below are from `--dry-run` and are what each job must report.
+### 9a. The G1 confirmation — one job, one configuration, unseen seeds
+
+G1's threshold was declared **before** this run, in view of the pilot and logged as such:
+**pass iff `easy >= 8/20` AND `medium >= 3/20`.** Hard is descriptive and is *not* gated. The gate
+is the realised outcome of this run, once — a rerun is permissible only for an infrastructure
+failure that produces no episodes, never for an unwelcome number. The seeds are 12-31 precisely
+because the threshold was set with seeds 0-11 in view; evaluating on the same seeds would make the
+gate untestable rather than merely weak.
+
+Only A2's configuration is re-run. A1's question is answered, so re-running it would buy nothing.
+
+**Before anything is frozen, pull A1's and A2's run manifests.** `run_grid` writes them to
+`runs/<hash>-run/manifest.json` at sweep end, so they are on the cluster now; the 29 Aug results
+bundle pulled only `runs/<hash>/*.parquet` and left them behind. `preceptx-analyse` cannot
+reconstruct them — it records the encoder revision and probe config, not the model revision, the
+exact command or the serving environment. Use the §10 rsync, which already selects exactly these.
 
 ```bash
 cd ~/Scratch/precept-research
-SEEDS="$(seq -s, 0 11)"
-COMMON=(-l h_rt=4:00:00 -v DRIVER=preceptx-rq1 scripts/myriad/pilot.sh
-        --conditions C0 --difficulties easy,medium --seeds "$SEEDS" --no-analysis)
-
-# A1 - v9 at the certified budgets: the serialiser alone, against job 232980's matched cells.
-qsub -N precept-a1-v9-certified "${COMMON[@]}"                          # 9f46e0e34fab81cf
-
-# A2 - v9 with budget slack: the step budget alone, against A1.
-qsub -N precept-a2-v9-budget50  "${COMMON[@]}" --max-steps 50           # 8902072e1f47b6de
-
-# A3 - v9, budget slack, reasoning on: decode-time reasoning alone, against A2.
-qsub -N precept-a3-v9-thinking  "${COMMON[@]}" --max-steps 50 --thinking # 9fe1823c20d33c75
+qsub -N precept-g1-confirm -l h_rt=4:00:00 -v DRIVER=preceptx-rq1 scripts/myriad/pilot.sh \
+  --conditions C0 --difficulties easy,medium,hard --seeds "$(seq -s, 12 31)" \
+  --max-steps 50 --no-analysis
 ```
 
-`--no-analysis` releases the GPU at the last episode. Analyse each afterwards on a login node, with
-no GPU and no time limit:
+**Before you submit — four checks, minutes each.**
+
+1. **Commit and push DSE-067 first.** The jobscript runs a `git checkout` and the manifest stamps
+   the git SHA plus a dirty bit; a run launched from uncommitted work writes unreachable provenance
+   into the artefact that *defines the gate*. Push, check the SHA out on the cluster, then submit.
+2. **Actually compare the dry-run hash** against `86ecbbdf35322dc3` as declared in `lineage.csv`.
+   Pinning an expected hash only works if someone diffs it. While you are there, note the hash
+   lattice is itself evidence the fingerprint covers the right fields: v7↔A1 differ (serialiser),
+   A1↔A2 differ (`max_steps`), A2↔A3 differ (`thinking`), A2↔confirmation differ (seeds) — four
+   deliberate re-keys, each matching exactly one intended change and nothing else.
+3. **One job, one reservation.** With a 12.5% rerun-instability rate, splitting the confirmation
+   across reservations imports batch-composition noise into a gate decision.
+4. **`scripts/myriad/fetch.sh <hash>` afterwards**, before anything is frozen.
+
+Cost it on the login node first — the hash it prints is what the job must report:
+
+```bash
+uv run preceptx-rq1 --dry-run --conditions C0 --difficulties easy,medium,hard \
+  --seeds "$(seq -s, 12 31)" --max-steps 50
+```
+
+60 episodes at A2's measured 0.90 s/handoff is ~45 min plus ~2 min of model load, so the 4h request
+is generous. Analyse afterwards on a login node, no GPU:
 
 ```bash
 preceptx-analyse --dataset-hash <the hash the driver printed>
 ```
 
-The v7 baseline is **not** re-run: job 232980 (`188a3d556b824e3e`) covered easy+medium at 32 seeds,
-a superset of this grid, so the contrast is drawn on matched cells (C0, easy+medium, seeds 0-11).
+### 9b. The A3 thinking probe — after the gate reads out, on the pilot's seeds
 
-A3 is the slow arm — a reasoning trace is several times the tokens of a v7 turn, so budget roughly
-four times A2's episode time. The 4h request is sized for it; A1 and A2 will finish well inside it.
+A3 never ran, so there are no A3 numbers to contaminate and no seed reset is owed. But it is a
+**capability** manipulation, not a channel condition: it belongs with the 32B arm in the robustness
+story and never inside the C0->C4 gradient, and it cannot meet the determinism standard (Qwen
+discourages greedy decoding in thinking mode, and the pilot measures 12.5% outcome flips without
+it). So it is an appendix probe — and an appendix probe gains nothing from fresh seeds and loses
+the per-seed pairing that made v8 -> A1 -> A2 convincing.
+
+Run it on **seeds 0-11**, seed-paired against A2, so decoding is the only changed variable:
+
+```bash
+qsub -N precept-a3-v9-thinking -l h_rt=6:00:00 -v DRIVER=preceptx-rq1 scripts/myriad/pilot.sh \
+  --conditions C0 --difficulties easy,medium --seeds "$(seq -s, 0 11)" \
+  --max-steps 50 --thinking --no-analysis
+```
+
+Submit this **after** the confirmation reads out, not alongside it: the gate is the priority call on
+the queue, and a thinking trace is several times the tokens of a non-thinking turn, so budget
+roughly four times A2's episode time. The 6h request is sized for that, not for the grid.
 
 ## 10. Getting the results back
 
-The pilot writes its verdict to Scratch and `runs/` is gitignored, so nothing leaves the cluster on
-its own. Pull the two small directories the run of record actually consists of:
+`runs/` is gitignored on both ends, so nothing leaves the cluster on its own. **Use
+`scripts/myriad/fetch.sh`, not a hand-rolled `rsync` or `tar`.** The 29 Aug results bundle was
+assembled by hand, took only `runs/<hash>/*.parquet`, and left both v9 arms' manifests behind — the
+one artefact that cannot be rebuilt locally, because `preceptx-analyse` reconstructs the *analysis*
+(encoder revision, probe config) and not the model revision, the exact command or the serving
+environment.
 
 ```bash
-# From your laptop, after the job finishes. <hash> is printed in the job log ("sweep <hash> ...").
-rsync -av --prune-empty-dirs \
-  --include='*/' --include='manifest.json' --include='summary.json' \
-  --include='pilot.json' --include='pilot.md' --include='serve_env.json' --exclude='*' \
-  myriad:~/Scratch/precept-research/runs/ ./runs/myriad/
+# Every run's manifests + summaries + serve_env - small, and the part you cannot regenerate.
+scripts/myriad/fetch.sh
+
+# One run, with its Parquet, staged where preceptx-analyse looks for it.
+scripts/myriad/fetch.sh 86ecbbdf35322dc3
+uv run preceptx-analyse --dataset-hash 86ecbbdf35322dc3
 ```
 
-That is deliberately not the whole tree: `handoffs.jsonl`, the Parquet parts, probes and embedding
-caches are large and regenerable, and none of them are committed. The manifest, the summary, the
-gate report and the serving-environment capture are what a frozen result is made of.
+`HOST` defaults to the `myriad` ssh alias from §2; set `HOST=user@myriad.rc.ucl.ac.uk` without one.
 
-Bring the Parquet dataset back too (`--include='*.parquet'`) when you want to re-run the analysis
-locally rather than trust the on-node run — it is the same estimator either way, but a local re-run
-is how you check that.
+Deliberately excluded: `handoffs.jsonl`, probes and embedding caches. All are large and
+regenerable, and none are committed. Parquet is regenerable only by re-running the sweep on a GPU,
+so it comes for a named hash and is skipped otherwise — one 96-part dataset should not arrive every
+time someone fetches a manifest.
+
+**Run it after every job, including the G1 confirmation.** The confirmation writes a *new* manifest,
+and a gate-defining run whose manifest lives only in `~/Scratch` is one purge from unrecoverable.
 
 ## 11. Verified on the cluster, and what is still open
 

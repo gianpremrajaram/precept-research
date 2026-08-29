@@ -1,0 +1,2 @@
+condition,n_handoffs,median_cpvi,low_cpvi_no_progress,low_cpvi_progress,high_cpvi_no_progress,high_cpvi_progress,absent_signal_rate,absent_signal_ci,unused_signal_rate,unused_signal_ci
+C0,1013,0.35782979518824237,348,159,251,255,0.3435340572556762,"(0.2907855231661537, 0.39451166829963474)",0.24777887462981243,"(0.16922138836772985, 0.3320648043906558)"

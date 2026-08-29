@@ -116,6 +116,30 @@ def _gradient_records(n_seeds: int = 6) -> list[HandoffRecord]:
     return records
 
 
+def test_single_condition_grid_refuses_the_gradient_estimands(tmp_path: Path) -> None:
+    """DSE-067: a C0-only capability grid must not report a zero gradient as a finding.
+
+    Both v9 arms did exactly that. The C0-minus-hardest gap becomes C0 minus itself - identically
+    zero for every seed, which reads as a perfectly seed-stable ordering - and C(condition) becomes
+    rank-deficient, which statsmodels answers with a boundary fit rather than a refusal.
+    """
+    feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "e"), encoder=_MsgEncoder())
+    records = [r for r in _gradient_records(n_seeds=20) if r.condition == "C0"]
+    result, _ = analyse_rq1(records, feat, dataset_hash="d0", cfg=_FAST)
+
+    ss = result.seed_sensitivity
+    assert ss.metric == "success_rate"  # not the self-subtracting gap
+    assert "self-subtraction" in ss.reason  # and the artefact says why it switched
+    assert ss.n_seeds == 20
+    assert ss.dispersion is None or ss.dispersion >= 0.0
+
+    mm = result.mixed_model
+    assert not mm.converged  # refused, not fitted to a boundary
+    assert mm.coef_no_mediator == {}  # no contrast was invented
+    assert mm.mediations == []
+    assert "rank-deficient" in mm.mediation_note
+
+
 def test_analyse_rq1_recovers_the_gradient(tmp_path: Path) -> None:
     feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "e"), encoder=_MsgEncoder())
     records = _gradient_records()

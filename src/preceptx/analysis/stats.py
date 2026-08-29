@@ -99,15 +99,33 @@ ANALYSIS_PROTOCOL: dict[str, str] = {
 
 
 class SeedSensitivity(BaseModel):
-    """Across-seed spread of one metric - the mandatory companion to any LLM-run point estimate."""
+    """Across-seed spread of one metric - the mandatory companion to any LLM-run point estimate.
+
+    ``metric`` names WHICH quantity was spread across seeds, because the answer depends on the grid
+    and a reader cannot infer it from the numbers. On a multi-condition grid it is the per-seed
+    C0-minus-hardest gap, so the spread answers "is the C0->C4 ordering seed-stable?". On a
+    single-condition grid that gap is a self-subtraction and is identically zero for every seed -
+    which reads as perfect stability rather than as an unanswerable question - so the metric
+    switches to the per-seed success rate and ``dispersion`` carries the inference (DSE-067).
+
+    This is *across-seed* sensitivity: different arenas, one run. It is a different object from
+    rerun instability at a FIXED seed (batched-inference nondeterminism), which no field here
+    measures and which needs a deliberate replication to estimate.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    metric: Literal["condition_gap", "success_rate"] = "condition_gap"
     n_seeds: int
     mean: float
     sd: float
     spread: float  # max - min across seeds
     per_seed: dict[int, float]
+    # Pearson dispersion of per-seed success counts against a shared-rate binomial null: 1.0 is
+    # exactly binomial, > 1 means seeds differ by more than sampling noise. Only computed for
+    # ``metric="success_rate"``; None otherwise, where the gap is a difference and has no such null.
+    dispersion: float | None = None
+    reason: str = ""
 
 
 class AnalysisProvenance(BaseModel):
@@ -404,15 +422,50 @@ def correct_pvalues(pvals: FloatArray, *, method: Literal["holm", "bh"] = "holm"
     return corrected
 
 
-def seed_sensitivity(by_seed: Mapping[int, float]) -> SeedSensitivity:
-    """Aggregate one metric across seeds into its spread (the LLM-non-determinism companion)."""
+def seed_sensitivity(
+    by_seed: Mapping[int, float],
+    *,
+    metric: Literal["condition_gap", "success_rate"] = "condition_gap",
+    counts: Mapping[int, tuple[int, int]] | None = None,
+    reason: str = "",
+) -> SeedSensitivity:
+    """Aggregate one metric across seeds into its spread (the LLM-non-determinism companion).
+
+    ``counts`` maps seed -> (successes, episodes) and is required for ``metric="success_rate"``: the
+    spread of a rate is uninformative on its own, because a handful of episodes per seed produces a
+    wide spread from sampling alone. The dispersion index divides that out.
+    """
     if not by_seed:
         raise ValueError("seed_sensitivity needs at least one seed")
     vals = np.array(list(by_seed.values()), dtype=np.float64)
     return SeedSensitivity(
+        metric=metric,
         n_seeds=len(by_seed),
         mean=float(np.mean(vals)),
         sd=float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0,
         spread=float(np.max(vals) - np.min(vals)),
         per_seed=dict(by_seed),
+        dispersion=binomial_dispersion(counts) if counts else None,
+        reason=reason,
     )
+
+
+def binomial_dispersion(counts: Mapping[int, tuple[int, int]]) -> float | None:
+    """Pearson dispersion of per-group success counts against one shared-rate binomial null.
+
+    ``sum((k - n*p)^2 / (n*p*(1-p))) / (groups - 1)`` at the pooled ``p``. 1.0 is exactly binomial;
+    above 1 the groups differ by more than sampling noise, which for seeds means the arena draw
+    moves the outcome. Returns None where the null is degenerate - fewer than two groups, or a
+    pooled rate at 0 or 1, where every deviation is zero and the ratio is 0/0 rather than "no
+    dispersion". Reporting 0.0 there would be the same false-reassurance failure this exists to fix.
+    """
+    if len(counts) < 2:
+        return None
+    k = np.array([c[0] for c in counts.values()], dtype=np.float64)
+    n = np.array([c[1] for c in counts.values()], dtype=np.float64)
+    if n.sum() == 0:
+        return None
+    p = float(k.sum() / n.sum())
+    if p <= 0.0 or p >= 1.0:
+        return None
+    return float(np.sum((k - n * p) ** 2 / (n * p * (1.0 - p))) / (len(counts) - 1))

@@ -11,6 +11,7 @@ from hypothesis import strategies as st
 from scipy.stats import spearmanr
 
 from preceptx.analysis.stats import (
+    binomial_dispersion,
     bootstrap_ci,
     build_provenance,
     cliffs_delta,
@@ -87,6 +88,45 @@ def test_seed_sensitivity_aggregates() -> None:
     assert s.mean == 2.0
     assert abs(s.sd - np.sqrt(2.0)) < 1e-9  # std with ddof=1
     assert s.spread == 2.0
+    assert s.metric == "condition_gap"  # the default estimand, and it is named in the artefact
+    assert s.dispersion is None  # a difference has no shared-rate binomial null
+
+
+def test_seed_sensitivity_carries_the_success_rate_estimand_and_its_dispersion() -> None:
+    # DSE-067: the single-condition fallback. The metric is labelled and the inference moves to
+    # dispersion, because the spread of a rate over few episodes is wide from sampling alone.
+    s = seed_sensitivity(
+        {0: 0.5, 1: 0.5},
+        metric="success_rate",
+        counts={0: (5, 10), 1: (5, 10)},
+        reason="only condition C0 is present",
+    )
+    assert s.metric == "success_rate"
+    assert s.dispersion is not None and s.dispersion < 1e-9  # both seeds at the pooled rate
+    assert "only condition C0" in s.reason
+
+
+def test_binomial_dispersion_separates_seed_effects_from_sampling_noise() -> None:
+    at_pooled = binomial_dispersion({0: (5, 10), 1: (5, 10)})
+    split = binomial_dispersion({0: (10, 10), 1: (0, 10)})
+    assert at_pooled is not None and split is not None
+    assert at_pooled < 1.0 < split  # identical seeds under-disperse; opposite seeds over-disperse
+
+
+@pytest.mark.parametrize(
+    "counts",
+    [
+        {0: (1, 2)},  # one group: no across-group question to ask
+        {0: (0, 5), 1: (0, 5)},  # pooled rate 0 - every deviation is zero, the ratio is 0/0
+        {0: (5, 5), 1: (5, 5)},  # pooled rate 1 - likewise
+    ],
+)
+def test_binomial_dispersion_returns_none_rather_than_a_reassuring_zero(
+    counts: dict[int, tuple[int, int]],
+) -> None:
+    # Returning 0.0 from a degenerate null is the exact failure this guard exists to prevent:
+    # "no dispersion found" is a finding, "not estimable" is not.
+    assert binomial_dispersion(counts) is None
 
 
 def _rec(episode: str, y: bool | None) -> HandoffRecord:

@@ -640,7 +640,35 @@ def _length_matched(
 def _mixed_model(
     handoff_df: pd.DataFrame, ep_df: pd.DataFrame, present: list[Condition], cfg: RQ1Config
 ) -> tuple[MixedModelSummary, dict[str, tuple[float, float]]]:
-    """Assemble the H1 handoff model and the H2 episode mediation into the persisted summary."""
+    """Assemble the H1 handoff model and the H2 episode mediation into the persisted summary.
+
+    Both models regress on ``C(condition)``, so on a single-condition grid the design matrix is
+    rank-deficient by construction: there is no contrast to estimate. statsmodels does not refuse -
+    it emits ConvergenceWarnings and returns coefficients from a boundary fit, which land in the
+    artefact looking like estimates. Refuse here instead, and say why (DSE-067).
+    """
+    if len(present) < 2:
+        note = (
+            f"H1/H2 not fitted: only condition {present[0]} is present, so C(condition) is "
+            "rank-deficient and there is no contrast to estimate. This is a capability grid, "
+            "not a gradient; the mixed model requires at least two conditions."
+        )
+        return (
+            MixedModelSummary(
+                formula="not fitted (single-condition grid)",
+                coef_no_mediator={},
+                converged=False,
+                mediation_outcome="episode_success",
+                path_b=float("nan"),
+                path_b_length_controlled=float("nan"),
+                mediations=[],
+                mediation_converged=False,
+                diagnostic_cpvi_coef=float("nan"),
+                diagnostic_attenuation=float("nan"),
+                mediation_note=note,
+            ),
+            {},
+        )
     coef_no, cpvi_coef, attenuation, converged, coef_p = _handoff_model(handoff_df)
     mediations, path_b, path_b_len, med_conv = _episode_mediation(ep_df, present, cfg)
     finite_indirect = [m.indirect for m in mediations if np.isfinite(m.indirect)]
@@ -775,14 +803,39 @@ def analyse_rq1(
     # Seed sensitivity on the *gradient*, not a collapsed metric: per-seed C0-minus-hardest success
     # gap, so its spread answers "is the C0->C4 ordering seed-stable?" (the thesis question), rather
     # not "does overall success vary across seeds?" (which it always does, from LLM nondeterminism).
-    hardest = present[-1]
+    #
+    # On a single-condition grid `hardest is C0` and that gap is C0 minus itself: exactly 0.0 for
+    # every seed, an all-zero report that reads as a perfectly seed-stable gradient when the truth
+    # is that no gradient exists to be stable (DSE-067; it produced exactly that on the two v9
+    # capability arms). Fall back to the per-seed success rate, labelled as such, with the binomial
+    # dispersion index carrying the inference - the only across-seed question a one-condition grid
+    # can actually answer.
     seeds_metric: dict[int, float] = {}
-    for s in sorted(ep_frame["seed"].unique()):
-        sub = ep_frame[ep_frame["seed"] == s]
-        c0 = sub[sub["condition"] == "C0"]["success"]
-        hard = sub[sub["condition"] == hardest]["success"]
-        if len(c0) and len(hard):
-            seeds_metric[int(s)] = float(c0.mean() - hard.mean())
+    if len(present) < 2:
+        counts: dict[int, tuple[int, int]] = {}
+        for s in sorted(ep_frame["seed"].unique()):
+            succ = ep_frame[ep_frame["seed"] == s]["success"]
+            seeds_metric[int(s)] = float(succ.mean())
+            counts[int(s)] = (int(succ.sum()), len(succ))
+        seed_sens = seed_sensitivity(
+            seeds_metric,
+            metric="success_rate",
+            counts=counts,
+            reason=(
+                f"only condition {present[0]} is present, so the C0-minus-hardest gap is a "
+                "self-subtraction and identically zero; reporting the per-seed success rate and "
+                "its binomial dispersion instead"
+            ),
+        )
+    else:
+        hardest = present[-1]
+        for s in sorted(ep_frame["seed"].unique()):
+            sub = ep_frame[ep_frame["seed"] == s]
+            c0 = sub[sub["condition"] == "C0"]["success"]
+            hard = sub[sub["condition"] == hardest]["success"]
+            if len(c0) and len(hard):
+                seeds_metric[int(s)] = float(c0.mean() - hard.mean())
+        seed_sens = seed_sensitivity(seeds_metric)
     result = RQ1Result(
         dataset_hash=dataset_hash,
         n_handoffs=len(records),
@@ -795,7 +848,7 @@ def analyse_rq1(
         partial_spearman_length=partial_spearman(cpvi_scores, y.astype(np.float64), msg_tokens),
         length_matched=_length_matched(ep_med_df, present, cfg),
         signal_decomposition=signal_decomposition(records, cpvi_scores, y, cfg),
-        seed_sensitivity=seed_sensitivity(seeds_metric),
+        seed_sensitivity=seed_sens,
         shuffled_message_audit=_shuffle_audit(e_s, e_m, y, groups, records, cpvi_scores, cfg),
     )
     return result, scores

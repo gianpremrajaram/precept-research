@@ -127,6 +127,54 @@ def test_chat_fails_loud_on_thinking_mode_output() -> None:
         LLMClient(_config()).chat([ChatMessage(role="user", content="hi")])
 
 
+def _thinking_config() -> ServingConfig:
+    """The DSE-067 probe arm: thinking deliberately on, as ``--thinking`` configures it."""
+    return _config().model_copy(update={"chat_template_kwargs": {"enable_thinking": True}})
+
+
+@respx.mock
+def test_chat_strips_a_solicited_thinking_trace() -> None:
+    # DSE-067: --thinking sets enable_thinking=True, so the trace is expected - but it must not
+    # reach the channel, which degrades the instruction and not the reasoning behind it.
+    respx.post(CHAT).mock(
+        return_value=httpx.Response(200, json=_completion("<think>plan...</think>\n push east "))
+    )
+    assert LLMClient(_thinking_config()).chat([ChatMessage(role="user", content="hi")]) == (
+        "push east"
+    )
+
+
+@respx.mock
+def test_chat_still_rejects_an_unsolicited_thinking_trace() -> None:
+    # The guard the fix must NOT weaken: thinking off and a trace anyway means the runtime ignored
+    # chat_template_kwargs, and every channel condition downstream would be confounded.
+    respx.post(CHAT).mock(
+        return_value=httpx.Response(200, json=_completion("<think>plan...</think>push east"))
+    )
+    with pytest.raises(ServingError, match="thinking-mode"):
+        LLMClient(_config()).chat([ChatMessage(role="user", content="hi")])
+
+
+@respx.mock
+def test_chat_rejects_a_thinking_trace_truncated_before_its_close_tag() -> None:
+    # max_tokens=2048 makes mid-trace truncation real. Splitting on a missing "</think>" would
+    # return the raw reasoning, which C1's 8-token cap would then silently truncate as a message.
+    respx.post(CHAT).mock(
+        return_value=httpx.Response(200, json=_completion("<think>plan... and then I should"))
+    )
+    with pytest.raises(ServingError, match="truncated before"):
+        LLMClient(_thinking_config()).chat([ChatMessage(role="user", content="hi")])
+
+
+@respx.mock
+def test_chat_rejects_a_closed_thinking_trace_with_no_message_after_it() -> None:
+    respx.post(CHAT).mock(
+        return_value=httpx.Response(200, json=_completion("<think>plan...</think>   "))
+    )
+    with pytest.raises(ServingError, match="no message"):
+        LLMClient(_thinking_config()).chat([ChatMessage(role="user", content="hi")])
+
+
 @respx.mock
 def test_chat_retries_transient_error() -> None:
     route = respx.post(CHAT).mock(

@@ -15,7 +15,193 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
-## 2026-08-29 (latest) — The prompt's own pass rule was wrong by the width of the wall's lip
+## 2026-08-29 (latest) — G1 declared against a pilot that moved the failure, and the thinking arm that could never have run
+
+- **Area:** the G1 capability gate (thresholds, seed allocation and consequence map), the RQ1
+  confirmation design, the `<think>` contract in `serving/client.py`, and two single-condition
+  estimands in `experiments/rq1.py` / `analysis/stats.py`. Prompt **v9** unchanged —
+  this entry declares a gate over v9, it does not modify v9.
+- **Status:** declared, pre-run. The confirmation sweep is the next submission. The v9 ablation
+  (A1 `9f46e0e34fab81cf`, A2 `8902072e1f47b6de`) is hereby designated the **pilot**, not the gate.
+
+**Trigger.** The three D26 ablation arms returned from Myriad on 29 Aug. A1 and A2 completed; A3
+raised `ServingError` before its first episode. The v9 serialiser worked, which made the gate live
+for the first time — and made the question "what would have counted as passing?" one that had to be
+answered in writing before the next run rather than after it.
+
+**Finding — four, in the order they matter.**
+
+1. **The v9 clearance line is the mechanism, and it is a large effect.** Seed-matched against the
+   frozen baseline `188a3d556b824e3e` (identical start poses at equal seed, verified), A2 gains
+   **6 easy seeds and loses 0** (McNemar exact *p* = 0.031); A1 gains 4 and loses 0. Success goes
+   1/12 → 5/12 → 7/12 easy and 0/12 → 2/12 → 3/12 medium. The mechanism reading is unambiguous:
+   messages naming an extent go 13.7% → 100%, steps sitting in a pose that actually fits go
+   **3.1% → 28.6%**, and contact-limited rotations — the trap the baseline diagnosis attributed to
+   premature eastward pushes — collapse from **51.0% → 2.4%** of all rotations. That last number is
+   the confirmation that the trap was downstream of the projection error, as the diagnosis
+   predicted, and not an independent hazard needing its own fix.
+2. **The step budget is not the mechanism, and must not be credited as one.** A1 and A2 differ in
+   `max_steps` alone (30/35 vs 50) and are byte-identical in prompt. The isolated budget contrast
+   is **not significant**: easy gained 3 lost 1 (*p* = 0.63), medium gained 3 lost 2 (*p* = 1.00).
+   Cap 50 is retained for headroom and because the pilot that clears the gate must be the
+   configuration the gate is declared over — not because it does work.
+3. **Rerun instability at a fixed seed is ~12.5% of episodes — and it is not seed sensitivity.**
+   Under deterministic decoding a seed solved at cap 30 cannot fail at cap 50. Easy seed 1 and
+   medium seeds 0 and 8 did exactly that, and A1/A2's *medium* solved sets are **disjoint**
+   ({0,8} vs {3,4,5}). A1-vs-A2 is therefore an accidental partial replication, and 3/24 episodes
+   flipping is what it measures.
+
+   **These are two different objects and the write-up must name them separately, because a viva
+   examiner will.** *Rerun instability* is the same arena, re-run: batched-inference
+   non-determinism, estimable only from a deliberate (or accidental) replication, ~12.5% here.
+   *Across-seed sensitivity* is different arenas in one run: whether the draw makes episodes
+   systematically easier or harder. On the pilot the second is **absent** — per-seed success counts
+   give a binomial dispersion of 0.64 (A1) and 1.06 (A2), i.e. indistinguishable from coin-flipping
+   at a shared rate. So the outcome variation is decoding noise, not arena difficulty, which is why
+   12 seeds per rung cannot carry a gate decision at medium and why the gate is declared with a
+   no-reruns clause below.
+4. **The binding constraint has moved from perception to commitment.** Starts are near-perpendicular
+   by construction (80.7–98.8°), so every episode needs ~4 (easy) / ~6 (medium) *consecutive*
+   same-direction rotations. At medium the split is decisive: successes reverse direction 0.26 of
+   the time with a longest committed run of 6.0 (exactly the requirement); failures reverse 0.55
+   with a longest run of 3.0. A second, independent waste appears alongside it — starts are already
+   y-aligned within tolerance (com_y 2.90–3.06 against a ±0.20 medium tolerance), yet failing medium
+   episodes spend a median of **14** N/S moves and drift to com_y 3.95.
+
+**Impact (had it not been caught).** Two distinct failures. Declaring the gate *after* the
+confirmation run, on the seeds already inspected, would have made G1 unfalsifiable — the
+alternative threshold considered below (≥25% easy, ≥1 medium success) passes at the pilot rates
+with probability 0.996, which is a ceremony, not a gate. Separately, crediting the step budget for
+the v9 recovery would have put the next ladder rung on a lever the data says is inert.
+
+**Risk reduced.** A capability gate whose threshold was chosen in view of the data it is evaluated
+on; and a v10 prompt iteration aimed at the wrong mechanism.
+
+**Correction paths considered and rejected.**
+- *Evaluate G1 on seeds 0–11.* Rejected. The threshold is being set with the pilot in view — which
+  CLAUDE.md permits pre-freeze, and which this entry logs — so the evaluation set must be disjoint
+  or the gate tests nothing. Contamination is a hazard to *decisions*, not to comparisons.
+- *Re-run A1 and A2 on fresh seeds too.* Rejected. A1's question (does budget explain the gain?) is
+  answered and its answer is no; re-running it would spend GPU time to re-answer it. The
+  confirmation runs exactly one configuration: the one the gate is declared over.
+- *Fix the direction thrash before the gate.* Rejected on two grounds. The confirmation must test
+  the piloted configuration, not a fifth one; and the obvious fix — emitting a signed
+  `rotations_to_clear` — trades the floor for a ceiling and thins the gradient from the top, the
+  same objection that retired the `fits` boolean in D26 and again in the entry above. Reversal rate
+  and longest-committed-run become **reported covariates**; the N/S waste gets identical treatment.
+  If medium fails the gate with thrash as the measured cause, that is an evidence-based v10 trigger
+  and a better paragraph than a quiet pre-gate patch.
+- *Fold the thinking arm into the confirmation as a fourth arm.* Rejected. Thinking mode is a
+  **capability** manipulation, not a channel condition; it belongs with the 32B arm in the
+  robustness story, never inside the C0→C4 gradient. It also cannot meet the determinism standard —
+  Qwen explicitly discourages greedy decoding in thinking mode (noted at `client.py`'s
+  `chat_template_kwargs` default), and finding 3 measures 12.5% outcome flips *without* it.
+
+**The fix — the declaration. Fixed here, before the run, and not revisable by its outcome.**
+
+- **Configuration under test:** v9 / C0 / numeric / `Qwen3-14B` @ `40c069824f4251a91eefaf281ebe4c544efd3e18` / cap 50 — A2's configuration exactly.
+- **Evaluation set:** seeds **12–31** (20 per rung), disjoint from the pilot's 0–11.
+- **G1 passes iff `easy ≥ 8/20` AND `medium ≥ 3/20`.** Binomial joint pass probability, computed
+  before the run: **0.881** if the pilot point estimates are the true rates (0.970 easy × 0.909
+  medium), and **0.076** if the true rates sit at the pilot's lower CI bounds (0.32 easy, 0.089
+  medium). The rejected alternative — ≥25% easy and ≥1 medium success — scores **0.996** at the
+  pilot rates, which is a rubber stamp by arithmetic rather than by argument, and is the reason
+  this check is written down rather than left to judgement. The spread 0.88 → 0.08 is the bar
+  doing its job: it is comfortable if v9 is as good as the pilot suggests and unforgiving if the
+  pilot was optimistic, which is exactly the discrimination a capability gate is for.
+- **Hard is descriptive, not gated.** Its usable gap is 0.54, requiring the load within ~10° of
+  flat and therefore the same ~6-long committed run medium failures already cannot produce. It is
+  run for characterisation; a hard floor is **not** a G1 failure and may not be read back as one.
+- **Consequence map, declared now.** *Both rungs pass* → G1 met; RQ1 stays headline and the C0→C4
+  sweep is the next submission. *Easy passes, medium fails* → G1 met on the gated rung; the ladder
+  proceeds with easy primary and medium descriptive, and — only if the medium failure is
+  attributable to the measured thrash covariates — a declared v10 decision point opens. *Easy
+  fails* → the fallback ladder fires as written, RQ3a takes the headline, and RQ1 ships as a
+  mechanistic negative result with the three named failure modes.
+- **No reruns.** With a 12.5% measured flip rate an easy result of 7–8/20 will invite a second look.
+  The gate is the realised outcome of this run, once. A rerun is permissible only for an
+  infrastructure failure that produces no episodes (A3's class), never for an unwelcome number.
+
+**The fix — two analysis estimands that reported a reassuring number instead of refusing.** Both
+were found by reading the reconstructed pilot reports rather than by a test, and both are the same
+failure class as the `<think>` collision: a computation that is correct on the grid it was written
+for and silently wrong on a grid nobody had run yet.
+
+- **`seed_sensitivity` returned exactly 0.0 for every seed.** It is defined as the per-seed
+  C0-minus-hardest gap, so on a single-condition grid `hardest is C0` and it computes C0 minus
+  itself. Not a degenerate estimate — a *self-subtraction*, whose all-zero output reads as "the
+  C0→C4 ordering is perfectly seed-stable", the most reassuring statement the field can make, at
+  the moment no ordering exists. It now switches estimand: the per-seed **success rate**, labelled
+  `metric="success_rate"` with the reason in the artefact, and a Pearson **binomial dispersion**
+  index carrying the inference, because the spread of a rate over few episodes is wide from
+  sampling alone. Dispersion returns `None` rather than 0.0 where the null is degenerate (one seed,
+  or a pooled rate at 0 or 1) — emitting 0.0 there would rebuild the same false reassurance one
+  level down.
+- **The H1/H2 mixed models were fitted to a rank-deficient design.** Both regress on
+  `C(condition)`; with one condition there is no contrast to estimate. statsmodels does not refuse
+  — it emits `ConvergenceWarning`s and returns boundary coefficients, which land in the artefact
+  looking like estimates. They are now refused, with the reason in `mediation_note`.
+
+This is why the guards were worth writing before the confirmation and not after: **the confirmation
+is itself a single-condition grid** (C0 across three difficulties), so it would have inherited both
+defects at exactly the moment the numbers decide a gate. Re-running the two pilot analyses under the
+guards produces no `ConvergenceWarning`s and a result the old code could not express: dispersion
+**0.64** (A1) and **1.06** (A2), i.e. across-seed variation indistinguishable from binomial noise at
+a shared rate — the arena draw does not make episodes systematically easier or harder, and the
+outcome variation is decoding noise. That is the finding the all-zeros had been hiding.
+
+**The fix — the A3 contract bug.** `experiments/cli.py` sets `chat_template_kwargs={"enable_thinking":
+True}` under `--thinking`, while `serving/client.py` rejected **any** `<think>` unconditionally: the
+flag could never have produced an episode. `chat()` now discriminates. Unsolicited, the trace still
+raises — that guard protects every channel condition and is not weakened. Solicited, the trace is
+**stripped** at the boundary rather than allowed through, because `apply_channel` degrades the
+instruction and a C1 truncation applied to a reasoning dump would measure something else entirely.
+A trace with no `</think>` raises rather than falling back to the raw string: at `max_tokens = 2048`
+mid-trace truncation is a real outcome, and the fallback would have injected raw reasoning into the
+channel as a silent contaminant.
+
+**Result of the fix.** The gate is not yet read out. What is fixed is the rule, and it is fixed in
+public before the data exists. Four unit tests pin the `<think>` contract: solicited-and-closed
+strips to the message, unsolicited raises, unclosed raises, and closed-with-nothing-after raises.
+A1 and A2 have had their **analyses** reconstructed offline (`preceptx-analyse`, no GPU, encoder
+served from cache), and both reports come back keyed to the dataset hash the GPU job printed —
+which is the evidence that splitting analysis off the GPU job (the change that stopped job 227886
+holding an A100 for 2h37m running `statsmodels`) leaves dataset identity intact. Their **run**
+manifests are a separate artefact and were not reconstructed: `run_grid` writes them to
+`runs/<hash>-run/manifest.json` at sweep end, they exist on the cluster, and the 29 Aug results
+bundle simply did not pull them. They must be rsynced before either run is frozen — a reconstructed
+analysis carries the encoder revision and probe config, but only the run manifest carries the model
+revision, the exact command and the serving environment, and CLAUDE.md counts a run without those
+as not audit-usable.
+
+The analysis also surfaced what the floored baseline could not: **CPVI is positive, selective and
+above its own null on v9 data.** A2 gives CPVI 0.188 [0.115, 0.249] against PVI 0.273 — a
+PVI − CPVI gap of 0.085, which is the share of apparent message value that was an echo of the shared
+state — with control CPVI −0.002. On `188a3d556b824e3e` there was no outcome variance for a probe to
+find. This is RQ2's measurement primitive working end to end, and it is a pilot observation, not a
+frozen result.
+
+**Report the interval, not the permutation p.** The shuffled-message null gives *p* = 0.048, which
+is marginal and is bounded below by the permutation count: with `n_shuffle = 20` the smallest
+attainable p is 1/21 = 0.048, so the test is *at its floor* and the value says "no permutation beat
+the observed statistic", not "the effect is barely significant". The CI is the honest summary — it
+clears zero comfortably and does not depend on the permutation budget. Raise `n_shuffle` before the
+C0–C4 sweep if a p-value is wanted at all.
+
+**So-what.** Two lessons, one methodological and one about instruments. The methodological one: a
+gate declared after its data is not a weak gate, it is not a gate — and the tell is arithmetic, not
+judgement. Computing P(pass) at the observed rates is a five-line check that separates a real
+threshold (0.88) from a rubber stamp (≈ 1.00), and it should be run on every acceptance criterion
+before it is written down. The instrument lesson is that a validity guard and a deliberate
+manipulation of the same quantity will collide, silently, at whichever boundary was written first.
+The `<think>` guard was correct when the only correct amount of thinking was none; the moment
+`--thinking` was added, the guard became a contract violation that no test covered because no test
+exercised the two together. Any flag that turns on a behaviour some other layer treats as a fault
+needs a test asserting the pair, not each half.
+
+---
+
+## 2026-08-29 — The prompt's own pass rule was wrong by the width of the wall's lip
 
 - **Area:** the state serialiser (`sim/serialise.py`), the arena's aperture (`sim/arena.py`), and
   the C3 restriction (`agents/channel.py`). Prompt **v9**, correcting **v8** before v8 ran.
