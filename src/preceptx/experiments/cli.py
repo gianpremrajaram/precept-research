@@ -36,6 +36,7 @@ from typing import Any, cast
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
+from preceptx.agents.channel import ChannelConfig
 from preceptx.config import ConfigError, ExperimentConfig, load_config
 from preceptx.data.writer import load_records
 from preceptx.experiments.pilot import run_pilot, write_pilot_report
@@ -119,6 +120,25 @@ def _parser(name: str, description: str) -> argparse.ArgumentParser:
         help="in-band no-thinking token for runtimes that ignore chat_template_kwargs "
         "(LM Studio + Qwen3: /no_think)",
     )
+    # ChannelConfig was unreachable from the shell until now, so every dataset recorded to date
+    # ran at its defaults (8 / 2 / 0.4). `channel` is inside sweep_hash, so a changed parameter
+    # keys its own dataset and cannot append into the run it is a control for.
+    p.add_argument(
+        "--c1-max-tokens",
+        type=int,
+        help="C1 whitespace-token cap (default 8). A coherent length cap, not word-level noise: "
+        "this is the knob the post-hoc length control for C4 turns",
+    )
+    p.add_argument(
+        "--c3-window-rows",
+        type=int,
+        help="C3 grid rows kept either side of the load (default 2)",
+    )
+    p.add_argument(
+        "--c4-dropout",
+        type=float,
+        help="C4 per-token drop probability (default 0.4)",
+    )
     p.add_argument(
         "--max-steps",
         type=int,
@@ -159,6 +179,17 @@ def _build_sweep(args: argparse.Namespace, defaults: dict[str, list[Any]]) -> Sw
         if args.model_b is None
         else _resolve_cell(args.config_dir, [f"model={args.model_b}", *args.overrides]).model
     )
+    # Only the flags actually given are passed, so an untouched axis keeps ChannelConfig's default
+    # and hashes byte-identically to every dataset recorded before these flags existed.
+    channel = {
+        k: v
+        for k, v in (
+            ("c1_max_tokens", args.c1_max_tokens),
+            ("c3_window_rows", args.c3_window_rows),
+            ("c4_dropout", args.c4_dropout),
+        )
+        if v is not None
+    }
     return SweepConfig(
         conditions=_csv(args.conditions, defaults["conditions"]),
         serialisations=_csv(args.serialisations, defaults["serialisations"]),
@@ -168,6 +199,7 @@ def _build_sweep(args: argparse.Namespace, defaults: dict[str, list[Any]]) -> Sw
         model_b=model_b,
         concurrency=args.concurrency,
         thinking=args.thinking,
+        **({} if not channel else {"channel": ChannelConfig(**channel)}),
         # Omitted rather than passed as None: the field's default_factory holds the certified
         # budgets, and None would fail the validator instead of falling back to them.
         **({} if args.max_steps is None else {"max_steps": args.max_steps}),
@@ -188,6 +220,8 @@ def _print_plan(sweep: SweepConfig) -> None:
     print(f"model (A):        {sweep.model.name}@{sweep.model.revision}")
     if sweep.model_b is not None:
         print(f"model (B):        {sweep.model_b.name}@{sweep.model_b.revision}")
+    if sweep.channel != ChannelConfig():
+        print(f"channel:          {sweep.channel.model_dump()} (NON-DEFAULT)")
 
 
 def _client(model: str, base_url: str, args: argparse.Namespace) -> LLMClient:

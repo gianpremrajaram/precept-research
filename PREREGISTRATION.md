@@ -278,6 +278,40 @@ next run, and the two things owed before it could yield `proceed` — the G3 cor
 length-matched contrast — are both closed and needed no GPU. Full reading in `runs/rq1/86ecbbdf35322dc3/README.md` and the design log
 (2026-08-29, latest).
 
+**The rung-2 re-gate ran on 2026-08-29 (job 238085, `af50c7c12d65540f`, 80 episodes) and returned
+`fallback`.** G1 **PASS 0.800** (easy C0 8/10 — the successor bar task is more solvable than the T
+it replaced, which read 10/20). G2 **FAIL −0.250**: C0 0.450 against hardest-by-declaration C4 0.700,
+with the CPVI gap also inverted at −0.015. G3 groundedness **PASS 1.000**. G3 correctness **FAIL
+0.242** against a null 95th percentile of 0.257, *p* = 0.980. **The E3 ledger is closed — no attempt
+3, no second rung-2 attempt.**
+
+*The directional prediction declared above came out half confirmed.* C1 does what it predicted and
+harder: **0/20**, 44.3 wall collisions an episode, a delivered message of 46 characters carrying
+position and no directive. C4 inverts it again and by more than the T-load attempt did: **14/20**
+against C0's 9/20. So the instruction account is **not sufficient**, and by this section's own terms
+**rung 3 stands as the finding**: the absent gradient is reported as the result.
+
+*What the run adds that the ladder did not anticipate.* The absence now has a named mechanism, from
+the correctness limb declared on 2026-08-29 and run here per condition for the first time
+(`experiments.rq1.action_agreement`, 200 within-episode permutations each): **only C4's receiver
+beats its own within-episode null** — agreement 0.399 against a 95th percentile of 0.388,
+*p* = 0.010, surviving Bonferroni across the four tests — while C0 sits at 0.330 against 0.330
+(*p* = 0.070), C1 at 0.046 and C3 at 0.261 against 0.340. Pooled rotation-direction agreement is
+**0.512** on 1,470 rotations. A channel cannot be degraded informatively when the receiver was never
+reading the state, which is why no C0→C4 gradient exists to measure. The measurement itself is
+unindicted and on this corpus is vindicated: CPVI rank-orders realised success across all four
+conditions, H2's indirect effects exclude zero for C1 and C3, the RD-15 audit reads *p* = 0.00498,
+control-task CPVI is 0.0018, and RQ2's H4 is supported on all three statistics (§8b A1).
+
+*The pre-declared length control is what stops C4 being over-read.* Within the single overlapping
+delivered-length stratum the C4−C0 success delta is **−0.071**, not +0.250, and the CPVI delta
+−0.069, not +0.030, on 13 of 40 episodes. C1's and C3's deficits survive the same stratification.
+§8b **A2** declares the post-hoc arm that arbitrates the two surviving readings, with its decision
+rule fixed before the `qsub`.
+
+Full reading in `runs/rq1/af50c7c12d65540f/README.md`, results log in `docs/EXPERIMENTS.md`
+(E3, the rung-2 re-gate), design log 2026-08-30.
+
 *Note against §2, recorded because it was not.* The confirmation ran at `--max-steps 50` broadcast
 to every difficulty, against the certified budgets 30/35/35 (`STEP_BUDGETS`, ceil(2.5 × the oracle
 optimum)) that §2 fixes and §7 reaffirms. **The verdict of record therefore already carries a step-
@@ -504,6 +538,87 @@ retries stay greedy and the content is what changes.
   exists, which is what makes it pre-registered rather than chosen after the fact.
 - **Reproducibility claim.** Seed-pinned, revision-pinned, low-variance. **Exact reproducibility of
   LLM runs is never claimed.**
+
+## 8a. Amendment protocol — what this document does and does not lock
+
+*Added 2026-08-30, after the E3 re-gate returned `fallback` and before any run declared under it.*
+
+The register has been read, correctly, as prohibitive. It is not: it is a **commitment device with a
+declared scope**, and treating everything in it as immutable has a cost of its own — it would forbid
+following a mechanism the instrument itself uncovered, which is not integrity, it is paralysis. This
+section states the boundary explicitly so that neither side of it has to be argued case by case.
+
+**Immutable — no amendment, ever.**
+
+1. **A threshold that has already been evaluated.** G1/G2/G3's values, and the reading of "hardest"
+   as C4, are fixed for every verdict already taken. Re-reading a spent gate against a contrast
+   chosen after seeing which one passes is the forbidden move, and the E3 verdict of record stands
+   as `fallback` on exactly that ground.
+2. ***Y* and *V* for a confirmatory contrast.** `y_binary_progress` remains RQ1's primary outcome and
+   the probe family is unchanged. RQ2's declared selection rule may *recommend* a different label for
+   a **new** arm (it recommends `y_terminal_success` for RQ3b) — that is a forward choice by a rule
+   written before the outcome was read, not a re-pointing of a frozen one.
+3. **The attempt ledger.** One retune, spent. One rung-2 re-gate, spent. There is no attempt 3, and
+   no amendment creates one. Nothing below reopens the gradient hypothesis on this arena.
+4. **The circularity guard.** The runtime statistic is calibrated against realised outcomes and never
+   against CPVI, under every amendment.
+
+**Amendable, under the protocol below.**
+
+- **Which of the surviving results carries the headline**, and how the chapters are ordered. The
+  ladder pre-committed which results *survive* a failed re-gate; it did not pre-commit their
+  billing, and choosing the strongest surviving evidence is not a degree of freedom over any number.
+- **Additional cells that arbitrate a mechanism**, as opposed to rescuing a hypothesis. The test is
+  the *estimand*: a cell that would move a gate verdict or a confirmatory contrast is prohibited by
+  (1) and (3); a cell whose only output is a new, separately reported quantity is not.
+- **Secondary and diagnostic analyses on data already recorded**, including ones nobody thought of
+  before the run — provided they are reported with the census of everything else tried.
+- **The emphasis, framing and chapter map of the write-up.**
+
+**The protocol. All four, or it is not an amendment — it is a rationalisation.**
+
+1. **Declared in writing here, dated, before the run or analysis it governs.** For a cell, that means
+   before the `qsub`, not before the analysis of its output.
+2. **Its decision rule stated in advance** — what each possible outcome would be taken to mean,
+   including the outcome that weakens the more attractive reading. An amendment whose declaration
+   does not name a way of being disappointed is not a test.
+3. **Labelled post-hoc wherever it is reported**, never pooled with a confirmatory number, never
+   entered into a gate, a contrast table, or a family-wise correction alongside pre-registered tests.
+4. **Recorded twice**: a numbered row in §8b below, and a dated entry in
+   `docs/experiment_design_log.md` giving the reasoning.
+
+An amendment that fails is reported as having failed. That is the whole price of the licence, and it
+is what separates this from choosing the analysis after seeing the answer.
+
+## 8b. Amendment register
+
+| # | Date | Amendment | Decision rule declared in advance | Status |
+|---|---|---|---|---|
+| A1 | 2026-08-30 | **Headline order changed: the measurement primitive (RQ2 + the receiver-competence mechanism) leads; RQ3a becomes the external-validity chapter.** Rung 1 elevated RQ3a on the expectation that the arena would yield nothing usable. It yielded a positive measurement result — H4 supported on all three statistics on the four-condition corpus (corrected ρ 0.269–0.275, all intervals excluding zero; `fail` AUROC 0.906), CPVI rank-ordering realised success across all four conditions, and mediation intervals excluding zero for C1 and C3. | Not a test; a billing decision over results that all stand on their own. Reversion condition stated for completeness: if the RQ3a judge arm (E11-judge) contradicts the transfer result, RQ3a is reported as mixed and the measurement chapter absorbs it rather than the reverse. | Declared |
+| A2 | 2026-08-30 | **One post-hoc arm, the *length-holding content swap*: C1 at `--c1-max-tokens 40`, over C0 and the capped arm × easy+hard × seeds 0–9 (40 episodes).** 40 whitespace tokens is not a round number — it is C4's measured median delivered length exactly (C4 median 40 tokens / 220 chars; a 40-token prefix of C0 is 40 tokens / 217 chars), and whitespace tokens of the delivered message is precisely the covariate `_length_matched` stratifies on. The arm exists because the E3 length-matched control (13/40 overlapping episodes, Δ success +0.250 → −0.071) leaves two readings of C4's advantage open: *compression removes un-actionable numeric detail* versus *shorter prompts help this receiver*. | **Declared before the `qsub`.** The cap is a **prefix**, so it keeps every number and severs the directive — the exact mirror of C4, which destroys the numbers and leaves the directive readable ("You should load reduce vertical so fits through the slit"). Two arms, one length, opposite content. Primary readout is the per-condition `action_agreement` limb. **If the capped arm resembles C4** (agreement ≈ 0.40, separating from its own within-episode null at *p* < 0.05, flip rate ≈ 0.45), length alone is sufficient and the content reading is **rejected**. **If it resembles C0 or worse** (agreement ≤ 0.33, not separating), length alone is **insufficient** — what survives the channel matters, which is the compression reading's necessary condition. Anything strictly between is reported as **mixed and unresolved**, with no preference expressed. Success rate is reported beside it and is explicitly *not* the arbiter: 20 episodes cannot resolve a success contrast, and the arm is powered for the agreement limb. **What this arm cannot do:** it cannot show that the *numbers specifically* are the un-actionable part — that needs A4's targeted-redaction arm, and until that runs the compression reading stays a necessary-condition result, not a demonstrated mechanism. |
+| A3 | 2026-08-30 | **RQ3b runs, with its result direction declared in advance** (see §8c). | See §8c. | Declared, not yet run |
+| A5 | 2026-08-30 | **Re-freeze the RQ3a transfer arm against a calibration fitted on the E3 re-gate corpus (`af50c7c12d65540f`) instead of the G1 confirmation (`86ecbbdf35322dc3`).** This is a result-affecting change to an already-frozen result, so it is declared here rather than made quietly. | **The selection rule is stated before the re-run and does not read RQ3a's numbers:** calibrate on the corpus with the most conditions and the widest realised-outcome variance. The E3 corpus wins on both — four conditions against one, and episode success spanning 0.00–0.70 against a single arm — and it is measurably the better instrument: `fail` AUROC **0.906** against 0.754, `cosine` **0.766** against 0.569, where `cosine` is the probe-independent statistic the circularity objection turns on and 0.569 is barely above chance. The old numbers are retained in the re-freeze note beside the new ones, and if the transfer arm gets *worse* under the better calibration that is reported as the result, not reverted. | Declared, not yet run |
+| A4 | 2026-08-30 | **Proposed, not declared: a targeted numeric-redaction arm** — same length reduction as C4 but deterministic, replacing every numeral with a placeholder while leaving the directive intact. It completes the 2×2 that A2 opens half of (A2 holds length and keeps the numbers; this holds length and keeps the directive). | Would be: if redaction reproduces C4's agreement and success, the benefit is specifically the removal of numeric detail; if it does not, C4's advantage depends on the *randomness* of the loss rather than on which content is lost. | **Blocked on a decision, not on compute.** It requires a new `Channel` concrete and a new condition label, which is a change to the experimental design surface rather than tech dev, so it is recorded here as proposed and is not run until it is explicitly declared. |
+
+## 8c. RQ3b's pre-declared direction
+
+Declared before RQ3b's submission, because a predicted null is evidence and an unannounced null is
+not. The E3 mechanism says the receiver does not act on the pose: pooled rotation-direction agreement
+is **0.512** on 1,470 rotations, and only C4's per-condition agreement separates from its own
+within-episode null. **A gate that blocks low-information handoffs cannot repair a receiver that
+ignores the state it is handed**, so the prediction is that **gate-active does not beat the
+matched-firing-rate control on episode success**, and H6 returns a null.
+
+- **Analysis is stratified by difficulty, not pooled.** Hard has almost no headroom on this task
+  (C0 1/10, C3 0/10 on the E3 cell), so pooling would dilute any real effect into a floor.
+- **What would falsify the prediction:** gate-active beating matched-random with an interval
+  excluding zero. That would say the block-and-re-prompt path repairs something the pose-agreement
+  limb cannot see, and the mechanism account would be wrong in an informative way.
+- **The gate target is `y_terminal_success`**, selected by RQ2's rule (declared in
+  `experiments/rq2.py` before any RQ1 outcome was read), and the threshold is imported from the
+  calibration, never re-derived from the arms' own outcomes.
+
+---
 
 ## 9. Deviation log (opens at F0)
 

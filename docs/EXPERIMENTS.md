@@ -22,27 +22,30 @@
 
 ## 1. Status board
 
-The task is certified and the first real model calls have been made. E0 passed on 24 August 2026 and
-S1 is under way on the local substrate; **no headline data exists** — every episode recorded so far is
-interim `local-lmstudio` data, permanently labelled as such and never pooled with cluster data. E3 has
-run twice on Myriad bf16. **The one-retune ledger is now spent**: attempt 1 returned `retune_once`,
-the retune was declared as prompt v5, and attempt 2 returned `fallback`. The ladder has fired — rung 1
-(RQ3a, no GPU) and rung 2 (one declared task-geometry change, then one re-gate) run in parallel.
+The task is certified, headline data exists on Myriad bf16, and **the E3 ledger is closed.** The
+one-retune ledger was spent on 26 August (attempt 1 `retune_once` → prompt v5 → attempt 2
+`fallback`), the ladder fired, and rung 2's single permitted re-gate ran on 29 August on the
+successor bar task: **`af50c7c12d65540f` returned `fallback` again** — G1 PASS 0.800, G2 FAIL −0.250,
+G3 groundedness PASS 1.000, G3 correctness FAIL 0.242. There is no attempt 3 and no second rung-2
+attempt. **Rung 3 is the finding for the arena track**, and the mechanism is named rather than
+absent: only the lossy channel (C4) produces a receiver whose actions beat their own within-episode
+permutation null. Rung 1 (RQ3a) is frozen on its transfer regime. The interim `local-lmstudio`
+episodes remain permanently labelled and are never pooled with cluster data.
 
 | ID | Experiment | Stage | Needs | Status |
 |---|---|---|---|---|
 | E0 | Task certification (CPU only, no model) | S0 | Nothing | **Passed 24 Aug 2026** |
 | E1 | Serving smoke test and transcript read | S1 | A served model | **Run 24 Aug 2026 (v2, then v3)** |
 | E2 | Model-ladder benchmark (DSE-005) | S1 / S2 | A served model | **Local row 24 Aug 2026; cluster rows open** |
-| E3 | Formal pilot gate run — G1/G2/G3 (DSE-019) | S1 → re-gate S2 | E1, the driver | **Attempt 2 (re-gate) run on Myriad bf16, 26 Aug 2026 (`eddd19c654515bb2`, 80 episodes): `fallback`. G1 FAIL 0.300; G2 FAIL −0.200 — *success gap sign-inverted*, CPVI half PASS +0.100 bits; G3 PASS 0.999. Cause diagnosed: A's message is grounded but inferentially wrong (the load clears the easy slit head-on at every angle, so rotation cannot be required there), so degrading the *message* helps and degrading the *observation* (C3) hurts. Ladder fired: rung 1 (RQ3a) and rung 2 (task geometry) in parallel; no attempt 3** |
-| E4 | RQ1 information-gradient main sweep (DSE-020) | S3 | **rung-2 re-gate = proceed**; the freeze | **Not run — blocked behind the rung-2 task-geometry change** |
+| E3 | Formal pilot gate run — G1/G2/G3 (DSE-019) | S1 → re-gate S2 | E1, the driver | **CLOSED.** Attempt 2 on the T load, 26 Aug (`eddd19c654515bb2`): `fallback` — G1 FAIL 0.300, G2 FAIL −0.200 sign-inverted, G3 PASS 0.999. G1 returned on the rung-2 successor 29 Aug (`86ecbbdf35322dc3`, C0-only): PASS 0.500. **The rung-2 re-gate, 29 Aug (`af50c7c12d65540f`, 80 episodes, job 238085): `fallback`** — G1 PASS 0.800, G2 FAIL −0.250 (CPVI gap −0.015), G3 groundedness PASS 1.000, **G3 correctness FAIL 0.242 vs null 0.257**. The pre-registered prediction came out half confirmed (C1 0/20 as predicted; C4 14/20 inverted again), so the instruction account is insufficient and **rung 3 stands**. Frozen at `runs/rq1/af50c7c12d65540f/` |
+| E4 | RQ1 information-gradient main sweep (DSE-020) | S3 | **rung-2 re-gate = proceed**; the freeze | **Will not run.** Its precondition failed on 29 Aug; §6 permits no further attempt. RQ1 is written up as rung 3 — the absent gradient as the finding, with the receiver-competence mechanism |
 | E5 | RQ1 robustness cells (DSE-021) | S3 | E4; per-role client refactor | **Not run** |
-| E6 | RQ2 measurement primitive (DSE-022) | S4 | E4 episodes (no new compute) | **Not run** |
+| E6 | RQ2 measurement primitive (DSE-022) | S4 | ~~E4~~ E3 re-gate episodes (no new compute) | **Run 30 Aug 2026 on `af50c7c12d65540f`** (`runs/af50c7c12d65540f-rq2/`). H4 supported on all three statistics — shuffle-corrected ρ +0.275 / −0.275 / +0.269, every interval excluding zero, `fail` AUROC 0.906. Encoder invariance holds (ρ 0.816, ranking invariant). Selects `y_terminal_success` as RQ3b's gate target by the rule declared before any outcome was read. **Awaiting freeze (F2)** |
 | E7 | Gate calibration (DSE-017 run) | S4 | E4 episodes | **Not run** |
 | E8 | RQ3b causal gate + controls (DSE-025) | S5 | E7 threshold; DSE-018, DSE-045 | **Not run — explicitly deferred behind rung 2**: calibrating an outcome-thresholded gate on a task where degrading the message improves outcomes inherits the inversion |
 | E9 | RQ3a corpus spike and counts (DSE-041) | S6, parallel | Nothing but network | **Run 24 Aug 2026.** Conditioning state confirmed (220 traces, 5,960 steps, 2,488 handoffs, recorded input contexts); **trace outcome falsified — 0 non-failures on the primary corpus**. Promotes DSE-042 to load-bearing |
 | E10 | RQ3a replay labelling (DSE-042) | S6 | E9; a spend cap | **Not run — now the only route to a two-class step-level *Y*** (E9) |
-| E11 | RQ3a localisation and baselines (DSE-024, rescoped) | S6 | E9, E10, E4 probes | **Not run** |
+| E11 | RQ3a localisation and baselines (DSE-024, rescoped) | S6 | E9, ~~E10~~, transfer calibration | **Transfer regime run and frozen 29 Aug 2026** (`runs/rq3a/{traceelephant,who_and_when}/`). TraceElephant: CPVI transfer agent accuracy **0.525 [0.432, 0.610]** against schema validity 0.263 and mean cosine 0.254 — non-overlapping intervals. Who&When: 0.333, indistinguishable from mean cosine's 0.367. MAST secondary 0.088 bits [0.070, 0.107]. **The refit regime stays undefined without E10, and the judge arm is unrun** — so `judge` and `agreement` are `null` and no comparison to the published 53.5 % / 14.2 % is stated |
 
 ---
 
@@ -360,11 +363,11 @@ v1 is committed the day the E3 verdict is `proceed`.
 
 | Freeze | Contents | Precondition | Status |
 |---|---|---|---|
-| F0 Pre-registration | *Y* and *k*, conditioning semantics, *V* and its selection rule, encoder + revision, serialisation, C1/C3/C4 parameters, jitter and seed count, budgets, analysis protocol, gate feedback template, G1/G2/G3 thresholds, *R* repeats, the control-task expectation, the length controls | E3 verdict = proceed | **Open** |
-| F1 RQ1 | Headline gradient, mediation, selectivity, absent-versus-unused | E4 complete | **Open** |
-| F2 RQ2 | Twin agreement, proxy tracking, encoder sensitivity, operating point | E6, E7 complete | **Open** |
-| F3 RQ3b | Causal contrast against both controls | E8 complete | **Open** |
-| F4 RQ3a | Localisation under both regimes, baselines table with dates | E11 complete | **Open** |
+| F0 Pre-registration | *Y* and *k*, conditioning semantics, *V* and its selection rule, encoder + revision, serialisation, C1/C3/C4 parameters, jitter and seed count, budgets, analysis protocol, gate feedback template, G1/G2/G3 thresholds, *R* repeats, the control-task expectation, the length controls | E3 verdict = proceed | **Will not fire.** The E3 ledger closed `fallback` on 29 Aug 2026. The file stays at v0; §8a now states which parts are amendable and under what protocol, and §8b is the amendment register |
+| F1′ RQ1 (negative) | The absent gradient as the finding, with the per-condition receiver-competence mechanism, the length-matched control, and the absent-versus-unused decomposition | E3 re-gate complete | **Ready to freeze** — data and analysis in hand at `runs/rq1/af50c7c12d65540f/` |
+| F2 RQ2 | Twin agreement, proxy tracking, encoder sensitivity, operating point | ~~E4~~ E3 re-gate episodes | **Ready to freeze** — analysis complete at `runs/af50c7c12d65540f-rq2/`; E7 calibration outstanding |
+| F3 RQ3b | Causal contrast against both controls, against the direction declared in §8c | E8 complete | **Open** — direction pre-declared, run not submitted |
+| F4 RQ3a | Localisation under the transfer regime, baselines table with dates; the refit regime and judge arm reported as unavailable with their reasons | E11 complete | **Transfer half frozen**; judge arm and refit regime open |
 
 ---
 
@@ -1202,3 +1205,91 @@ gate that hopes to change behaviour by re-prompting.
 run's *internal* contrasts — C3 against C1/C4, CPVI against outcome, oracle against observed plan —
 so they do not depend on G1 or G2 ever passing, and they are not invalidated by the task-validity
 defect that rung 2 exists to fix. That is the property that makes them safe to write up now.
+
+---
+
+### E3 — Pilot gate run, Myriad bf16 — **the rung-2 re-gate on the successor task; verdict `fallback`** — 2026-08-29
+
+- **Run id / manifest:** `af50c7c12d65540f` · `runs/rq1/af50c7c12d65540f/manifest.json` · frozen
+  reading `runs/rq1/af50c7c12d65540f/README.md` · analysis `runs/af50c7c12d65540f-report/` ·
+  RQ2 `runs/af50c7c12d65540f-rq2/` · logs `runs/myriad/af50c7c12d65540f-run/`
+- **Substrate:** `myriad-nvidia-a100-pcie-40gb` (job 238085) · **Model + revision:**
+  `Qwen/Qwen3-14B`@`40c069824f4251a91eefaf281ebe4c544efd3e18` (bf16, vLLM 0.18.1, torch 2.10.0+cu128,
+  guided JSON, `temperature=0`, `seed=0`)
+- **Encoder + revision:** `BAAI/bge-base-en-v1.5`@`a5beb1e3e68b9ab74eb54cfd186867f64f240e1a`
+- **Code:** git `10283b0` — the commit PR #76 merged, so the run is at a real merged revision ·
+  sweep `f2b7bc42a511a735`, matching the dry run declared before submission · prompt v9 ·
+  simulation digest `92b0c63b141ab074` · load shape **bar** (the rung-2 successor task)
+- **Cell:** C0/C1/C3/C4 × easy/hard × seeds 0–9 — the pre-registered E3 cell (§6), 80 episodes,
+  3,419 handoffs, 47 min. `--max-steps 50`, the deviation logged in §6 and D29 before submission.
+
+**Verdict: `fallback`.** G1 **PASS** 0.800 (easy C0 8/10). G2 **FAIL** −0.250 (CPVI gap −0.015).
+G3 groundedness **PASS** 1.000. G3 correctness **FAIL** 0.242 against a null 95th percentile of
+0.257, *p* = 0.980. Attempt 2, so a still-failing gate invokes the ladder. **The E3 ledger is now
+closed: no attempt 3, and no second rung-2 attempt.**
+
+**The pre-registered directional prediction came out half confirmed.** §6 fixed, before the first
+successor model call, that degrading the message (C1, C4) should reduce success relative to C0.
+C1 confirms it and harder than predicted — **0/20**, 44.3 wall collisions per episode. C4 inverts it
+again and by more than the T-load attempt did — **14/20 against C0's 9/20**. The instruction account
+is therefore not sufficient, and by the ladder's own terms **rung 3 stands as the finding**.
+
+| cond | chars | success/20 | CPVI | CPVI 95 % CI | PVI − CPVI | steps | collisions |
+|---|---|---|---|---|---|---|---|
+| C0 | 373 | 0.450 | 0.222 | [0.165, 0.278] | 0.084 | 40.2 | 3.8 |
+| C1 | 46 | 0.000 | −0.023 | [−0.157, 0.060] | −0.004 | 50.0 | 44.3 |
+| C3 | 377 | 0.150 | 0.143 | [0.104, 0.186] | 0.119 | 46.3 | 2.1 |
+| C4 | 221 | 0.700 | 0.237 | [0.200, 0.278] | 0.065 | 34.5 | 8.6 |
+
+## Findings
+
+**1. The length-matched control earns its place, and it reframes C4.** C1's and C3's deficits
+survive stratification on delivered message length (−0.450 → −0.500; −0.300 → −0.277). C4's
+*advantage does not*: within the single overlapping stratum the success delta is **−0.071** against
++0.250 unrestricted, and the CPVI delta −0.069 against +0.030. On the pre-declared confound control
+**C4 is not better than C0, it is shorter than C0.** The instrument was built for exactly this
+challenge and it fired on its first real cell. The caveat travels with the number: 13 of 40 episodes
+in one bin is a thin stratum, and this is a sensitivity analysis, not the headline.
+
+**2. Only the lossy channel produces a receiver that acts on the pose.** Run within each condition,
+G3's correctness instrument separates them: C0 agreement 0.330 (*p* = 0.070), C1 0.046 (*p* = 0.095),
+C3 0.261 (*p* = 1.000), **C4 0.399 (*p* = 0.010)** — the only condition beating its own
+within-episode null, surviving Bonferroni across the four tests. Every supporting measure agrees:
+C4 turns the right way 61.4 % of the time against C0's 52.8 %, oscillates least (flip rate 0.445 vs
+0.559), rotates least (381 vs 436), and leaves least of its own signal unused (0.154 vs 0.268). **The clean, fully grounded, numerically exact message produces a
+receiver indistinguishable from its own shuffled actions.** This is the mechanism for the absent
+gradient: a channel cannot be degraded informatively when the receiver was never reading the state.
+
+**3. The gate's own pooled reading hid finding 2.** `g3_correctness` pools the cell and returns
+0.242 — a clean fail with no indication that one condition passes. The per-condition limb
+(`rq1.action_agreement`, added with this run) is what makes the mechanism visible, and it is
+deliberately a separate function: the gate produced a verdict of record and must not be re-shaped
+after being read.
+
+**4. The condition ordinal is not the severity ordinal, and G2 inherits that.** C1 delivers 46
+characters against C4's 221; C1 is by far the harsher manipulation and C4 is the middle of the
+range. G2 contrasts C0 against C4 because §6 declares the ladder as C0 → C4 and states the C0−C4
+contrast in its own worked example, so the gate is read as declared and the verdict stands. Recorded
+because a degradation axis that is not monotone in its own nominal severity is a design fact worth
+stating: against C1 the same gate would read success +0.450 and CPVI +0.245. **That is a diagnostic,
+never a re-read** — swapping the contrast after seeing which one passes is the forbidden move.
+
+**5. RQ2's estimands pass on the corpus where RQ1's hypothesis fails.** The G1 confirmation was
+C0-only, so H4 had no contrast and returned +0.052 [−0.100, 0.201]. On four conditions all three
+runtime statistics separate from their shuffled nulls — `info` +0.275 [0.150, 0.384], `fail` −0.275
+[−0.379, −0.155], `cosine` +0.269 [0.147, 0.371] — and `fail` separates realised failure at **AUROC
+0.906**, up from 0.754. CPVI rank-orders success across all four conditions; H2's indirect effects
+exclude zero for C1 (−0.197 [−0.557, −0.081], 43.7 % mediated) and C3 (−0.058 [−0.234, −0.001]); the
+RD-15 audit reads *p* = 0.00498 against a null max of 0.0047; control-task CPVI is 0.0018. **The
+negative result and the positive result are the same instrument read from two ends.**
+
+**6. The seed sensitivity forbids a magnitude claim.** The per-seed condition gap has sd 0.354 and
+spread 1.0 across ten seeds, with six seeds at exactly 0.0 and one at −1.0. The inversion is
+reported as a direction with a named mechanism, never as a stable effect size.
+
+**7. What is not settled, and by what.** That the *numbers specifically* are the un-actionable
+content is not shown — C4 removes them randomly *and* shortens the message. `PREREGISTRATION.md`
+§8b **A2** declares the arm that holds length and swaps which content survives, with its decision
+rule fixed before the `qsub`; **A4** would complete the 2×2 and is blocked on a design decision, not
+on compute. Whether the receiver's blindness is a *serialisation* artefact or a *capability* limit is
+also open, and both are readable with the same agreement limb and no new code.

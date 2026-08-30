@@ -1,0 +1,445 @@
+{
+  "dataset_hash": "af50c7c12d65540f",
+  "n_handoffs": 3419,
+  "provenance": {
+    "encoder_name": "BAAI/bge-base-en-v1.5",
+    "encoder_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "second_encoder": "sentence-transformers/all-mpnet-base-v2",
+    "second_encoder_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+    "probe": {
+      "probe": "logistic",
+      "variance_model": "homoscedastic",
+      "c": 1.0,
+      "max_iter": 1000,
+      "n_splits": 5,
+      "n_repeats": 5,
+      "mlp_hidden": 64,
+      "seed": 0
+    },
+    "git_sha": "14c9591207709ad7915bbced9f38f824751d2ef1",
+    "timestamp": "2026-08-30T11:41:21.707289+00:00"
+  },
+  "conditions": [
+    {
+      "condition": "C0",
+      "n_episodes": 20,
+      "n_handoffs": 803,
+      "success_rate": 0.45,
+      "success_ci": [
+        0.25,
+        0.7
+      ],
+      "mean_steps": 40.15,
+      "mean_collisions": 3.75,
+      "mean_cpvi": 0.2215276438822729,
+      "cpvi_ci": [
+        0.16527183824166358,
+        0.27780871382157984
+      ],
+      "mean_pvi": 0.30502768463022173,
+      "pvi_cpvi_gap": 0.08350004074794884,
+      "mean_control_cpvi": -0.0009218314150741839,
+      "selectivity": 0.22244947529734707,
+      "mean_cpvi_sd": 0.03577757054883418
+    },
+    {
+      "condition": "C1",
+      "n_episodes": 20,
+      "n_handoffs": 1000,
+      "success_rate": 0.0,
+      "success_ci": [
+        0.0,
+        0.0
+      ],
+      "mean_steps": 50.0,
+      "mean_collisions": 44.3,
+      "mean_cpvi": -0.023302997168946044,
+      "cpvi_ci": [
+        -0.15707809667121647,
+        0.06042799508746286
+      ],
+      "mean_pvi": -0.027020525388955233,
+      "pvi_cpvi_gap": -0.003717528220009189,
+      "mean_control_cpvi": 0.007344830723518572,
+      "selectivity": -0.030647827892464615,
+      "mean_cpvi_sd": 0.07508707622519942
+    },
+    {
+      "condition": "C3",
+      "n_episodes": 20,
+      "n_handoffs": 926,
+      "success_rate": 0.15,
+      "success_ci": [
+        0.05,
+        0.35
+      ],
+      "mean_steps": 46.3,
+      "mean_collisions": 2.1,
+      "mean_cpvi": 0.14330460829385755,
+      "cpvi_ci": [
+        0.1039381193368458,
+        0.18552866032874446
+      ],
+      "mean_pvi": 0.262191850623042,
+      "pvi_cpvi_gap": 0.11888724232918446,
+      "mean_control_cpvi": -0.001496225379701657,
+      "selectivity": 0.1448008336735592,
+      "mean_cpvi_sd": 0.039061913024834125
+    },
+    {
+      "condition": "C4",
+      "n_episodes": 20,
+      "n_handoffs": 690,
+      "success_rate": 0.7,
+      "success_ci": [
+        0.45,
+        0.8585884075695048
+      ],
+      "mean_steps": 34.5,
+      "mean_collisions": 8.55,
+      "mean_cpvi": 0.23673120082049293,
+      "cpvi_ci": [
+        0.20035534376062353,
+        0.278199073200564
+      ],
+      "mean_pvi": 0.301371065775164,
+      "pvi_cpvi_gap": 0.06463986495467106,
+      "mean_control_cpvi": 0.0012020326680837743,
+      "selectivity": 0.23552916815240915,
+      "mean_cpvi_sd": 0.05529667903823899
+    }
+  ],
+  "contrasts": [
+    {
+      "condition": "C1",
+      "cliffs_delta": -0.45,
+      "delta_ci": [
+        -0.7,
+        -0.25
+      ],
+      "steps_delta": 0.45,
+      "steps_delta_ci": [
+        0.25,
+        0.7
+      ],
+      "mixed_coef": 0.07054691285063598,
+      "p_raw": 0.3204577079973494,
+      "p_corrected": 0.3204577079973494
+    },
+    {
+      "condition": "C3",
+      "cliffs_delta": -0.3,
+      "delta_ci": [
+        -0.55,
+        -0.05
+      ],
+      "steps_delta": 0.2825,
+      "steps_delta_ci": [
+        0.0025,
+        0.555
+      ],
+      "mixed_coef": -0.10649531965764125,
+      "p_raw": 0.1350104902877279,
+      "p_corrected": 0.2700209805754558
+    },
+    {
+      "condition": "C4",
+      "cliffs_delta": 0.25,
+      "delta_ci": [
+        -0.05,
+        0.55
+      ],
+      "steps_delta": -0.21,
+      "steps_delta_ci": [
+        -0.5425625,
+        0.14756249999999965
+      ],
+      "mixed_coef": 0.1424344028610872,
+      "p_raw": 0.0476274579873111,
+      "p_corrected": 0.1428823739619333
+    }
+  ],
+  "mixed_model": {
+    "formula": "H1: y ~ C(condition) [groups=seed, vc=episode]; H2: success ~ C(condition) + cpvi_epmean [groups=seed]",
+    "coef_no_mediator": {
+      "C1": 0.07054691285063598,
+      "C3": -0.10649531965764125,
+      "C4": 0.1424344028610872
+    },
+    "converged": true,
+    "mediation_outcome": "episode_success",
+    "path_b": 0.7660949346025597,
+    "path_b_length_controlled": 0.6518127862223679,
+    "mediations": [
+      {
+        "condition": "C1",
+        "path_a": -0.25653835255077684,
+        "indirect": -0.19653273242043579,
+        "indirect_ci": [
+          -0.5570165163229904,
+          -0.08105477690500248
+        ],
+        "indirect_n_draws": 400,
+        "direct": -0.2534672675795639,
+        "total": -0.45000000000000023,
+        "prop_mediated": 0.43673940537874595
+      },
+      {
+        "condition": "C3",
+        "path_a": -0.07606326635450877,
+        "indirect": -0.05827168306351448,
+        "indirect_ci": [
+          -0.23391375392517405,
+          -0.001171880211802097
+        ],
+        "indirect_n_draws": 400,
+        "direct": -0.2417283169364852,
+        "total": -0.30000000000000027,
+        "prop_mediated": 0.19423894354504811
+      },
+      {
+        "condition": "C4",
+        "path_a": 0.029642377423229258,
+        "indirect": 0.022708875193513212,
+        "indirect_ci": [
+          -0.028538250926250123,
+          0.14842350752795677
+        ],
+        "indirect_n_draws": 400,
+        "direct": 0.22729112480648703,
+        "total": 0.2499999999999998,
+        "prop_mediated": 0.09083550077405292
+      }
+    ],
+    "mediation_converged": true,
+    "diagnostic_cpvi_coef": 0.22574237316225482,
+    "diagnostic_attenuation": -0.20295470019986706,
+    "mediation_note": "H2 (episode level): success mediated by CPVI; mean indirect effect a*b over Ck = -0.077 (negative = the channel suppresses success by lowering CPVI). Within-episode diagnostic: handoff condition coefs attenuate -20% when per-handoff CPVI enters."
+  },
+  "control_mean_cpvi": 0.0017690839241263734,
+  "selectivity": 0.13003211429604658,
+  "partial_spearman_length": 0.27992696436426784,
+  "length_matched": [
+    {
+      "condition": "C1",
+      "success": {
+        "n_bins": 1,
+        "n_kept": 26,
+        "n_total": 40,
+        "delta": -0.5,
+        "delta_unrestricted": -0.45,
+        "interpretable": true,
+        "note": "overlap-restricted, length-adjusted sensitivity analysis: 26/40 episodes across 1 length stratum/strata holding both conditions"
+      },
+      "cpvi": {
+        "n_bins": 1,
+        "n_kept": 26,
+        "n_total": 40,
+        "delta": -0.33398422970703046,
+        "delta_unrestricted": -0.2565383525507769,
+        "interpretable": true,
+        "note": "overlap-restricted, length-adjusted sensitivity analysis: 26/40 episodes across 1 length stratum/strata holding both conditions"
+      }
+    },
+    {
+      "condition": "C3",
+      "success": {
+        "n_bins": 3,
+        "n_kept": 40,
+        "n_total": 40,
+        "delta": -0.27749999999999997,
+        "delta_unrestricted": -0.30000000000000004,
+        "interpretable": true,
+        "note": "overlap-restricted, length-adjusted sensitivity analysis: 40/40 episodes across 3 length stratum/strata holding both conditions"
+      },
+      "cpvi": {
+        "n_bins": 3,
+        "n_kept": 40,
+        "n_total": 40,
+        "delta": -0.06492913413387441,
+        "delta_unrestricted": -0.07606326635450877,
+        "interpretable": true,
+        "note": "overlap-restricted, length-adjusted sensitivity analysis: 40/40 episodes across 3 length stratum/strata holding both conditions"
+      }
+    },
+    {
+      "condition": "C4",
+      "success": {
+        "n_bins": 1,
+        "n_kept": 13,
+        "n_total": 40,
+        "delta": -0.07142857142857145,
+        "delta_unrestricted": 0.24999999999999994,
+        "interpretable": true,
+        "note": "overlap-restricted, length-adjusted sensitivity analysis: 13/40 episodes across 1 length stratum/strata holding both conditions"
+      },
+      "cpvi": {
+        "n_bins": 1,
+        "n_kept": 13,
+        "n_total": 40,
+        "delta": -0.06871204237363446,
+        "delta_unrestricted": 0.029642377423229255,
+        "interpretable": true,
+        "note": "overlap-restricted, length-adjusted sensitivity analysis: 13/40 episodes across 1 length stratum/strata holding both conditions"
+      }
+    }
+  ],
+  "signal_decomposition": [
+    {
+      "condition": "C0",
+      "n_handoffs": 803,
+      "median_cpvi": 0.3624850995499001,
+      "low_cpvi_no_progress": 328,
+      "low_cpvi_progress": 74,
+      "high_cpvi_no_progress": 215,
+      "high_cpvi_progress": 186,
+      "absent_signal_rate": 0.40846824408468246,
+      "absent_signal_ci": [
+        0.31263862479853677,
+        0.49791792554364034
+      ],
+      "unused_signal_rate": 0.26774595267745954,
+      "unused_signal_ci": [
+        0.16902294483457359,
+        0.3908993795085555
+      ]
+    },
+    {
+      "condition": "C1",
+      "n_handoffs": 1000,
+      "median_cpvi": 0.05074104366627732,
+      "low_cpvi_no_progress": 274,
+      "low_cpvi_progress": 226,
+      "high_cpvi_no_progress": 283,
+      "high_cpvi_progress": 217,
+      "absent_signal_rate": 0.274,
+      "absent_signal_ci": [
+        0.123975,
+        0.434
+      ],
+      "unused_signal_rate": 0.283,
+      "unused_signal_ci": [
+        0.156975,
+        0.412
+      ]
+    },
+    {
+      "condition": "C3",
+      "n_handoffs": 926,
+      "median_cpvi": 0.18696823170159899,
+      "low_cpvi_no_progress": 407,
+      "low_cpvi_progress": 56,
+      "high_cpvi_no_progress": 299,
+      "high_cpvi_progress": 164,
+      "absent_signal_rate": 0.43952483801295894,
+      "absent_signal_ci": [
+        0.3459784226190476,
+        0.5279534966395235
+      ],
+      "unused_signal_rate": 0.3228941684665227,
+      "unused_signal_ci": [
+        0.20521032688748395,
+        0.4518246673783424
+      ]
+    },
+    {
+      "condition": "C4",
+      "n_handoffs": 690,
+      "median_cpvi": 0.3216263645173133,
+      "low_cpvi_no_progress": 253,
+      "low_cpvi_progress": 92,
+      "high_cpvi_no_progress": 106,
+      "high_cpvi_progress": 239,
+      "absent_signal_rate": 0.36666666666666664,
+      "absent_signal_ci": [
+        0.30433238087883235,
+        0.41951415632577377
+      ],
+      "unused_signal_rate": 0.1536231884057971,
+      "unused_signal_ci": [
+        0.1210178241216355,
+        0.18795162807490948
+      ]
+    }
+  ],
+  "action_agreement": [
+    {
+      "condition": "C0",
+      "n_handoffs": 803,
+      "agreement": 0.3300124533001245,
+      "null_mean": 0.31254669987546696,
+      "null_p95": 0.33007471980074715,
+      "p_value": 0.06965174129353234,
+      "n_perm": 200,
+      "rotation_direction_agreement": 0.5275229357798165,
+      "n_rotations": 436,
+      "rotation_flip_rate": 0.5592789365358015
+    },
+    {
+      "condition": "C1",
+      "n_handoffs": 1000,
+      "agreement": 0.046,
+      "null_mean": 0.044219999999999995,
+      "null_p95": 0.046,
+      "p_value": 0.0945273631840796,
+      "n_perm": 200,
+      "rotation_direction_agreement": 0.5111111111111111,
+      "n_rotations": 90,
+      "rotation_flip_rate": 0.0
+    },
+    {
+      "condition": "C3",
+      "n_handoffs": 926,
+      "agreement": 0.2613390928725702,
+      "null_mean": 0.32638768898488124,
+      "null_p95": 0.34017278617710583,
+      "p_value": 1.0,
+      "n_perm": 200,
+      "rotation_direction_agreement": 0.42984014209591476,
+      "n_rotations": 563,
+      "rotation_flip_rate": 0.5698615194623862
+    },
+    {
+      "condition": "C4",
+      "n_handoffs": 690,
+      "agreement": 0.39855072463768115,
+      "null_mean": 0.373195652173913,
+      "null_p95": 0.3884057971014493,
+      "p_value": 0.009950248756218905,
+      "n_perm": 200,
+      "rotation_direction_agreement": 0.6141732283464567,
+      "n_rotations": 381,
+      "rotation_flip_rate": 0.44531650624254154
+    }
+  ],
+  "seed_sensitivity": {
+    "metric": "condition_gap",
+    "n_seeds": 10,
+    "mean": -0.25,
+    "sd": 0.3535533905932738,
+    "spread": 1.0,
+    "per_seed": {
+      "0": 0.0,
+      "1": 0.0,
+      "2": -0.5,
+      "3": -0.5,
+      "4": -0.5,
+      "5": 0.0,
+      "6": 0.0,
+      "7": 0.0,
+      "8": -1.0,
+      "9": 0.0
+    },
+    "dispersion": null,
+    "reason": ""
+  },
+  "shuffled_message_audit": {
+    "n_perm": 200,
+    "mean_cpvi": 0.13180119822017294,
+    "null_mean_cpvi": 0.0005967212909761216,
+    "null_std_cpvi": 0.0016051946819803668,
+    "null_max_cpvi": 0.004658225387493834,
+    "p_value": 0.004975124378109453
+  },
+  "figures": {}
+}

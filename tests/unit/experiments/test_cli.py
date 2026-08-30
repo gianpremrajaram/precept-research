@@ -114,6 +114,61 @@ def test_omitting_max_steps_keeps_the_certified_budgets(
     assert f"model calls:      {2 * 2 * STEP_BUDGETS['easy']}" in capsys.readouterr().out
 
 
+def test_channel_flags_reach_the_sweep_and_re_key_the_dataset(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """ChannelConfig was unreachable from the shell, so the post-hoc length control had no knob.
+
+    The re-keying half is the load-bearing one: `channel` is inside sweep_hash, so a C1 run at a
+    different cap must write its own dataset rather than appending into the real C1's directory.
+    """
+    rq1(["--dry-run", "--conditions", "C1", "--difficulties", "easy", "--seeds", "0"])
+    default = capsys.readouterr().out
+    rq1(
+        [
+            "--dry-run",
+            "--conditions",
+            "C1",
+            "--difficulties",
+            "easy",
+            "--seeds",
+            "0",
+            "--c1-max-tokens",
+            "42",
+        ]
+    )
+    capped = capsys.readouterr().out
+    assert "(NON-DEFAULT)" in capped and "'c1_max_tokens': 42" in capped
+    assert "(NON-DEFAULT)" not in default
+    assert _hash_line(capped, "dataset hash") != _hash_line(default, "dataset hash")
+
+
+def test_untouched_channel_axes_keep_every_prior_dataset_hash(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Passing one channel flag must not re-key the other two axes off their defaults."""
+    rq1(["--dry-run", "--conditions", "C4", "--difficulties", "easy", "--seeds", "0"])
+    before = _hash_line(capsys.readouterr().out, "dataset hash")
+    rq1(
+        [
+            "--dry-run",
+            "--conditions",
+            "C4",
+            "--difficulties",
+            "easy",
+            "--seeds",
+            "0",
+            "--c4-dropout",
+            "0.4",  # the default, restated
+        ]
+    )
+    assert _hash_line(capsys.readouterr().out, "dataset hash") == before
+
+
+def _hash_line(out: str, label: str) -> str:
+    return next(ln for ln in out.splitlines() if ln.startswith(label)).split()[-1]
+
+
 # ------------------------------------------------------- the RQ3a transfer arm's wiring (DSE-024)
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -90,3 +91,43 @@ def test_a_corrupt_sidecar_fails_loud(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setenv("PRECEPTX_SERVE_ENV", str(path))
     with pytest.raises(ManifestError, match="not valid JSON"):
         serve_env()
+
+
+# ------------------------------------------------------- frozen artefacts must be clean-tree runs
+
+
+def test_no_committed_manifest_records_a_dirty_tree() -> None:
+    """A frozen artefact whose manifest says ``git_dirty: true`` is not reproducible from its SHA.
+
+    Recurring offender: analysis runs happen *before* the commit, so the manifest stamps the working
+    tree it was produced in, and the re-freeze that would clear it is easy to forget - it has been
+    missed four sessions running on the RQ3a artefacts. A guard costs one test; remembering costs a
+    reviewer's trust in every committed manifest.
+
+    The fix when this fails is to re-run the driver on a clean tree and commit the new manifest -
+    never to edit the field, which would assert a provenance the run does not have.
+    """
+    root = Path(__file__).resolve().parents[2]
+
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # fixed argv, no shell, repo-local
+            ["git", *args], cwd=root, capture_output=True, text=True, check=False
+        )
+
+    tracked = git("ls-files", "runs/**/manifest.json")
+    if tracked.returncode != 0:  # not a git checkout (a source tarball); nothing to guard
+        pytest.skip("not a git working tree")
+    # A dirty tree cannot satisfy this check even in principle: clearing a stale `git_dirty` means
+    # re-running the driver on a clean tree, which is impossible while edits are outstanding. So the
+    # guard is evaluable exactly where it matters - CI, and any local run on a committed state.
+    if git("status", "--porcelain").stdout.strip():
+        pytest.skip("working tree is dirty; the re-freeze this guards cannot be produced yet")
+    dirty = [
+        p
+        for p in tracked.stdout.split()
+        if json.loads((root / p).read_text()).get("git_dirty") is True
+    ]
+    assert not dirty, (
+        "committed manifests recorded a dirty working tree, so their git_sha does not identify the "
+        f"code that produced them: {dirty}. Re-run the driver on a clean tree and re-freeze."
+    )

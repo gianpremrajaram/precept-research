@@ -69,7 +69,7 @@ from preceptx.measure.pvi_cpvi import (
     shuffled_message_cpvi,
 )
 from preceptx.serving.client import LLMClient
-from preceptx.sim.feasibility import STEP_BUDGETS
+from preceptx.sim.feasibility import STEP_BUDGETS, oracle_action
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,9 @@ FloatArray = NDArray[np.float64]
 IntArray = NDArray[np.int_]
 
 CONDITION_ORDER: list[Condition] = ["C0", "C1", "C2", "C3", "C4"]
+# The two macro actions that turn the load. Named once: the oracle wants a rotation on ~95% of
+# handoffs, so "did B rotate, and which way" carries almost all of the agreement signal.
+_ROTATIONS = ("ROT+", "ROT-")
 
 
 class RQ1Config(BaseModel):
@@ -259,6 +262,7 @@ class RQ1Result(BaseModel):
     partial_spearman_length: float  # CPVI vs progress, message token length partialled out
     length_matched: list[LengthMatchedContrast]  # the overlap-restricted control (DSE-044)
     signal_decomposition: list[SignalDecomposition]  # DSE-046 secondary analysis
+    action_agreement: list[ActionAgreement]  # per-condition receiver-competence diagnostic
     seed_sensitivity: SeedSensitivity
     shuffled_message_audit: ShuffledMessageAudit | None = None  # RD-15 manipulation check
     figures: dict[str, str] = Field(default_factory=dict)
@@ -356,6 +360,106 @@ def _condition_summary(
         selectivity=float(cpvi_c.mean() - control_scores[mask].mean()),
         mean_cpvi_sd=float(cpvi_sd[mask].mean()),
     )
+
+
+class ActionAgreement(BaseModel):
+    """Per-condition agreement between B's macro action and the certified scripted policy.
+
+    The same instrument as ``pilot.g3_correctness`` - agreement with
+    ``sim.feasibility.oracle_action`` against a **within-episode permutation null on B's own
+    actions** - run per condition rather than pooled. Shuffling inside an episode preserves
+    that episode's action habits exactly and destroys
+    only their link to the pose, so a receiver that never reads the pose scores its own null by
+    construction whatever its habits are.
+
+    Deliberately a separate function from the gate. ``g3_correctness`` produced a verdict of record
+    on 2026-08-29; re-shaping it to take a condition subset would edit an instrument after it had
+    been read. This one is diagnostic and lives with the analysis, where a pooled number cannot say
+    *which* condition the receiver was blind in - and on the E3 re-gate the pooled number and the
+    per-condition numbers disagree, which is the whole mechanism finding.
+
+    ``rotation_direction_agreement`` is the tie-free supporting read. Exact-action agreement is
+    harsh near 90 degrees, where both rotation directions are near ties; restricting to handoffs
+    where B rotated and the oracle wanted a rotation asks only "which way", and 0.5 is a coin
+    flip. ``rotation_flip_rate`` is the oscillation measure: the share of consecutive rotation
+    pairs within an episode that reverse direction, averaged over episodes.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    condition: str
+    n_handoffs: int
+    agreement: float
+    null_mean: float
+    null_p95: float  # the one-sided 5% level, in agreement units
+    p_value: float
+    n_perm: int
+    rotation_direction_agreement: float  # NaN when B never rotated where the oracle wanted one
+    n_rotations: int
+    rotation_flip_rate: float  # NaN when no episode holds two rotations to compare
+
+
+def action_agreement(
+    records: list[HandoffRecord], *, n_perm: int = 200, seed: int = 0
+) -> list[ActionAgreement]:
+    """Per-condition oracle agreement, its within-episode null, and the oscillation measures.
+
+    Public for the same reason ``signal_decomposition`` is: it reads only the recorded pose and
+    action, so a frozen result can be re-derived without re-fitting a probe.
+    """
+    conditions = np.array([r.condition for r in records])
+    episodes = np.array([r.episode_id for r in records])
+    oracle = np.array([str(oracle_action(float(r.pre_state["angle"]))) for r in records])
+    taken = np.array([str(r.action["action"]) for r in records])
+    steps = np.array([r.step for r in records], dtype=int)
+    rng = np.random.default_rng(seed)
+    out: list[ActionAgreement] = []
+    for cond in [c for c in CONDITION_ORDER if (conditions == c).any()]:
+        m = conditions == cond
+        o, a, ep, st = oracle[m], taken[m], episodes[m], steps[m]
+        real = float(np.mean(o == a))
+        blocks = [np.flatnonzero(ep == e) for e in np.unique(ep)]
+        null = np.empty(n_perm, dtype=np.float64)
+        for i in range(n_perm):
+            perm = a.copy()
+            for b in blocks:
+                perm[b] = rng.permutation(a[b])
+            null[i] = float(np.mean(o == perm))
+        rot = np.isin(a, _ROTATIONS) & np.isin(o, _ROTATIONS)
+        out.append(
+            ActionAgreement(
+                condition=cond,
+                n_handoffs=int(m.sum()),
+                agreement=real,
+                null_mean=float(null.mean()),
+                null_p95=float(np.quantile(null, 0.95)),
+                p_value=(1 + int(np.sum(null >= real))) / (n_perm + 1),
+                n_perm=n_perm,
+                rotation_direction_agreement=(
+                    float(np.mean(o[rot] == a[rot])) if rot.any() else float("nan")
+                ),
+                n_rotations=int(rot.sum()),
+                rotation_flip_rate=_flip_rate(a, ep, st),
+            )
+        )
+    return out
+
+
+def _flip_rate(taken: NDArray[Any], episodes: NDArray[Any], steps: IntArray) -> float:
+    """Mean over episodes of the share of consecutive rotations that reverse direction.
+
+    Episodes with fewer than two rotations contribute nothing - there is no pair to compare - and
+    the result is NaN when no episode qualifies, rather than a 0.0 that would read as "never
+    oscillates" on a condition that barely rotates at all.
+    """
+    rates: list[float] = []
+    for e in np.unique(episodes):
+        m = episodes == e
+        seq = taken[m][np.argsort(steps[m])]
+        seq = seq[np.isin(seq, _ROTATIONS)]
+        if len(seq) >= 2:
+            rates.append(float(np.mean(seq[:-1] != seq[1:])))
+    return float(np.mean(rates)) if rates else float("nan")
 
 
 def signal_decomposition(
@@ -851,6 +955,7 @@ def analyse_rq1(
         partial_spearman_length=partial_spearman(cpvi_scores, y.astype(np.float64), msg_tokens),
         length_matched=_length_matched(ep_med_df, present, cfg),
         signal_decomposition=signal_decomposition(records, cpvi_scores, y, cfg),
+        action_agreement=action_agreement(records),
         seed_sensitivity=seed_sens,
         shuffled_message_audit=_shuffle_audit(e_s, e_m, y, groups, records, cpvi_scores, cfg),
     )
@@ -935,6 +1040,9 @@ def write_rq1(result: RQ1Result, dir: Path | str, *, scores: pd.DataFrame) -> Pa
         ylabel="mean CPVI (bits)",
         title=f"RQ1: CPVI vs condition (selectivity {result.selectivity:+.3f} bits)",
         path=dir / "cpvi_vs_condition.png",
+    )
+    pd.DataFrame([a.model_dump() for a in result.action_agreement]).to_csv(
+        dir / "action_agreement.csv", index=False
     )
     dec = result.signal_decomposition
     dec_table = pd.DataFrame([d.model_dump() for d in dec])

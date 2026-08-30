@@ -15,7 +15,106 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
-## 2026-08-29 (latest) — the gate learns to tell "grounded" from "right", and immediately says the pair is not right
+## 2026-08-30 (latest) — the gradient is absent, the mechanism is named, and the register learns to bend without breaking
+
+- **Area:** the E3 verdict of record and the close of the E3 ledger; the per-condition form of the
+  correctness limb; what the pre-registration locks and what it may amend; the headline order.
+- **Trigger:** the rung-2 re-gate returned. `af50c7c12d65540f` — 80 episodes, 3,419 handoffs, job
+  238085 at git `10283b0` — read `fallback`, and §6's pre-registered directional prediction came out
+  **half confirmed**: C1 collapsed to 0/20 exactly as predicted, and C4 inverted again at 14/20
+  against C0's 9/20. Under the ladder's own terms that ends the arena track and makes rung 3 the
+  finding. The question this entry settles is what "rung 3" now *says*, given that the run also
+  produced the project's clearest positive result.
+
+**Finding 1 — the absence has a mechanism, and only a per-condition instrument could see it.**
+`g3_correctness` pools the cell and returns 0.242 against a null of 0.257: a clean fail carrying no
+information about *which* condition failed. Run within each condition (`rq1.action_agreement`, 200
+within-episode permutations each), the picture inverts: **C4 is the only condition whose receiver
+beats its own within-episode null** — agreement 0.399 against a 95th percentile of 0.388,
+*p* = 0.010, surviving Bonferroni across four tests — while C0 sits at 0.330 against 0.330
+(*p* = 0.070), C3 at 0.261 against 0.340, C1 at 0.046. Every supporting measure agrees: C4 turns the
+right way 61.4 % of the time against C0's 52.8 % and C3's 43.0 %, oscillates least (flip rate 0.445
+against 0.559 and 0.570), rotates least (381 against 436 and 563), and leaves least of its own signal
+unused (0.154 against 0.268 and 0.323). **A channel cannot be degraded informatively when the
+receiver was never reading the state.** That is why no C0→C4 gradient exists to measure, and it is a
+substantive claim about when communication-value measurement is meaningful — not a failed experiment.
+
+**Finding 2 — the measurement is vindicated on the corpus that failed the hypothesis.** CPVI
+rank-orders realised success across all four conditions (C4 0.237 > C0 0.222 > C3 0.143 > C1 −0.023
+against success 0.700 > 0.450 > 0.150 > 0.000). C1's CPVI interval spans zero, which is the estimator
+correctly reporting that a 46-character message carries nothing. H2's indirect effects exclude zero
+for C1 (−0.197 [−0.557, −0.081], 43.7 % mediated) and C3 (−0.058 [−0.234, −0.001]); path *b* is
++0.766 and +0.652 with length controlled. The RD-15 audit reads *p* = 0.00498 against a null max of
+0.0047. Control-task CPVI is 0.0018. And RQ2, re-run here, flips H4 from the C0-only corpus's
++0.052 [−0.100, 0.201] to three statistics all excluding zero — `info` +0.275 [0.150, 0.384], `fail`
+−0.275 [−0.379, −0.155], `cosine` +0.269 [0.147, 0.371] — with `fail` separating realised failure at
+**AUROC 0.906**, up from 0.754. **The negative result and the positive result are the same instrument
+read from two ends.** That sentence is now the spine of the write-up.
+
+**Finding 3 — the length-matched control fired on its first real cell, and it reframes C4.** Within
+the single overlapping delivered-length stratum, C4's success advantage goes from +0.250 to
+**−0.071** and its CPVI delta from +0.030 to −0.069, on 13 of 40 episodes. C1's (−0.450 → −0.500)
+and C3's (−0.300 → −0.277) deficits survive. On the pre-declared confound control **C4 is not better
+than C0; it is shorter than C0** — so the success claim is withdrawn to a length effect while the
+agreement and CPVI results, which are not length-matched, stand as open. This is the instrument
+DSE-044 was built for doing the one job that matters: stopping a pretty number being over-read.
+
+**Finding 4 — the condition ordinal is not the severity ordinal, and that is a result.** C1 delivers
+46 characters, C4 delivers 221, C0 delivers 373. C1 is by far the harsher manipulation while sitting
+lower on the nominal ladder. G2 contrasts C0 against C4 because §6 declares the ladder C0 → C4 and
+states the C0−C4 contrast in its own worked example, so the gate is read as declared and the verdict
+stands — but against C1 the same gate would read success +0.450 and CPVI +0.245. **Recorded as a
+diagnostic and never as a re-read**: swapping the contrast after seeing which one passes is precisely
+the forbidden move, and it is named here so nobody is tempted later. A degradation axis that is not
+monotone in its own nominal severity is the kind of thing the measurement literature assumes away.
+
+**Finding 5 — a register that forbids everything forbids following its own evidence.** The
+pre-registration had been read as uniformly prohibitive, which would have blocked arbitrating a
+mechanism the instrument itself uncovered. That is not integrity; it is paralysis, and it has a cost
+in unexploited evidence. **§8a now states the boundary explicitly**: immutable are evaluated
+thresholds (including "hardest" = C4), *Y* and *V* for confirmatory contrasts, the spent attempt
+ledger, and the circularity guard; amendable are headline order, cells that arbitrate a mechanism
+rather than rescue a hypothesis, secondary analyses on recorded data, and framing. The protocol has
+four parts and all four bind: declared in writing here and dated **before** the run it governs; its
+decision rule — including how it could disappoint — stated in advance; labelled post-hoc wherever
+reported and never pooled into a gate, a contrast table or a family-wise correction; recorded twice,
+in §8b and here.
+
+- **Impact.** F0 will not fire and E4 will not run. RQ1 is written up as rung 3 with a named
+  mechanism rather than an unexplained null. **A1** re-orders the headline to lead with the
+  measurement primitive and its mechanism, with RQ3a as the external-validity chapter — the ladder
+  pre-committed which results *survive* a failed re-gate, never their billing. **A2** declares one
+  post-hoc arm and **A3** declares RQ3b's direction in advance (§8c), so a predicted null becomes
+  evidence rather than an absence.
+- **Risk reduced.** Three. A pretty inversion being written up as a compression effect when the
+  pre-declared control says it is a length effect. A null being reported without a cause, which a
+  reviewer reads as a broken instrument rather than a finding about receivers. And a register so
+  rigid that the honest move — testing the mechanism you found — becomes indistinguishable from the
+  dishonest one, with no protocol to separate them.
+- **Correction path.** A2 arbitrates C4's two readings by holding length at C4's measured median
+  (40 whitespace tokens, 217 characters against C4's 220) and swapping which content survives: a
+  prefix cap keeps every number and severs the directive, the exact mirror of dropout. A4 would
+  complete the 2×2 with targeted numeric redaction and is blocked on a design decision, not compute.
+- **The fix.** `rq1.action_agreement` and `ActionAgreement` added, emitting `action_agreement.csv`
+  beside the analysis; deliberately a separate function from `pilot.g3_correctness`, which produced a
+  verdict of record and must not be re-shaped after being read. `ChannelConfig` wired to the CLI
+  (`--c1-max-tokens`, `--c3-window-rows`, `--c4-dropout`) — it had never been reachable from a shell,
+  so every dataset to date ran at its defaults and A2 had no knob to turn. `channel` is inside
+  `sweep_hash`, so a changed parameter keys its own dataset and cannot append into the run it is a
+  control for.
+- **Result.** The verdict is frozen at `runs/rq1/af50c7c12d65540f/` with its manifest, summary, gate
+  report and full reading; the lineage row is closed at `gate-verdict`; §6 records the verdict against
+  the prediction; §8a/§8b/§8c open the amendment register with three declarations and one proposal.
+- **So-what.** The dissertation's claim is no longer "we looked for an information gradient and did
+  not find one". It is: *you cannot measure the value of communication in a pair whose receiver does
+  not act on the state — and CPVI is the instrument that detects exactly that.* The absent gradient
+  is the evidence for the claim rather than a hole in it, and the same instrument that fails the
+  hypothesis passes its own validity checks on the same corpus and transfers to two real failure
+  corpora. That is one story, not three.
+
+---
+
+## 2026-08-29 — the gate learns to tell "grounded" from "right", and immediately says the pair is not right
 
 - **Area:** G3's second limb (declared at F0, previously unimplemented), the permutation criterion
   behind it, the RD-15 audit's resolution, and the step budget the E3 verdict of record runs at.

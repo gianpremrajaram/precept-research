@@ -11,16 +11,19 @@ corrected contrast p-values, AND a positive CPVI->success path with a negative C
 from __future__ import annotations
 
 import hashlib
+import math
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 from numpy.typing import NDArray
 
 from preceptx.config import ModelConfig
 from preceptx.data.schema import Condition, HandoffRecord
 from preceptx.experiments.rq1 import (
     RQ1Config,
+    action_agreement,
     analyse_rq1,
     rq1_sweep,
     signal_decomposition,
@@ -28,6 +31,17 @@ from preceptx.experiments.rq1 import (
 )
 from preceptx.experiments.sweep import expand
 from preceptx.measure.featuriser import EncoderConfig, Featuriser
+from preceptx.sim.feasibility import oracle_action
+
+# Three poses whose oracle actions are not all the same, so the agreement null is assessable:
+# flat wants E, +30 deg wants ROT-, -30 deg wants ROT+.
+_ANGLES = [0.0, math.radians(30.0), math.radians(-30.0)]
+
+
+def _oracle_or_habit(step: int, informative: bool) -> str:
+    """The oracle's own action when the channel works, a fixed push when it does not."""
+    return oracle_action(_ANGLES[step % len(_ANGLES)]) if informative else "E"
+
 
 _MODEL = ModelConfig(name="m", revision="rev", tier="8b")
 # Keep the model-refit mediation bootstrap small so the unit suite stays well under its 30s budget.
@@ -102,8 +116,11 @@ def _gradient_records(n_seeds: int = 6) -> list[HandoffRecord]:
                         observation=f"state {cond} s{seed} {step}",
                         message_raw=msg,
                         message_delivered=msg,
-                        action={},
-                        pre_state={},
+                        # A real pose and a real action: `action_agreement` scores B against the
+                        # oracle, and an empty payload is a shape no recorded handoff ever has.
+                        # The informative arm follows the oracle; the rest push east regardless.
+                        action={"action": _oracle_or_habit(step, informative)},
+                        pre_state={"angle": _ANGLES[step % len(_ANGLES)]},
                         post_state={},
                         progress=0.0,
                         success=informative,  # the working channel is what gets the load home
@@ -256,8 +273,8 @@ def _decomposition_records(y_flags: list[int], n_episodes: int = 2) -> list[Hand
             observation="s",
             message_raw="m",
             message_delivered="m",
-            action={},
-            pre_state={},
+            action={"action": "E"},
+            pre_state={"angle": _ANGLES[i % len(_ANGLES)]},
             post_state={},
             progress=0.0,
             success=False,
@@ -324,3 +341,64 @@ def test_analyse_rq1_reports_the_decomposition_for_every_condition(tmp_path: Pat
         assert cells == d.n_handoffs  # the 2x2 partitions the condition's handoffs
         fails = sum(1 for r in records if r.condition == cond and r.y_binary_progress is False)
         assert d.absent_signal_rate + d.unused_signal_rate == fails / d.n_handoffs
+
+
+# ------------------------------------------- per-condition receiver competence (the E3 mechanism)
+
+
+def _pose_records(condition: Condition, taken: str | None, n_ep: int = 4) -> list[HandoffRecord]:
+    """Episodes of 10 handoffs cycling three poses; ``taken=None`` follows the oracle."""
+    return [
+        HandoffRecord(
+            episode_id=f"{condition}-e{e}",
+            step=i,
+            condition=condition,
+            serialisation="numeric",
+            difficulty="hard",
+            model="m",
+            seed=e,
+            state={},
+            state_str="s",
+            observation="s",
+            message_raw="m",
+            message_delivered="m",
+            action={"action": taken or oracle_action(_ANGLES[i % len(_ANGLES)])},
+            pre_state={"angle": _ANGLES[i % len(_ANGLES)]},
+            post_state={},
+            progress=0.0,
+            success=False,
+            collision=False,
+            stuck=False,
+            y_binary_progress=bool(i % 2),
+            y_terminal_success=False,
+        )
+        for e in range(n_ep)
+        for i in range(10)
+    ]
+
+
+def test_action_agreement_separates_a_pose_reader_from_a_habit() -> None:
+    """The finding the E3 re-gate turns on: pooling hides *which* condition was blind."""
+    reader = _pose_records("C0", None)
+    habit = _pose_records("C4", "E")
+    rows = {a.condition: a for a in action_agreement(reader + habit, n_perm=50)}
+    assert rows["C0"].agreement == 1.0 and rows["C0"].p_value == pytest.approx(1 / 51)
+    # A state-blind agent scores its own null by construction, whatever its habits are.
+    assert rows["C4"].agreement == pytest.approx(rows["C4"].null_mean)
+    assert rows["C4"].p_value > 0.05
+
+
+def test_action_agreement_reports_oscillation_and_tie_free_direction() -> None:
+    rows = {a.condition: a for a in action_agreement(_pose_records("C0", None), n_perm=20)}
+    c0 = rows["C0"]
+    # The oracle alternates ROT-/ROT+ across the two non-flat poses, so a perfect follower reverses
+    # on every consecutive rotation pair - flip rate 1.0 - and never turns the wrong way.
+    assert c0.rotation_direction_agreement == 1.0 and c0.n_rotations > 0
+    assert c0.rotation_flip_rate == pytest.approx(1.0)
+
+
+def test_action_agreement_flip_rate_is_nan_when_nothing_rotates() -> None:
+    """NaN, not 0.0: a condition that never rotates has no oscillation, not perfect stability."""
+    (row,) = action_agreement(_pose_records("C1", "E"), n_perm=20)
+    assert math.isnan(row.rotation_flip_rate) and math.isnan(row.rotation_direction_agreement)
+    assert row.n_rotations == 0

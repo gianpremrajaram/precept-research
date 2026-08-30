@@ -1,0 +1,90 @@
+{
+  "dataset_hash": "af50c7c12d65540f",
+  "n_episodes": 80,
+  "n_seeds": 10,
+  "attempt": 2,
+  "provenance": {
+    "encoder_name": "BAAI/bge-base-en-v1.5",
+    "encoder_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "second_encoder": "sentence-transformers/all-mpnet-base-v2",
+    "second_encoder_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+    "probe": {
+      "probe": "logistic",
+      "variance_model": "homoscedastic",
+      "c": 1.0,
+      "max_iter": 1000,
+      "n_splits": 5,
+      "n_repeats": 5,
+      "mlp_hidden": 64,
+      "seed": 0
+    },
+    "git_sha": "14c9591207709ad7915bbced9f38f824751d2ef1",
+    "timestamp": "2026-08-30T11:45:12.455053+00:00"
+  },
+  "gates": [
+    {
+      "name": "G1 capability",
+      "passed": true,
+      "value": 0.8,
+      "threshold": 0.5,
+      "detail": {
+        "n_easy_c0_episodes": 10.0,
+        "n_easy_c0_success": 8.0
+      },
+      "note": "easy C0 only; the hard cell is G2's business, not G1's",
+      "assessable": true
+    },
+    {
+      "name": "G2 signal",
+      "passed": false,
+      "value": -0.24999999999999994,
+      "threshold": 0.1,
+      "detail": {
+        "c0_success": 0.45,
+        "hard_success": 0.7,
+        "success_gap": -0.24999999999999994,
+        "cpvi_gap": -0.015203556938220036,
+        "c0_mean_cpvi": 0.2215276438822729,
+        "hard_mean_cpvi": 0.23673120082049293,
+        "min_cpvi_gap": 0.0,
+        "control_mean_cpvi": 0.0017690839241263734,
+        "selectivity": 0.13003211429604658
+      },
+      "note": "hard=C4; gate requires both the success gap and the CPVI gap to clear",
+      "assessable": true
+    },
+    {
+      "name": "G3 groundedness",
+      "passed": true,
+      "value": 1.0,
+      "threshold": 0.8,
+      "detail": {
+        "n_records": 3419.0,
+        "n_with_numbers": 3417.0
+      },
+      "note": "",
+      "assessable": true
+    },
+    {
+      "name": "G3 correctness",
+      "passed": false,
+      "value": 0.24217607487569465,
+      "threshold": 0.25710734132787366,
+      "detail": {
+        "n_records": 3419.0,
+        "n_perm": 200.0,
+        "state_blind_mean": 0.25062737642585553,
+        "excess_over_null_mean": -0.008451301550160883,
+        "null_max": 0.2611874817198011,
+        "p_value": 0.9800995024875622,
+        "oracle_frac_push": 0.05089207370576192,
+        "rotation_direction_agreement": 0.5115646258503401
+      },
+      "note": "agreement with the certified scripted policy, against a within-episode permutation null on B's own actions; the gate is real > every permutation",
+      "assessable": true
+    }
+  ],
+  "recommendation": "fallback",
+  "recommendation_note": "",
+  "fallback_ladder": "1. Elevate RQ3a (TraceElephant external validity) to the headline - it is the pre-planned fallback and can carry the dissertation alone.\n2. Simplify the task (wider slits, fewer chambers, or a shorter horizon) and re-pilot once.\n3. Reframe RQ1 as a diagnostic negative: report the absence of an information gradient as the finding rather than chasing a positive."
+}
