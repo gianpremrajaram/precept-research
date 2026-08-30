@@ -31,7 +31,16 @@ AUROC 0.504, i.e. chance, and single-class by construction.
 of resamples fall at or below 0.5. Report it as underpowered, not as weak-but-real; the orientation
 `+1` that the RQ3a transfer arm multiplies by is the sign of that same interval.
 
-The `fail` statistic fitted on this dataset is what `runs/rq3a/*/` transfers to the log corpora.
+**Superseded as the transfer source, 29 Aug.** The G1 confirmation (`86ecbbdf35322dc3`) read out and
+the transfer arm was re-keyed to it, as declared below before that run existed. `runs/rq3a/*/` now
+transfers the statistic fitted on the confirmation, not this one; this calibration is kept as the
+**sensitivity arm**, and the pair is the evidence the RQ3a headline is not an artefact of one
+calibration set. See `runs/rq1/86ecbbdf35322dc3/README.md` for both columns — briefly: at home the
+confirmation is much better (AUROC 0.754 [0.638, 0.870] against 0.593 [0.444, 0.737]), on
+TraceElephant it is slightly worse (agent 0.525 against 0.576), and `cpvi_transfer` beats both
+surface baselines with non-overlapping intervals under **either**.
+
+The `fail` statistic fitted on this dataset still reproduces the sensitivity arm.
 **The joblib is a trained probe and is gitignored, so it is not in this directory** — regenerate it
 before any run that passes `--transfer`:
 
@@ -43,8 +52,9 @@ uv run preceptx-rq3a ... --transfer runs/8902072e1f47b6de-calibration
 
 Pointing `--transfer` at *this* directory raises: the report is here, the probe is not.
 
-Re-key the transfer arm to the G1 confirmation when that reads out — 60 episodes against this run's
-24, on unseen seeds; 40 of the 60 are in the two gated difficulties and the other 20 add `hard`,
-which this run does not have.
+*The declaration this run made, now discharged:* re-key the transfer arm to the G1 confirmation when
+that reads out — 60 episodes against this run's 24, on unseen seeds; 40 of the 60 are in the two
+gated difficulties and the other 20 add `hard`, which this run does not have. It read out on 29 Aug
+and the re-key was taken **unconditionally**, including where it lowered the headline number.
 
 Raw Parquet is not committed. Refetch with `scripts/myriad/fetch.sh 8902072e1f47b6de`.

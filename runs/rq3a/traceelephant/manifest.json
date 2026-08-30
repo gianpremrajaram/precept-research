@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
-  "git_sha": "20c67d14370dc7d174196aabef2429adfce9decf",
-  "git_dirty": false,
+  "git_sha": "8a994bb7038e5bfccc632847d04894bbc27cd011",
+  "git_dirty": true,
   "corpus": "traceelephant",
   "corpus_digest": "ab666509dc934108",
   "corpus_root": "/Users/gianpremrajaram/data/rq3a",
@@ -45,10 +45,10 @@
     "audit_sample": 30,
     "audit_seed": 0,
     "transfer_key": "fail",
-    "transfer_dir": "runs/8902072e1f47b6de-calibration",
+    "transfer_dir": "runs/86ecbbdf35322dc3-calibration",
     "transfer_orientation": 1.0
   },
-  "transfer_train_dataset_hash": "8902072e1f47b6de",
+  "transfer_train_dataset_hash": "86ecbbdf35322dc3",
   "judge_model": null,
   "judge_revision": null,
   "judge_decoding": null,
@@ -61,7 +61,7 @@
     "--corpus",
     "traceelephant",
     "--transfer",
-    "runs/8902072e1f47b6de-calibration",
+    "runs/86ecbbdf35322dc3-calibration",
     "--out",
     "runs/rq3a/traceelephant"
   ],
@@ -81,7 +81,7 @@
     "joblib": "1.5.3",
     "sentence-transformers": "5.6.0"
   },
-  "timestamp": "2026-08-29T16:15:49.386494+00:00",
+  "timestamp": "2026-08-29T16:31:27.440152+00:00",
   "metrics": {
     "rq3a": {
       "corpus": "traceelephant",

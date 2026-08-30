@@ -28,6 +28,7 @@ from preceptx.config import ConfigError
 from preceptx.data.schema import Condition, HandoffRecord
 from preceptx.measure.featuriser import Featuriser
 from preceptx.measure.pvi_cpvi import ProbeConfig, control_task_cpvi, cpvi
+from preceptx.sim.feasibility import oracle_action
 from preceptx.sim.serialise import HISTORY_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -322,6 +323,92 @@ def g3_groundedness(records: list[HandoffRecord], cfg: PilotConfig) -> GateResul
     )
 
 
+# Permutations behind G3's correctness limb, matching the RD-15 audit: the p-value floors at
+# 1/(n_perm + 1), so 20 would report a clean dominance as p = 0.048. Comparisons are integer
+# array work, so 200 costs milliseconds.
+_G3_CORRECTNESS_PERM = 200
+
+
+def g3_correctness(
+    records: list[HandoffRecord], *, n_perm: int = _G3_CORRECTNESS_PERM
+) -> GateResult:
+    """G3's second limb (PREREGISTRATION §7, due at F0): agreement with the oracle's next action.
+
+    Grounding certifies that a message's numbers are true; it cannot certify that the conclusion
+    drawn from them is right, and E3 attempt 2 is the proof - grounding 0.999 on a corpus whose
+    modal inference was wrong. This limb scores B's realised macro action against the certified
+    scripted policy's action from the same pose (``sim.feasibility.oracle_action``).
+
+    The threshold is a **within-episode permutation null on B's own actions**: shuffling the actions
+    inside each episode preserves that episode's action habits exactly and destroys only their link
+    to the pose, so the limb asks whether B acts on the state it was shown rather than on habit. No
+    constant is chosen, so nothing is tunable after the fact, and the two failures the limb exists
+    to catch sit *inside* the null by construction - always-push-east (projection blindness) and
+    always-rotate (attempt 2's defect) are invariant under permutation and score exactly the null.
+    Same shape as the RD-15 audit, one level looser: the gate is the null's one-sided 95th
+    percentile, not its maximum, because a gate that licenses the main sweep should not be stricter
+    than the hypothesis tests the sweep will run.
+
+    ponytail: agreement with a *sufficient* policy, not a proof of optimality - the oracle ignores
+    position because pushing east suffices once aligned, so a disagreement means "not the certified
+    plan", not "wrong". The permutation comparison is what makes that a correctness signal anyway.
+    """
+    oracle = np.array([str(oracle_action(float(r.pre_state["angle"]))) for r in records])
+    taken = np.array([str(r.action["action"]) for r in records])
+    if len(np.unique(oracle)) < 2:
+        return GateResult(
+            name="G3 correctness",
+            passed=False,
+            assessable=False,  # a constant reference action cannot separate reading from habit
+            value=float("nan"),
+            threshold=float("nan"),
+            detail={"n_records": float(len(records))},
+            note=(
+                f"UNASSESSABLE: the oracle emits only {oracle[0]!r} across the cell, so agreement "
+                "measures nothing about whether B reads the pose. Widen the cell and re-gate."
+            ),
+        )
+    real = float(np.mean(oracle == taken))
+    # Reported beside the headline because a bare agreement number cannot say *why* the limb
+    # failed. Restricted to handoffs where B rotated and the oracle wanted a rotation, this is a
+    # coin-flip-referenced read on the one decision the task turns on: which way to turn.
+    rot = np.array([a in ("ROT+", "ROT-") for a in taken]) & np.isin(oracle, ("ROT+", "ROT-"))
+    direction = float(np.mean(oracle[rot] == taken[rot])) if rot.any() else float("nan")
+    blocks = [np.flatnonzero(_groups(records) == g) for g in np.unique(_groups(records))]
+    rng = np.random.default_rng(0)
+    null = np.empty(n_perm, dtype=np.float64)
+    for i in range(n_perm):
+        perm = taken.copy()
+        for b in blocks:
+            perm[b] = rng.permutation(taken[b])
+        null[i] = float(np.mean(oracle == perm))
+    # One-sided 5% level, stated in agreement units so the gate table stays readable. NOT the RD-15
+    # "beat every permutation" criterion: that is p <= 1/(n_perm + 1), which as a *gate* would be an
+    # order of magnitude stricter than the primary hypothesis tests it is meant to license.
+    q95 = float(np.quantile(null, 0.95))
+    p_value = (1 + int(np.sum(null >= real))) / (n_perm + 1)
+    return GateResult(
+        name="G3 correctness",
+        passed=real > q95,
+        value=real,
+        threshold=q95,
+        detail={
+            "n_records": float(len(records)),
+            "n_perm": float(n_perm),
+            "state_blind_mean": float(np.mean(null)),
+            "excess_over_null_mean": real - float(np.mean(null)),
+            "null_max": float(np.max(null)),
+            "p_value": p_value,
+            "oracle_frac_push": float(np.mean(oracle == "E")),
+            "rotation_direction_agreement": direction,  # 0.5 = B turns at random
+        },
+        note=(
+            "agreement with the certified scripted policy, against a within-episode permutation "
+            "null on B's own actions; the gate is real > every permutation"
+        ),
+    )
+
+
 def _recommendation(
     gates: list[GateResult], attempt: int, n_seeds: int, cfg: PilotConfig
 ) -> tuple[Recommendation, str]:
@@ -361,6 +448,7 @@ def run_pilot(
         g1_capability(records, cfg),
         g2_signal(records, featuriser, cfg),
         g3_groundedness(records, cfg),
+        g3_correctness(records),
     ]
     n_seeds = len({r.seed for r in records})
     recommendation, note = _recommendation(gates, attempt, n_seeds, cfg)

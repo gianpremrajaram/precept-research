@@ -87,7 +87,12 @@ def test_pilot_runs_on_a_small_sweep_and_writes_report(tmp_path: Path) -> None:
     feat = Featuriser(EncoderConfig(cache_dir=tmp_path / "embed"), encoder=_StubEncoder())
     report = run_pilot(records, feat, dataset_hash=d_hash)
 
-    assert {g.name for g in report.gates} == {"G1 capability", "G2 signal", "G3 groundedness"}
+    assert {g.name for g in report.gates} == {
+        "G1 capability",
+        "G2 signal",
+        "G3 groundedness",
+        "G3 correctness",  # G3's second limb, reported beside
+    }
     assert report.recommendation in {"proceed", "retune_once", "fallback"}
     out = write_pilot_report(report, tmp_path / "pilot")
     assert (out / "pilot.md").exists() and (out / "pilot.json").exists()

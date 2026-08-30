@@ -1,0 +1,89 @@
+{
+  "target": "realised_failure",
+  "dataset_hash": "86ecbbdf35322dc3",
+  "provenance": {
+    "encoder_name": "BAAI/bge-base-en-v1.5",
+    "encoder_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "second_encoder": "sentence-transformers/all-mpnet-base-v2",
+    "second_encoder_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+    "probe": {
+      "probe": "logistic",
+      "variance_model": "homoscedastic",
+      "c": 1.0,
+      "max_iter": 1000,
+      "n_splits": 5,
+      "n_repeats": 1,
+      "mlp_hidden": 64,
+      "seed": 0
+    },
+    "git_sha": "8a994bb7038e5bfccc632847d04894bbc27cd011",
+    "timestamp": "2026-08-29T16:29:14.312039+00:00"
+  },
+  "n": 2597,
+  "n_bins": 10,
+  "ece_reliable": true,
+  "statistics": [
+    {
+      "key": "fail",
+      "threshold": 0.9336224826730755,
+      "orientation": 1.0,
+      "firing_rate": 0.20023103581055063,
+      "auroc": 0.7538383838383838,
+      "ece": 0.03075746360991638,
+      "n_classes": 2,
+      "reliability": [
+        {
+          "p_mean": 0.35196026222301835,
+          "y_rate": 0.0,
+          "count": 2
+        },
+        {
+          "p_mean": 0.46152606721225903,
+          "y_rate": 0.14285714285714285,
+          "count": 7
+        },
+        {
+          "p_mean": 0.5668059311782299,
+          "y_rate": 0.2631578947368421,
+          "count": 19
+        },
+        {
+          "p_mean": 0.652577183831361,
+          "y_rate": 0.5,
+          "count": 52
+        },
+        {
+          "p_mean": 0.762490283475731,
+          "y_rate": 0.6839080459770115,
+          "count": 174
+        },
+        {
+          "p_mean": 0.8625067285101791,
+          "y_rate": 0.8493150684931506,
+          "count": 730
+        },
+        {
+          "p_mean": 0.9231643009230032,
+          "y_rate": 0.9479231246125233,
+          "count": 1613
+        }
+      ]
+    },
+    {
+      "key": "cosine",
+      "threshold": -0.8137108775780455,
+      "orientation": -1.0,
+      "firing_rate": 0.20023103581055063,
+      "auroc": 0.5694803103498756,
+      "ece": 0.000035343163194978544,
+      "n_classes": 1,
+      "reliability": [
+        {
+          "p_mean": 0.8856726169406305,
+          "y_rate": 0.8856372737774355,
+          "count": 2597
+        }
+      ]
+    }
+  ]
+}

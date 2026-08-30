@@ -185,6 +185,7 @@ run.
 | G1 capability | C0 self-play episode success ≥ **0.5** at easy difficulty |
 | G2 signal | C0-minus-hardest success gap ≥ **0.1**, **and** the CPVI gradient points the same way (`g2_min_cpvi_gap = 0.0`, directional) |
 | G3 groundedness | ≥ **0.8** of numeric mentions in messages match true geometry (abs tol 0.5, rel tol 0.05) |
+| G3 correctness | B's macro action agrees with the certified scripted policy (`sim.feasibility.oracle_action`) above the **one-sided 95th percentile** of a within-episode permutation null on B's own actions (200 permutations) |
 | Minimum seeds for a `proceed` | **3** |
 
 **The E3 cell is C0, C1, C3 and C4 crossed with easy and hard, over seeds 0–9** (80 episodes).
@@ -256,6 +257,43 @@ before it can thread.
 Degrading the *message* (C1, C4) removes that erroneous instruction and doubles success to 7/10;
 degrading the *observation* (C3) removes true state and collapses it to 1/10. Evidence in
 `docs/EXPERIMENTS.md` (E3 attempt 2) and `docs/experiment_design_log.md` (2026-08-26, later).
+
+**The rung-2 re-gate returned G1 on 2026-08-29 (job 236653, `86ecbbdf35322dc3`, bf16 on Myriad, so a
+verdict of record): G1 PASS 0.500.** Easy C0 10/20 against the ≥ 0.5 floor — a pass on `>=`, Wilson
+95% [0.299, 0.701]. Declared before the run on seeds 12–31, disjoint from the 0–11 that informed the
+threshold; medium 3/20, hard 1/20, 14/60 overall. Reported as a pass on the letter of this
+declaration and never as demonstrated capability: a design whose true rate is 0.5 clears this gate
+about half the time. **G2 was not assessed** — that run is C0 only, so the condition contrast does
+not exist and the mixed model correctly refuses to fit; an unassessable gate is not a failed one and
+spends no retune (§6). **G3's grounding limb reads 0.9998 and is not a G3 pass**, for the reason
+given below. **The correctness limb was implemented on 2026-08-29, after this verdict and before
+the E3 cell exists, and it reads FAIL on this corpus: agreement 0.285 against a null 95th percentile
+of 0.322, *p* = 1.000 — the pair agrees with the certified plan less often than its own actions do
+when shuffled within the episode.** The supporting reads are that only 4 of 60 episodes ever bring
+the load within 6° of alignment (0.65 % of handoffs), and that rotation *direction* agreement is
+0.519 on 1,400 rotations — a coin flip. So the corpus that scored 0.999 grounding while reasoning
+wrongly and this one are now distinguished by the gate, and this one is on the wrong side of it. The
+E3 verdict therefore remains open; the declared cell (C0/C1/C3/C4 × easy/hard × seeds 0–9) is the
+next run, and the two things owed before it could yield `proceed` — the G3 correctness limb and the
+length-matched contrast — are both closed and needed no GPU. Full reading in `runs/rq1/86ecbbdf35322dc3/README.md` and the design log
+(2026-08-29, latest).
+
+*Note against §2, recorded because it was not.* The confirmation ran at `--max-steps 50` broadcast
+to every difficulty, against the certified budgets 30/35/35 (`STEP_BUDGETS`, ceil(2.5 × the oracle
+optimum)) that §2 fixes and §7 reaffirms. **The verdict of record therefore already carries a step-
+budget deviation, and it was not logged when it was taken.** It is logged here. The E3 re-gate runs
+at 50 as well — not to extend the deviation but so the two halves of one gate describe one task
+parameterisation; D26 measured the budget effect and it is not significant (*p* = 0.63 / 1.00), and
+the E3 quantity is a *difference* between conditions, which is less budget-sensitive than a level.
+The correctness limb's reading above is the independent reason a longer budget bought nothing here:
+episodes end at a mean misalignment of 36.3° with rotation direction at chance, so extra steps buy
+more of a random walk, not more solving.
+
+*Note against §6, recorded because it nearly mattered.* `docs/myriad.md` §9a had paraphrased G1 as
+*easy ≥ 8/20 and medium ≥ 3/20*. This register says ≥ 0.5 at easy, easy-only, and
+`PilotConfig.g1_success_floor` implements this register. The run satisfies both, so no verdict turns
+on it; at easy 8/20 or 9/20 they would have disagreed. §9a now quotes this section rather than
+restating it. **This register is the only statement of a threshold; runbooks cite, never paraphrase.**
 
 **Rungs 1 and 2 are both taken, declared here before any further compute.** They do not compete for
 a resource: rung 1 needs no GPU.
@@ -375,6 +413,18 @@ the task, and nothing else.**
 because a check that verifies message numbers against true state cannot detect a false conclusion
 drawn from true numbers. F0 fixes a second limb — agreement with the oracle's next action — reported
 beside the grounding limb, never replacing it. This is declared now, before the rung-2 data exists.
+
+*Implemented 2026-08-29, before the E3 cell was run.* The reference is `oracle_action`, the per-pose
+form of the scripted rotate-then-push policy that `certify` already requires to solve every jittered
+start of every shipped difficulty. The criterion is a **within-episode permutation null on B's own
+actions**: shuffling actions inside an episode preserves that episode's action habits exactly and
+destroys only their link to the pose, so the limb asks whether B acts on the state it was shown
+rather than on habit. The two failures it exists to catch — always-push-east (projection blindness)
+and always-rotate (attempt 2's defect) — are invariant under that permutation and therefore score
+exactly the null by construction. The level is one-sided 5 %, i.e. the null's 95th percentile, and
+deliberately **not** RD-15's beat-every-permutation criterion: at 200 permutations that would be
+*p* ≤ 0.005, an order of magnitude stricter than the hypothesis tests the gate exists to license.
+No constant is chosen anywhere in the limb, so there is nothing in it to tune after the fact.
 **The retune ledger starts at the Myriad bf16 re-gate.** Local 4-bit results are indicative:
 a local G1 pass is not the verdict of record, and a local G1 *failure* does not spend the retune
 until it is reproduced at bf16.

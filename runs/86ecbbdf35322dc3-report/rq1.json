@@ -1,0 +1,125 @@
+{
+  "dataset_hash": "86ecbbdf35322dc3",
+  "n_handoffs": 2597,
+  "provenance": {
+    "encoder_name": "BAAI/bge-base-en-v1.5",
+    "encoder_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "second_encoder": "sentence-transformers/all-mpnet-base-v2",
+    "second_encoder_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+    "probe": {
+      "probe": "logistic",
+      "variance_model": "homoscedastic",
+      "c": 1.0,
+      "max_iter": 1000,
+      "n_splits": 5,
+      "n_repeats": 5,
+      "mlp_hidden": 64,
+      "seed": 0
+    },
+    "git_sha": "8a994bb7038e5bfccc632847d04894bbc27cd011",
+    "timestamp": "2026-08-29T18:47:01.773186+00:00"
+  },
+  "conditions": [
+    {
+      "condition": "C0",
+      "n_episodes": 60,
+      "n_handoffs": 2597,
+      "success_rate": 0.23333333333333334,
+      "success_ci": [
+        0.13333333333333333,
+        0.35
+      ],
+      "mean_steps": 43.28333333333333,
+      "mean_collisions": 8.4,
+      "mean_cpvi": 0.1853053724486559,
+      "cpvi_ci": [
+        0.15155950186049832,
+        0.21657702615534347
+      ],
+      "mean_pvi": 0.2695028262148905,
+      "pvi_cpvi_gap": 0.08419745376623464,
+      "mean_control_cpvi": -0.0015838630667102634,
+      "selectivity": 0.18688923551536615,
+      "mean_cpvi_sd": 0.03002398856785284
+    }
+  ],
+  "contrasts": [],
+  "mixed_model": {
+    "formula": "not fitted (single-condition grid)",
+    "coef_no_mediator": {},
+    "converged": false,
+    "mediation_outcome": "episode_success",
+    "path_b": null,
+    "path_b_length_controlled": null,
+    "mediations": [],
+    "mediation_converged": false,
+    "diagnostic_cpvi_coef": null,
+    "diagnostic_attenuation": null,
+    "mediation_note": "H1/H2 not fitted: only condition C0 is present, so C(condition) is rank-deficient and there is no contrast to estimate. This is a capability grid, not a gradient; the mixed model requires at least two conditions."
+  },
+  "control_mean_cpvi": -0.0015838630667102634,
+  "selectivity": 0.18688923551536615,
+  "partial_spearman_length": 0.43946777563134953,
+  "length_matched": [],
+  "signal_decomposition": [
+    {
+      "condition": "C0",
+      "n_handoffs": 2597,
+      "median_cpvi": 0.2629712372501529,
+      "low_cpvi_no_progress": 1070,
+      "low_cpvi_progress": 229,
+      "high_cpvi_no_progress": 688,
+      "high_cpvi_progress": 610,
+      "absent_signal_rate": 0.41201386214863306,
+      "absent_signal_ci": [
+        0.3574545256972286,
+        0.46542128580428216
+      ],
+      "unused_signal_rate": 0.26492106276472854,
+      "unused_signal_ci": [
+        0.21459856393640345,
+        0.32060964209401704
+      ]
+    }
+  ],
+  "seed_sensitivity": {
+    "metric": "success_rate",
+    "n_seeds": 20,
+    "mean": 0.2333333333333333,
+    "sd": 0.19041352352582647,
+    "spread": 0.6666666666666666,
+    "per_seed": {
+      "12": 0.3333333333333333,
+      "13": 0.3333333333333333,
+      "14": 0.3333333333333333,
+      "15": 0.0,
+      "16": 0.3333333333333333,
+      "17": 0.0,
+      "18": 0.0,
+      "19": 0.3333333333333333,
+      "20": 0.3333333333333333,
+      "21": 0.3333333333333333,
+      "22": 0.0,
+      "23": 0.3333333333333333,
+      "24": 0.0,
+      "25": 0.3333333333333333,
+      "26": 0.0,
+      "27": 0.0,
+      "28": 0.3333333333333333,
+      "29": 0.6666666666666666,
+      "30": 0.3333333333333333,
+      "31": 0.3333333333333333
+    },
+    "dispersion": 0.6080418437397844,
+    "reason": "only condition C0 is present, so the C0-minus-hardest gap is a self-subtraction and identically zero; reporting the per-seed success rate and its binomial dispersion instead"
+  },
+  "shuffled_message_audit": {
+    "n_perm": 200,
+    "mean_cpvi": 0.1853053724486559,
+    "null_mean_cpvi": -0.0010098796022162187,
+    "null_std_cpvi": 0.0010653442872946208,
+    "null_max_cpvi": 0.001968135477649214,
+    "p_value": 0.004975124378109453
+  },
+  "figures": {}
+}
