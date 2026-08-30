@@ -45,7 +45,7 @@ episodes remain permanently labelled and are never pooled with cluster data.
 | E8 | RQ3b causal gate + controls (DSE-025) | S5 | E7 threshold; DSE-018, DSE-045 | **Not run — explicitly deferred behind rung 2**: calibrating an outcome-thresholded gate on a task where degrading the message improves outcomes inherits the inversion |
 | E9 | RQ3a corpus spike and counts (DSE-041) | S6, parallel | Nothing but network | **Run 24 Aug 2026.** Conditioning state confirmed (220 traces, 5,960 steps, 2,488 handoffs, recorded input contexts); **trace outcome falsified — 0 non-failures on the primary corpus**. Promotes DSE-042 to load-bearing |
 | E10 | RQ3a replay labelling (DSE-042) | S6 | E9; a spend cap | **Not run — now the only route to a two-class step-level *Y*** (E9) |
-| E11 | RQ3a localisation and baselines (DSE-024, rescoped) | S6 | E9, ~~E10~~, transfer calibration | **Transfer regime run and frozen 29 Aug 2026** (`runs/rq3a/{traceelephant,who_and_when}/`). TraceElephant: CPVI transfer agent accuracy **0.525 [0.432, 0.610]** against schema validity 0.263 and mean cosine 0.254 — non-overlapping intervals. Who&When: 0.333, indistinguishable from mean cosine's 0.367. MAST secondary 0.088 bits [0.070, 0.107]. **The refit regime stays undefined without E10, and the judge arm is unrun** — so `judge` and `agreement` are `null` and no comparison to the published 53.5 % / 14.2 % is stated |
+| E11 | RQ3a localisation and baselines (DSE-024, rescoped) | S6 | E9, ~~E10~~, transfer calibration | **Transfer regime run 29 Aug 2026, re-frozen 30 Aug 2026 under amendment A5** (`runs/rq3a/{traceelephant,who_and_when}/`), which re-keys the transferred statistic to the E3 re-gate calibration `af50c7c12d65540f` (`fail` AUROC 0.906) in place of the G1 confirmation's 0.754. TraceElephant: CPVI transfer agent accuracy **0.492 [0.407, 0.585]** against schema validity 0.263 [0.186, 0.347] and mean cosine 0.254 [0.186, 0.339] — non-overlapping intervals; step accuracy 0.127, top-k 0.432, MRR 0.331. Who&When: 0.287 [0.220, 0.367] against mean cosine's 0.367 — a nominal loss on overlapping intervals. **A5 pre-declared that a worse arm under the better calibration is reported, not reverted**; pre-A5 values were 0.525 [0.432, 0.610] and 0.333. MAST secondary 0.088 bits [0.070, 0.107]. **The refit regime stays undefined without E10, and the judge arm is unrun** — so `judge` and `agreement` are `null` and no comparison to the published 53.5 % / 14.2 % is stated |
 
 ---
 
@@ -1252,8 +1252,8 @@ challenge and it fired on its first real cell. The caveat travels with the numbe
 in one bin is a thin stratum, and this is a sensitivity analysis, not the headline.
 
 **2. Only the lossy channel produces a receiver that acts on the pose.** Run within each condition,
-G3's correctness instrument separates them: C0 agreement 0.330 (*p* = 0.070), C1 0.046 (*p* = 0.095),
-C3 0.261 (*p* = 1.000), **C4 0.399 (*p* = 0.010)** — the only condition beating its own
+G3's correctness instrument separates them: C0 agreement 0.330 (*p* = 0.069), C1 0.046 (*p* = 0.074),
+C3 0.261 (*p* = 1.000), **C4 0.399 (*p* = 0.004)** — the only condition beating its own
 within-episode null, surviving Bonferroni across the four tests. Every supporting measure agrees:
 C4 turns the right way 61.4 % of the time against C0's 52.8 %, oscillates least (flip rate 0.445 vs
 0.559), rotates least (381 vs 436), and leaves least of its own signal unused (0.154 vs 0.268). **The clean, fully grounded, numerically exact message produces a

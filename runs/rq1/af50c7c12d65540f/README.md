@@ -74,17 +74,27 @@ sensitivity analysis rather than the headline.
 ## The mechanism: per-condition receiver competence
 
 `experiments.rq1.action_agreement` runs G3's correctness instrument within each condition
-(200 within-episode permutations each, seeded). The gate pools; the pooled number hides the finding.
+(2,000 within-episode permutations each, seeded per condition). The gate pools; the pooled number
+hides the finding.
+
+> **Re-derived 2026-08-30.** This limb was first frozen at 200 permutations drawn from a single RNG
+> stream shared across conditions. Both were fixed — seeded per condition so a condition's null does
+> not depend on which others share the dataset, and raised to 2,000 draws because at 200 the
+> estimator's standard error (≈ 0.005) could not resolve C4's *p* against the Bonferroni line. The
+> table below is the re-derivation; only the null-derived columns moved (**C4 *p* 0.010 → 0.004**,
+> converging to 0.006 at 20,000 draws). Agreement, rotation-direction and flip-rate figures are
+> deterministic and are unchanged. **The gate verdict of record (`pilot.g3_correctness`, pooled,
+> 200 permutations) is a separate function and is untouched.**
 
 | cond | oracle agreement | null 95th pct | null mean | *p* | verdict | rotation-direction agreement | *n* rotations | flip rate | unused-signal rate |
 |---|---|---|---|---|---|---|---|---|---|
-| C0 | 0.330 | 0.330 | 0.313 | 0.070 | fail | 0.528 | 436 | 0.559 | 0.268 |
-| C1 | 0.046 | 0.046 | 0.044 | 0.095 | fail | 0.511 | 90 | 0.000 | 0.283 |
-| C3 | 0.261 | 0.340 | 0.326 | 1.000 | fail | 0.430 | 563 | 0.570 | 0.323 |
-| **C4** | **0.399** | 0.388 | 0.373 | **0.010** | **PASS** | **0.614** | 381 | **0.445** | **0.154** |
+| C0 | 0.330 | 0.331 | 0.314 | 0.069 | fail | 0.528 | 436 | 0.559 | 0.268 |
+| C1 | 0.046 | 0.046 | 0.044 | 0.074 | fail | 0.511 | 90 | 0.000 | 0.283 |
+| C3 | 0.261 | 0.342 | 0.327 | 1.000 | fail | 0.430 | 563 | 0.570 | 0.323 |
+| **C4** | **0.399** | 0.388 | 0.373 | **0.004** | **PASS** | **0.614** | 381 | **0.445** | **0.154** |
 
 **Only the lossy channel produces a receiver that acts on the pose above chance.** C4's
-*p* = 0.010 survives Bonferroni across the four tests (0.010 × 4 = 0.040). Every measure agrees:
+*p* = 0.004 survives Bonferroni across the four tests (0.004 × 4 = 0.016). Every measure agrees:
 C4 turns the right way 61.4 % of the time against C0's 52.8 % and C3's 43.0 %, oscillates least
 (flip rate 0.445 against 0.559 and 0.570), rotates least (381 against 436 and 563), and leaves far
 less of its own signal unused (0.154 against 0.268 and 0.323). C1's flip rate of 0.000 on 90

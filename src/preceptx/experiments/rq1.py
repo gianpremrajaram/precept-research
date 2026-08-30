@@ -400,7 +400,7 @@ class ActionAgreement(BaseModel):
 
 
 def action_agreement(
-    records: list[HandoffRecord], *, n_perm: int = 200, seed: int = 0
+    records: list[HandoffRecord], *, n_perm: int = 2000, seed: int = 0
 ) -> list[ActionAgreement]:
     """Per-condition oracle agreement, its within-episode null, and the oscillation measures.
 
@@ -412,9 +412,13 @@ def action_agreement(
     oracle = np.array([str(oracle_action(float(r.pre_state["angle"]))) for r in records])
     taken = np.array([str(r.action["action"]) for r in records])
     steps = np.array([r.step for r in records], dtype=int)
-    rng = np.random.default_rng(seed)
     out: list[ActionAgreement] = []
     for cond in [c for c in CONDITION_ORDER if (conditions == c).any()]:
+        # Seeded per condition, not once for the loop: a shared stream makes each condition's null
+        # depend on which *other* conditions happen to be in the dataset, so the same arm scored on
+        # a four-condition grid and on a two-condition grid would report different p-values. The key
+        # is the condition's fixed position in CONDITION_ORDER, so it is grid-independent.
+        rng = np.random.default_rng([seed, CONDITION_ORDER.index(cond)])
         m = conditions == cond
         o, a, ep, st = oracle[m], taken[m], episodes[m], steps[m]
         real = float(np.mean(o == a))

@@ -1,0 +1,124 @@
+{
+  "target": "realised_failure",
+  "dataset_hash": "af50c7c12d65540f",
+  "provenance": {
+    "encoder_name": "BAAI/bge-base-en-v1.5",
+    "encoder_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "second_encoder": "sentence-transformers/all-mpnet-base-v2",
+    "second_encoder_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+    "probe": {
+      "probe": "logistic",
+      "variance_model": "homoscedastic",
+      "c": 1.0,
+      "max_iter": 1000,
+      "n_splits": 5,
+      "n_repeats": 1,
+      "mlp_hidden": 64,
+      "seed": 0
+    },
+    "git_sha": "14c9591207709ad7915bbced9f38f824751d2ef1",
+    "timestamp": "2026-08-30T11:48:06.333585+00:00"
+  },
+  "n": 3419,
+  "n_bins": 10,
+  "ece_reliable": true,
+  "statistics": [
+    {
+      "key": "fail",
+      "threshold": 0.9765060550308559,
+      "orientation": 1.0,
+      "firing_rate": 0.2000584966364434,
+      "auroc": 0.906285478802864,
+      "ece": 0.017483092832046052,
+      "n_classes": 2,
+      "reliability": [
+        {
+          "p_mean": 0.0650067553242663,
+          "y_rate": 0.0851063829787234,
+          "count": 94
+        },
+        {
+          "p_mean": 0.15459564992695798,
+          "y_rate": 0.140625,
+          "count": 128
+        },
+        {
+          "p_mean": 0.25040794268210864,
+          "y_rate": 0.20202020202020202,
+          "count": 99
+        },
+        {
+          "p_mean": 0.34658658788221,
+          "y_rate": 0.22429906542056074,
+          "count": 107
+        },
+        {
+          "p_mean": 0.44679934809749455,
+          "y_rate": 0.43333333333333335,
+          "count": 120
+        },
+        {
+          "p_mean": 0.5508963950053695,
+          "y_rate": 0.4727272727272727,
+          "count": 110
+        },
+        {
+          "p_mean": 0.6527583517740702,
+          "y_rate": 0.6909090909090909,
+          "count": 165
+        },
+        {
+          "p_mean": 0.7535968530809524,
+          "y_rate": 0.8106060606060606,
+          "count": 264
+        },
+        {
+          "p_mean": 0.8490332417206128,
+          "y_rate": 0.8613636363636363,
+          "count": 440
+        },
+        {
+          "p_mean": 0.9607628259172604,
+          "y_rate": 0.9614164904862579,
+          "count": 1892
+        }
+      ]
+    },
+    {
+      "key": "cosine",
+      "threshold": -0.6466768622976298,
+      "orientation": -1.0,
+      "firing_rate": 0.2000584966364434,
+      "auroc": 0.7664688610724771,
+      "ece": 0.06534284840873972,
+      "n_classes": 1,
+      "reliability": [
+        {
+          "p_mean": 0.5852023565228961,
+          "y_rate": 0.4908256880733945,
+          "count": 218
+        },
+        {
+          "p_mean": 0.6398850862371156,
+          "y_rate": 0.6703567035670357,
+          "count": 813
+        },
+        {
+          "p_mean": 0.7446956523907989,
+          "y_rate": 0.46105919003115264,
+          "count": 321
+        },
+        {
+          "p_mean": 0.8631286028076024,
+          "y_rate": 0.8840372226198998,
+          "count": 1397
+        },
+        {
+          "p_mean": 0.9062641585029272,
+          "y_rate": 0.9925373134328358,
+          "count": 670
+        }
+      ]
+    }
+  ]
+}

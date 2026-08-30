@@ -368,10 +368,10 @@ that turns returned data into results.** Submit wide, then write while the queue
 |---|---|---|---|
 | 1 | Commit the working tree, push | laptop | *everything* — the run must be at a real merged SHA, and `test_no_committed_manifest_records_a_dirty_tree` only evaluates on a clean tree |
 | 2 | `git pull` on Myriad | login node | every `qsub` below |
-| 3 | `fetch.sh af50c7c12d65540f` then `preceptx-calibrate --dataset-hash af50c7c12d65540f` | login node, no GPU | **R5 (RQ3b)** and **R6 (RQ3a judge)** — both need the joblib, which is gitignored and must be refit on the cluster |
+| 3 | `fetch.sh af50c7c12d65540f` then `preceptx-calibrate --dataset-hash af50c7c12d65540f` | login node, no GPU | **R5 (RQ3b)** and **R6 (RQ3a judge)** — both need the joblib, which is gitignored and must be refit on the cluster. **Diff the refit against the frozen copy at `runs/rq1/af50c7c12d65540f/calibration.json`** (committed, so it travels with `git pull`): the thresholds must reproduce, and if they do not, the refit is not the calibration R5 imports |
 | 4 | Submit R1–R4 | login node | nothing; they are independent |
 | 5 | Submit R5, R6 once step 3 has produced `runs/af50c7c12d65540f-calibration/` | login node | — |
-| 6 | Re-freeze RQ3a on the now-clean tree (below) | laptop | CI going green |
+| 6 | ~~Re-freeze RQ3a on the now-clean tree~~ — **done 30 Aug**, amendment A5 executed; see §9.3 | laptop | — |
 
 **Diff every dry-run hash against the table before submitting.** A hash that does not match means the
 config moved since this was written, and the run would write to a directory nothing here describes.
@@ -467,6 +467,14 @@ Needs step 3 first. The threshold is **imported, never re-derived** from the arm
 uv run preceptx-calibrate --dataset-hash af50c7c12d65540f
 # -> fail AUROC 0.906 (thr 0.977), cosine AUROC 0.766 (thr -0.647), firing rate 0.200 at n=3419
 
+# the refit must reproduce the frozen copy that travelled with `git pull`, or it is not the
+# calibration R5 imports and the threshold below is not the declared one:
+uv run python -c "
+import json
+f=lambda p:{s['key']:(round(s['threshold'],9),round(s['auroc'],9)) for s in json.load(open(p))['statistics']}
+a,b=f('runs/rq1/af50c7c12d65540f/calibration.json'),f('runs/af50c7c12d65540f-calibration/calibration.json')
+print('MATCH' if a==b else f'MISMATCH\\n frozen {a}\\n refit  {b}')"
+
 qsub -N precept-rq3b -l h_rt=8:00:00 -v DRIVER=preceptx-rq3b scripts/myriad/pilot.sh \
   --calibration runs/af50c7c12d65540f-calibration/calibration.json \
   --calibration-dataset af50c7c12d65540f --statistic cosine \
@@ -521,7 +529,7 @@ README with the full reading, a closed row in `lineage.csv`, an `docs/EXPERIMENT
 entry, and a design-log entry **only where the run changes an interpretation**. The pattern is
 `runs/rq1/af50c7c12d65540f/`; copy its shape.
 
-### 9.3 Owed on the laptop, after the commit
+### 9.3 Owed on the laptop, after the commit — **discharged 30 Aug 2026**
 
 ```bash
 uv run preceptx-rq3a --root ~/data/rq3a --corpus traceelephant \
@@ -530,11 +538,17 @@ uv run preceptx-rq3a --root ~/data/rq3a --corpus who_and_when \
   --transfer runs/af50c7c12d65540f-calibration --out runs/rq3a/who_and_when
 ```
 
-This does two jobs at once: it clears `git_dirty: true` from both RQ3a manifests — stale for four
+This did two jobs at once: it cleared `git_dirty: true` from both RQ3a manifests — stale for four
 sessions, and now guarded by `test_no_committed_manifest_records_a_dirty_tree`, which **skips on a
-dirty tree and bites in CI** — and it executes amendment **A5**, re-fitting the transferred statistic
-on the better-calibrated corpus. Both old and new numbers go in the re-freeze note. **CI will not be
-green until this runs on a clean tree**; that is the guard working, not a regression.
+dirty tree and bites in CI** — and it executed amendment **A5**, re-fitting the transferred statistic
+on the better-calibrated corpus. Both old and new numbers are in §8b's A5 row and in the design log.
+
+**Run them one at a time, committing between.** The first run starts from a clean tree and stamps
+`git_dirty: false`; it then *writes tracked artefacts*, so the second run would stamp `true` unless
+the first is committed before it starts. The two manifests therefore carry two different clean SHAs,
+both reachable, and that is correct rather than a defect — the guard makes a single-SHA pair
+impossible by construction. **Do not re-run these on the cluster**: the offline arms cost zero model
+calls and are frozen. R6 adds the judge arm on top of the same calibration.
 
 
 ## 10. Getting the results back

@@ -15,7 +15,88 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
-## 2026-08-30 (latest) — the gradient is absent, the mechanism is named, and the register learns to bend without breaking
+## 2026-08-30 (latest) — one calibration substrate, and a mechanism number that stops depending on its grid
+
+- **Area:** the RQ3a transfer arm's calibration substrate (amendment **A5**, executed); the
+  permutation null behind `rq1.action_agreement`; the instrument declaration for RQ3b (§8c).
+- **Trigger:** an external review of the re-freeze branch. The re-freeze whose stated purpose was
+  clearing a stale `git_dirty` had silently changed its `--transfer` input to the **A2 pilot**
+  calibration (`8902072e1f47b6de`) — neither the substrate of record (`86ecbbdf35322dc3`) nor the one
+  **A5** declares (`af50c7c12d65540f`). Three substrates were live at once and the committed
+  `rq3a.json` disagreed with the `docs/EXPERIMENTS.md` row sitting beside it. Separately, the review
+  noticed that `action_agreement` drew its whole permutation null from one RNG stream opened outside
+  the condition loop.
+
+**Finding 1 — a re-freeze that changes an input is a new result, not a provenance repair.** The two
+are only distinguishable by diffing the output, which nobody did: TraceElephant's `cpvi_transfer`
+agent accuracy moved 0.525 → 0.576 under the swapped calibration, restoring numbers that the 29
+August session had already superseded. The lesson is procedural and cheap to bank: **a re-freeze
+undertaken for provenance reasons must reproduce its predecessor's numbers bit-for-bit**, and if it
+does not, the input moved and it is a result-affecting change owing a declaration.
+
+**The fix.** Rather than restore the of-record numbers and leave **A5** pending — which would have
+left two substrates live and forced a second re-freeze before R6 — **A5 is executed here**, so one
+calibration (`af50c7c12d65540f`, the E3 re-gate corpus) backs the RQ3a transfer arm on the laptop and
+R6's judge arm on the cluster. A5's selection rule was declared before these numbers existed and does
+not read them: calibrate on the corpus with the most conditions and the widest realised-outcome
+variance. The E3 corpus wins on both, and is measurably the better instrument (`fail` AUROC **0.906**
+against 0.754; `cosine` **0.766** against 0.569).
+
+**Result — A5 delivers a mixed reading, and the declaration obliges reporting it.**
+
+| corpus | metric | confirmation (`86ecbbdf`) | **E3 re-gate (`af50c7c1`)** |
+|---|---|---|---|
+| TraceElephant | agent acc. | 0.525 [0.432, 0.610] | **0.492 [0.407, 0.585]** |
+| | step acc. | 0.110 | **0.127** |
+| | top-k acc. | 0.407 | **0.432** |
+| | MRR | 0.315 | **0.331** |
+| Who&When | agent acc. | 0.333 | 0.287 [0.220, 0.367] |
+| | step acc. | 0.207 | 0.153 |
+| | MRR | 0.415 | 0.329 |
+
+**The headline survives and is stated at its new value.** On TraceElephant the transfer statistic
+still beats both zero-call baselines with non-overlapping intervals — 0.492 [0.407, 0.585] against
+schema validity 0.263 [0.186, 0.347] and mean cosine 0.254 [0.186, 0.339] — and it localises *more*
+precisely by every rank-sensitive measure (step accuracy, top-k, MRR all up); the agent-level number
+is the one that fell. On Who&When the arm remains a tie it does not win: mean cosine now leads
+nominally (0.367 vs 0.287) on heavily overlapping intervals, where before it led 0.367 vs 0.333.
+A5 said in advance that a worse transfer arm under the better calibration would be **reported, not
+reverted**; this is that report.
+
+**Finding 2 — a permutation null keyed to the whole dataset makes a per-condition number depend on
+the grid it was computed on.** `action_agreement` opened `default_rng(seed)` once for the condition
+loop, so each condition consumed whatever stream position the preceding conditions left. The same arm
+scored on a four-condition grid and on a two-condition grid gets different nulls — and **A2's decision
+rule reads R1's two-condition agreement limb directly against E3's four-condition C4 value**, so the
+comparison the amendment turns on was the one the defect broke. Fixed by seeding inside the loop on
+the condition's fixed index in `CONDITION_ORDER`, which is invariant to which conditions are present.
+
+**Finding 3 — the same exposure showed the *p*-value was Monte-Carlo-limited, not data-limited.**
+Re-deriving E3 under per-condition seeding moved C4's *p* 0.010 → 0.015, across the Bonferroni line
+(0.05/4 = 0.0125). At `n_perm = 200` the estimator's standard error at that *p* is ≈ 0.005, so the
+corrected claim was never resolvable at this permutation count in either direction. Raising the count
+converges it: *p* = 0.0040 at 2,000 permutations and 0.0060 at 20,000, against 0.0149 at 200. The
+default is now **2,000**, matching the `n_boot = 2,000` used elsewhere. **This is a precision change,
+not a re-analysis:** the estimand is the exact permutation *p*, unchanged; only the Monte-Carlo error
+in estimating it moves, and the converged value **supports the reading already on the record** rather
+than rescuing one that had failed — which is precisely why it is safe to make. Agreement, rotation
+and flip-rate figures are deterministic and did not move at all. E3's frozen artefacts
+(`runs/af50c7c12d65540f-report/`) and its README are re-derived; the C4 row now reads *p* = 0.004.
+
+**Risk reduced.** Three: an artefact set that contradicted its own changelog; a mechanism number that
+would have been incomparable between E3 and the R1 arm about to be submitted against it; and a
+headline significance claim resting on 200 draws. All three were reachable before the `qsub`, which
+is the only place they were cheap.
+
+**So what.** The transferable rule is the first one: *provenance repairs must be diffed*. A re-freeze
+is the one operation whose success criterion is that nothing changed, so it is the one where changing
+something is hardest to notice. The second is narrower and worth the same vigilance — when a
+statistic is going to be compared across runs, every source of its variation that is not the data
+(RNG keying, permutation count) has to be pinned before the first of those runs, not after.
+
+---
+
+## 2026-08-30 — the gradient is absent, the mechanism is named, and the register learns to bend without breaking
 
 - **Area:** the E3 verdict of record and the close of the E3 ledger; the per-condition form of the
   correctness limb; what the pre-registration locks and what it may amend; the headline order.
@@ -28,11 +109,11 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 **Finding 1 — the absence has a mechanism, and only a per-condition instrument could see it.**
 `g3_correctness` pools the cell and returns 0.242 against a null of 0.257: a clean fail carrying no
-information about *which* condition failed. Run within each condition (`rq1.action_agreement`, 200
-within-episode permutations each), the picture inverts: **C4 is the only condition whose receiver
-beats its own within-episode null** — agreement 0.399 against a 95th percentile of 0.388,
-*p* = 0.010, surviving Bonferroni across four tests — while C0 sits at 0.330 against 0.330
-(*p* = 0.070), C3 at 0.261 against 0.340, C1 at 0.046. Every supporting measure agrees: C4 turns the
+information about *which* condition failed. Run within each condition (`rq1.action_agreement`, 2,000
+within-episode permutations each, seeded per condition), the picture inverts: **C4 is the only
+condition whose receiver beats its own within-episode null** — agreement 0.399 against a 95th
+percentile of 0.388, *p* = 0.004, surviving Bonferroni across four tests — while C0 sits at 0.330
+against 0.331 (*p* = 0.069), C3 at 0.261 against 0.342, C1 at 0.046. Every supporting measure agrees: C4 turns the
 right way 61.4 % of the time against C0's 52.8 % and C3's 43.0 %, oscillates least (flip rate 0.445
 against 0.559 and 0.570), rotates least (381 against 436 and 563), and leaves least of its own signal
 unused (0.154 against 0.268 and 0.323). **A channel cannot be degraded informatively when the

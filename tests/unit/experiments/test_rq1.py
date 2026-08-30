@@ -388,6 +388,22 @@ def test_action_agreement_separates_a_pose_reader_from_a_habit() -> None:
     assert rows["C4"].p_value > 0.05
 
 
+def test_action_agreement_null_is_invariant_to_the_rest_of_the_grid() -> None:
+    """A condition's null must not depend on which *other* conditions share the dataset.
+
+    One RNG stream over the whole loop made C4's p-value a function of how many conditions were
+    scored before it, so the same arm read differently on a four-condition grid than on a two-
+    condition one - and A2's decision rule compares a two-condition arm against E3's C4 number.
+    """
+    habit = _pose_records("C4", "E")
+    alone = {a.condition: a for a in action_agreement(habit, n_perm=50)}
+    with_others = {
+        a.condition: a for a in action_agreement(_pose_records("C0", None) + habit, n_perm=50)
+    }
+    # JSON, not model_dump: the rotation fields are NaN here and NaN != NaN under ==.
+    assert alone["C4"].model_dump_json() == with_others["C4"].model_dump_json()
+
+
 def test_action_agreement_reports_oscillation_and_tie_free_direction() -> None:
     rows = {a.condition: a for a in action_agreement(_pose_records("C0", None), n_perm=20)}
     c0 = rows["C0"]
