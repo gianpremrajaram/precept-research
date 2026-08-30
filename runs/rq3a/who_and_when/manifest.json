@@ -1,6 +1,6 @@
 {
   "manifest_version": 2,
-  "git_sha": "e5f3331bdf0f2d691dc08da33d1261c4706109f5",
+  "git_sha": "a951917fae619ee22e502f0e4ce485d7ebb181c2",
   "git_dirty": false,
   "corpus": "who_and_when",
   "corpus_digest": "0aa22b23ee5965c0",
@@ -45,10 +45,10 @@
     "audit_sample": 30,
     "audit_seed": 0,
     "transfer_key": "fail",
-    "transfer_dir": "runs/8902072e1f47b6de-calibration",
+    "transfer_dir": "runs/af50c7c12d65540f-calibration",
     "transfer_orientation": 1.0
   },
-  "transfer_train_dataset_hash": "8902072e1f47b6de",
+  "transfer_train_dataset_hash": "af50c7c12d65540f",
   "judge_model": null,
   "judge_revision": null,
   "judge_decoding": null,
@@ -61,7 +61,7 @@
     "--corpus",
     "who_and_when",
     "--transfer",
-    "runs/8902072e1f47b6de-calibration",
+    "runs/af50c7c12d65540f-calibration",
     "--out",
     "runs/rq3a/who_and_when"
   ],
@@ -81,7 +81,7 @@
     "joblib": "1.5.3",
     "sentence-transformers": "5.6.0"
   },
-  "timestamp": "2026-08-30T13:17:19.839799+00:00",
+  "timestamp": "2026-08-30T15:55:20.837257+00:00",
   "metrics": {
     "rq3a": {
       "corpus": "who_and_when",
