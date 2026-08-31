@@ -72,13 +72,24 @@ cache_to_scratch() {
 #
 # Usage: write_serve_env <path>   (serve.sh writes it; pilot.sh exports the same path)
 serve_env_path() {
-  echo "${SERVE_ENV_PATH:-$REPO_ROOT/runs/serve_env.json}"
+  # Job-scoped by default. Every job used to write ONE shared runs/serve_env.json on a filesystem
+  # every node mounts: job 244523 truncated it on node-l00a-003 at 23:21Z and was killed inside the
+  # write, and job 244522 - mid-sweep on node-u00a-001 - read the zero bytes 21 minutes later, after
+  # all 20 parquet parts were written, and died in build_sweep_manifest with the episodes paid for.
+  # $JOB_ID is SGE's; the $$ fallback keeps a local run off a concurrent shell's file.
+  echo "${SERVE_ENV_PATH:-$REPO_ROOT/runs/serve_env.${JOB_ID:-local-$$}.json}"
 }
 
 write_serve_env() {
   local out="$1"
   mkdir -p "$(dirname "$out")"
-  cat >"$out" <<JSON
+  # Staged and renamed, never written in place. `cat >"$out"` truncates at redirection setup, and
+  # the heredoc's `import vllm` / `import torch` substitutions then hold the file at zero bytes for
+  # several seconds; a reader in that window - or a kill inside it, which is what happened - sees an
+  # empty capture. rename(2) within one directory is atomic, so a reader gets either the previous
+  # capture or the complete new one, never a half.
+  local tmp="$out.$$.tmp"
+  cat >"$tmp" <<JSON
 {
   "tier": "$TIER",
   "model": "$MODEL",
@@ -98,6 +109,7 @@ write_serve_env() {
   "captured_at": "$(date -u +%FT%TZ)"
 }
 JSON
+  mv -f "$tmp" "$out"
 }
 
 

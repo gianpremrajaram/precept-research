@@ -17,8 +17,11 @@ HOST="${HOST:-myriad}"
 REMOTE="${REMOTE:-\$HOME/Scratch/precept-research/runs/}"   # expanded on the far side, not here
 HASH="${1:-}"
 
-# The four irreproducible files. `serve_env.json` sits at the runs/ root, the rest under <hash>-run/.
-args=(--include='*/' --include='manifest.json' --include='summary.json' --include='serve_env.json')
+# The four irreproducible files. The serving captures sit at the runs/ root, the rest under
+# <hash>-run/. Globbed, not the literal `serve_env.json`: the captures are named per job
+# (serve_env.<JOB_ID>.json) so two concurrent jobs cannot truncate each other's, and this include
+# would otherwise match nothing and leave the whole server-side stack on the cluster.
+args=(--include='*/' --include='manifest.json' --include='summary.json' --include='serve_env*.json')
 
 if [[ -n "$HASH" ]]; then
   # Parquet is regenerable only by re-running the sweep on a GPU, so for a named run it comes too.

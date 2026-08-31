@@ -62,6 +62,7 @@ from preceptx.gate.calibration import (
     write_report,
 )
 from preceptx.gate.statistics import resolve_statistic_key, save_statistic
+from preceptx.manifest import serve_env
 from preceptx.measure.featuriser import EncoderConfig, Featuriser, second_encoder_config
 from preceptx.serving.client import LLMClient, ServingConfig, ServingError
 
@@ -277,6 +278,14 @@ def _prepare(args: argparse.Namespace, defaults: dict[str, list[Any]]) -> SweepC
             "PRECEPTX_SERVING_SUBSTRATE is unset; label the substrate (e.g. 'local-lmstudio' or "
             "'myriad-a100') so the manifest records where the episodes were served"
         )
+    if not args.dry_run:
+        # Read once here and discard the value. The sidecar is otherwise first touched in
+        # build_sweep_manifest, which runs *after* every episode has been paid for: job 244522
+        # wrote all 20 of its parquet parts across 30 minutes of an A100 and then died on an
+        # unreadable capture, leaving a complete dataset with no manifest to make it a result.
+        # The same read costs nothing at second zero. Same instinct as pilot.sh warming the
+        # embedding encoder before any GPU time is spent.
+        serve_env()
     return sweep
 
 

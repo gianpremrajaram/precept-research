@@ -22,8 +22,10 @@ from preceptx.gate.calibration import (
     StatisticCalibration,
     write_report,
 )
+from preceptx.manifest import ManifestError
 from preceptx.measure.featuriser import EncoderConfig
 from preceptx.measure.pvi_cpvi import ProbeConfig
+from preceptx.serving.client import ServingError
 from preceptx.sim.feasibility import STEP_BUDGETS
 
 
@@ -64,6 +66,38 @@ def test_unlabelled_substrate_fails_loud(monkeypatch: pytest.MonkeyPatch) -> Non
     # exception at start-up rather than a warning mid-run.
     monkeypatch.delenv("PRECEPTX_SERVING_SUBSTRATE", raising=False)
     with pytest.raises(ConfigError, match="PRECEPTX_SERVING_SUBSTRATE"):
+        pilot(["--seeds", "0"])
+
+
+def test_an_unreadable_serve_env_sidecar_fails_before_the_episodes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Job 244522 wrote all 20 of its parquet parts across 30 minutes of an A100 and only then read
+    the serving sidecar - which a sibling job had truncated to zero bytes - and died in
+    build_sweep_manifest, leaving a complete dataset that no manifest could turn into a result.
+    The same read is free at start-up, so it happens there."""
+    monkeypatch.setenv("PRECEPTX_SERVING_SUBSTRATE", "myriad-test")
+    sidecar = tmp_path / "serve_env.json"
+    sidecar.write_text("")  # exactly what the killed sibling left behind
+    monkeypatch.setenv("PRECEPTX_SERVE_ENV", str(sidecar))
+    with pytest.raises(ManifestError, match="not valid JSON"):
+        pilot(["--seeds", "0"])
+
+    # A dry run costs nothing and still must not need the cluster's sidecar to print a plan.
+    rq1(["--dry-run", "--seeds", "0"])
+
+
+def test_a_valid_serve_env_sidecar_passes_the_pre_flight(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The guard must reject only an unreadable capture, not gate every run behind one: off the
+    cluster PRECEPTX_SERVE_ENV is unset and its absence is accurate, not degraded."""
+    monkeypatch.setenv("PRECEPTX_SERVING_SUBSTRATE", "myriad-test")
+    sidecar = tmp_path / "serve_env.json"
+    sidecar.write_text('{"tier": "qwen14b", "model": "Qwen/Qwen3-14B"}')
+    monkeypatch.setenv("PRECEPTX_SERVE_ENV", str(sidecar))
+    # Past the sidecar check; the endpoint is what it fails on now, not the capture.
+    with pytest.raises(ServingError):
         pilot(["--seeds", "0"])
 
 

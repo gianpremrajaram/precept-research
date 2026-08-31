@@ -23,6 +23,13 @@ htmlcov/
 
 # Per-run artefacts: only frozen config/manifest/metrics/figures are committed (added per run).
 # Raw logs, trained probes, embedding caches and our own numeric caches never are.
+# The per-job serving captures serve.sh writes at the runs/ root. Untracked AND unignored, they
+# put the cluster checkout permanently in `git status --porcelain`, and manifest.git_dirty reads
+# exactly that - so every manifest written on Myriad would record git_dirty: true and stop being a
+# provenance record. The contents are not lost: build_sweep_manifest embeds the values and a digest
+# of the bytes into manifest.json, which is the artefact that is committed.
+runs/serve_env*.json
+runs/serve_env*.tmp
 runs/*/handoffs.jsonl
 runs/*/probes/
 runs/*/embeddings/
