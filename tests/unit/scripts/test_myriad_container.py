@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -368,3 +370,146 @@ def test_grid_flags_reach_the_driver(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert "--conditions C0,C2 --difficulties medium" in result.stdout
     assert "--model qwen14b" in result.stdout
+
+
+# --- Serving isolation (jobs 244519/244520/244522/244523) ------------------------------------
+# Four jobs submitted together on 30 Aug 2026 lost their GPU allocations to two defects in this
+# file. Three landed on one node beside another tenant's vLLM on the fixed :8000 and measured
+# nothing; the fourth wrote all 20 of its parquet parts and then found the single shared
+# serve_env.json a sibling had truncated. Each test below pins one of them.
+
+
+def _serve_env_env(cluster: Cluster, **overrides: str) -> dict[str, str]:
+    return cluster.env(
+        TIER="qwen14b",
+        MODEL="Qwen/Qwen3-14B",
+        REVISION="abc",
+        CC="gcc",
+        GUIDED_BACKEND="xgrammar",
+        SIF=str(cluster.sif),
+        CONTAINER_SOURCE="docker://python@sha256:test",
+        **overrides,
+    )
+
+
+def _source_common(
+    cluster: Cluster, snippet: str, **overrides: str
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", "-c", f'set -euo pipefail; source "$1"; {snippet}', "bash", str(COMMON)],
+        capture_output=True,
+        text=True,
+        env=_serve_env_env(cluster, **overrides),
+        timeout=60,
+    )
+
+
+def test_the_serve_env_sidecar_is_scoped_to_the_job(cluster: Cluster) -> None:
+    """Two concurrent jobs must not name the same capture file.
+
+    $HOME/Scratch is mounted by every node, so the old shared runs/serve_env.json was one file for
+    the whole cluster. 244523 truncated it on node-l00a-003 at 23:21Z and 244522 read the zero bytes
+    on node-u00a-001 21 minutes later, at manifest construction, with its episodes paid for.
+    """
+    first = _source_common(cluster, "serve_env_path", JOB_ID="244522")
+    second = _source_common(cluster, "serve_env_path", JOB_ID="244523")
+    assert first.returncode == 0, first.stderr
+    assert first.stdout != second.stdout, "two jobs still share one capture file"
+    assert "244522" in first.stdout and "244523" in second.stdout
+
+    # An explicit path still wins, and off SGE the fallback is per-process rather than shared.
+    pinned = _source_common(cluster, "serve_env_path", SERVE_ENV_PATH="/tmp/pinned.json")
+    assert pinned.stdout.strip() == "/tmp/pinned.json"
+    local = _source_common(cluster, "serve_env_path", JOB_ID="")
+    assert "serve_env.local-" in local.stdout
+
+
+def test_a_reader_never_sees_a_half_written_sidecar(cluster: Cluster) -> None:
+    """`cat >"$out"` truncates at redirection setup, then holds the file at zero bytes for as long
+    as the heredoc's `import vllm` / `import torch` substitutions take. A concurrent reader - or a
+    kill inside that window, which is what 244523's trap did - sees an empty capture where a valid
+    one used to be. The write must stage and rename instead."""
+    out = cluster.root / "serve_env.json"
+    out.write_text('{"tier": "previous-capture"}')
+
+    # `python` is what the heredoc shells out to; make it slow enough to sample mid-write.
+    cluster._stub("python", "#!/bin/bash\nsleep 3\necho 0.0.0\n")
+    with subprocess.Popen(
+        ["bash", "-c", 'source "$1"; write_serve_env "$2"', "bash", str(COMMON), str(out)],
+        env=_serve_env_env(cluster),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ) as writer:
+        # Sampled while the substitutions are still running: the old code shows 0 bytes here.
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            assert json.loads(out.read_text()), f"reader saw {out.read_text()!r} mid-write"
+            time.sleep(0.05)
+        assert writer.wait(timeout=30) == 0
+    assert json.loads(out.read_text())["tier"] == "qwen14b"
+
+
+def test_a_killed_write_leaves_the_previous_capture_intact(cluster: Cluster) -> None:
+    """244523's trap fired four seconds in. Under the old in-place write that left a zero-byte
+    file that outlived the job and took a sibling's manifest with it."""
+    out = cluster.root / "serve_env.json"
+    out.write_text('{"tier": "previous-capture"}')
+    cluster._stub("python", "#!/bin/bash\nsleep 10\necho 0.0.0\n")
+    with subprocess.Popen(
+        ["bash", "-c", 'source "$1"; write_serve_env "$2"', "bash", str(COMMON), str(out)],
+        env=_serve_env_env(cluster),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ) as writer:
+        time.sleep(1.0)
+        writer.kill()
+        writer.wait(timeout=30)
+    assert json.loads(out.read_text())["tier"] == "previous-capture"
+
+
+def _port_preflight_block() -> str:
+    """The pre-flight and port default, lifted from pilot.sh so the test pins the shipped text."""
+    text = (SCRIPTS / "pilot.sh").read_text()
+    port_line = next(ln for ln in text.splitlines() if ln.startswith("PORT="))
+    start = text.index('if curl -sf --max-time 5 "http://localhost:${PORT}/v1/models"')
+    end = text.index("\nfi\n", start) + len("\nfi\n")
+    return f"{port_line}\n{text[start:end]}\necho READY-TO-LAUNCH :$PORT\n"
+
+
+def _run_preflight(**env: str) -> subprocess.CompletedProcess[str]:
+    with tempfile.TemporaryDirectory() as tmp:
+        stub = Path(tmp) / "curl"
+        # CURL_FINDS_A_SERVER=1 stands in for a co-tenant already answering on the port.
+        stub.write_text('#!/bin/bash\nexit "${CURL_FINDS_A_SERVER:-1}"\n')
+        stub.chmod(0o755)
+        preamble = "set -euo pipefail\nhostname() { echo node-l00a-003; }\n"
+        return subprocess.run(
+            ["bash", "-c", f"{preamble}{_port_preflight_block()}"],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PATH": f"{tmp}{os.pathsep}{os.environ['PATH']}", **env},
+            timeout=30,
+        )
+
+
+def test_a_port_another_tenant_already_serves_is_refused_before_launch() -> None:
+    """244519/244520/244523 each reported "endpoint live after 1s" against a Devstral server they
+    did not start, because the readiness loop takes any 200 on the address. The port must be
+    proven unheld first, or a later 200 cannot be attributed to our own server."""
+    result = _run_preflight(CURL_FINDS_A_SERVER="0", JOB_ID="244519")
+    assert result.returncode == 1
+    assert "already serving" in result.stderr
+    assert "PORT=<free port>" in result.stderr, "the diagnostic must name the fix"
+    assert "READY-TO-LAUNCH" not in result.stdout, "the job launched into an occupied port"
+
+
+def test_a_free_port_proceeds_and_is_scoped_to_the_job() -> None:
+    """The happy path still launches, and two of our own jobs do not collide by construction."""
+    first = _run_preflight(JOB_ID="244519")
+    second = _run_preflight(JOB_ID="244520")
+    assert first.returncode == 0, first.stderr
+    assert "READY-TO-LAUNCH :8519" in first.stdout
+    assert "READY-TO-LAUNCH :8520" in second.stdout
+    # Off SGE, and an explicit override, both still resolve.
+    assert "READY-TO-LAUNCH :8000" in _run_preflight().stdout
+    assert "READY-TO-LAUNCH :9001" in _run_preflight(PORT="9001", JOB_ID="244519").stdout

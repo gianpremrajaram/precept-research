@@ -1,0 +1,139 @@
+{
+  "dataset_hash": "a86599bae274eac1",
+  "n_handoffs": 2759,
+  "provenance": {
+    "encoder_name": "BAAI/bge-base-en-v1.5",
+    "encoder_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "second_encoder": "sentence-transformers/all-mpnet-base-v2",
+    "second_encoder_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+    "probe": {
+      "probe": "logistic",
+      "variance_model": "homoscedastic",
+      "c": 1.0,
+      "max_iter": 1000,
+      "n_splits": 5,
+      "n_repeats": 5,
+      "mlp_hidden": 64,
+      "seed": 0
+    },
+    "git_sha": "dd9587493ea9d6ceeeada73a42de8ef51fecec80",
+    "timestamp": "2026-09-03T00:49:30.744532+00:00"
+  },
+  "conditions": [
+    {
+      "condition": "C0",
+      "n_episodes": 60,
+      "n_handoffs": 2759,
+      "success_rate": 0.15,
+      "success_ci": [
+        0.06666666666666667,
+        0.2615552895938398
+      ],
+      "mean_steps": 45.983333333333334,
+      "mean_collisions": 5.533333333333333,
+      "mean_cpvi": 0.1214608361609756,
+      "cpvi_ci": [
+        0.08640175466693385,
+        0.15930237937346262
+      ],
+      "mean_pvi": 0.22988509935561055,
+      "pvi_cpvi_gap": 0.10842426319463495,
+      "mean_control_cpvi": -0.0022601546965331596,
+      "selectivity": 0.12372099085750876,
+      "mean_cpvi_sd": 0.02867995888227761
+    }
+  ],
+  "contrasts": [],
+  "mixed_model": {
+    "formula": "not fitted (single-condition grid)",
+    "coef_no_mediator": {},
+    "converged": false,
+    "mediation_outcome": "episode_success",
+    "path_b": null,
+    "path_b_length_controlled": null,
+    "mediations": [],
+    "mediation_converged": false,
+    "diagnostic_cpvi_coef": null,
+    "diagnostic_attenuation": null,
+    "mediation_note": "H1/H2 not fitted: only condition C0 is present, so C(condition) is rank-deficient and there is no contrast to estimate. This is a capability grid, not a gradient; the mixed model requires at least two conditions."
+  },
+  "control_mean_cpvi": -0.0022601546965331596,
+  "selectivity": 0.12372099085750876,
+  "partial_spearman_length": 0.34986818942136017,
+  "length_matched": [],
+  "signal_decomposition": [
+    {
+      "condition": "C0",
+      "n_handoffs": 2759,
+      "median_cpvi": 0.03306180074011539,
+      "low_cpvi_no_progress": 1237,
+      "low_cpvi_progress": 144,
+      "high_cpvi_no_progress": 934,
+      "high_cpvi_progress": 444,
+      "absent_signal_rate": 0.4483508517578833,
+      "absent_signal_ci": [
+        0.34692050106702077,
+        0.5496666633161283
+      ],
+      "unused_signal_rate": 0.33852845233780354,
+      "unused_signal_ci": [
+        0.25254961242476515,
+        0.42995767663693935
+      ]
+    }
+  ],
+  "action_agreement": [
+    {
+      "condition": "C0",
+      "n_handoffs": 2759,
+      "agreement": 0.3584632113084451,
+      "null_mean": 0.38613193185936934,
+      "null_p95": 0.3954331279449076,
+      "p_value": 1.0,
+      "n_perm": 2000,
+      "rotation_direction_agreement": 0.46690070210631895,
+      "n_rotations": 1994,
+      "rotation_flip_rate": 0.6094883696578398
+    }
+  ],
+  "directive_compliance": [
+    {
+      "condition": "C0",
+      "n": 1861,
+      "coverage": 0.7017035157665821,
+      "directive_agreement": 0.41429339065018805,
+      "obedience": 0.7759269210102095,
+      "receiver_agreement": 0.4578183772165502
+    }
+  ],
+  "seed_sensitivity": {
+    "metric": "success_rate",
+    "n_seeds": 10,
+    "mean": 0.14999999999999997,
+    "sd": 0.14593250596181886,
+    "spread": 0.3333333333333333,
+    "per_seed": {
+      "0": 0.0,
+      "1": 0.3333333333333333,
+      "2": 0.0,
+      "3": 0.16666666666666666,
+      "4": 0.0,
+      "5": 0.16666666666666666,
+      "6": 0.3333333333333333,
+      "7": 0.16666666666666666,
+      "8": 0.0,
+      "9": 0.3333333333333333
+    },
+    "dispersion": 1.0021786492374727,
+    "reason": "only condition C0 is present, so the C0-minus-hardest gap is a self-subtraction and identically zero; reporting the per-seed success rate and its binomial dispersion instead"
+  },
+  "shuffled_message_audit": {
+    "n_perm": 200,
+    "mean_cpvi": 0.1214608361609756,
+    "null_mean_cpvi": -0.002311107959247513,
+    "null_std_cpvi": 0.0013465402505979857,
+    "null_max_cpvi": 0.002001020165036814,
+    "p_value": 0.004975124378109453
+  },
+  "figures": {}
+}

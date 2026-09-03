@@ -1,0 +1,246 @@
+{
+  "dataset_hash": "af50c7c12d65540f",
+  "n_handoffs": 3419,
+  "primary_y": "y_binary_progress",
+  "provenance": {
+    "encoder_name": "BAAI/bge-base-en-v1.5",
+    "encoder_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "second_encoder": "sentence-transformers/all-mpnet-base-v2",
+    "second_encoder_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+    "probe": {
+      "probe": "logistic",
+      "variance_model": "homoscedastic",
+      "c": 1.0,
+      "max_iter": 1000,
+      "n_splits": 5,
+      "n_repeats": 5,
+      "mlp_hidden": 64,
+      "seed": 0
+    },
+    "git_sha": "14c9591207709ad7915bbced9f38f824751d2ef1",
+    "timestamp": "2026-08-30T11:09:01.801051+00:00"
+  },
+  "twin": [
+    {
+      "scope": "pooled",
+      "agreement": {
+        "n": 3419,
+        "pearson_r": 0.1004939980382695,
+        "spearman_rho": 0.4819627894094126,
+        "ba_bias": 0.01680263529405482,
+        "ba_loa_low": -0.97939726663557,
+        "ba_loa_high": 1.0130025372236797,
+        "n_kl_capped": 0
+      }
+    },
+    {
+      "scope": "C0",
+      "agreement": {
+        "n": 803,
+        "pearson_r": 0.25916550984047243,
+        "spearman_rho": 0.5914874970119113,
+        "ba_bias": 0.09024482151334028,
+        "ba_loa_low": -0.8014710809849599,
+        "ba_loa_high": 0.9819607240116404,
+        "n_kl_capped": 0
+      }
+    },
+    {
+      "scope": "C1",
+      "agreement": {
+        "n": 1000,
+        "pearson_r": -0.7631680123372622,
+        "spearman_rho": -0.057790539084398164,
+        "ba_bias": -0.11003078649919609,
+        "ba_loa_low": -1.0807722255210368,
+        "ba_loa_high": 0.8607106525226447,
+        "n_kl_capped": 0
+      }
+    },
+    {
+      "scope": "C3",
+      "agreement": {
+        "n": 926,
+        "pearson_r": 0.2533895705799333,
+        "spearman_rho": 0.497833355844672,
+        "ba_bias": 0.0481726517037171,
+        "ba_loa_low": -0.9212157796473488,
+        "ba_loa_high": 1.017561083054783,
+        "n_kl_capped": 0
+      }
+    },
+    {
+      "scope": "C4",
+      "agreement": {
+        "n": 690,
+        "pearson_r": 0.31143426413197833,
+        "spearman_rho": 0.612936293757683,
+        "ba_bias": 0.07305004263292063,
+        "ba_loa_low": -1.039876688185378,
+        "ba_loa_high": 1.1859767734512192,
+        "n_kl_capped": 0
+      }
+    }
+  ],
+  "proxies": [
+    {
+      "key": "info",
+      "n": 3419,
+      "declared_orientation": -1.0,
+      "spearman_cpvi": 0.33116821943857566,
+      "spearman_ci": [
+        0.24512611754142052,
+        0.39879469017921276
+      ],
+      "spearman_shuffled": 0.05599543103548393,
+      "spearman_shuffled_ci": [
+        -0.049015205208386294,
+        0.16389822779872454
+      ],
+      "spearman_corrected": 0.27517278840309173,
+      "spearman_corrected_ci": [
+        0.14976636779052008,
+        0.3837212901616409
+      ],
+      "auroc_low_cpvi": 0.4137001226028949,
+      "auroc_failure": 0.14290578478339255
+    },
+    {
+      "key": "fail",
+      "n": 3419,
+      "declared_orientation": -1.0,
+      "spearman_cpvi": -0.3264959735870741,
+      "spearman_ci": [
+        -0.3923981722236082,
+        -0.24209159754451637
+      ],
+      "spearman_shuffled": -0.051544254986954266,
+      "spearman_shuffled_ci": [
+        -0.15502001587828024,
+        0.0477988242705273
+      ],
+      "spearman_corrected": -0.27495171860011985,
+      "spearman_corrected_ci": [
+        -0.3785795618712464,
+        -0.15528083487843494
+      ],
+      "auroc_low_cpvi": 0.5875477509604804,
+      "auroc_failure": 0.906285478802864
+    },
+    {
+      "key": "cosine",
+      "n": 3419,
+      "declared_orientation": -1.0,
+      "spearman_cpvi": 0.36893484072670846,
+      "spearman_ci": [
+        0.28303221324471917,
+        0.4448412088466223
+      ],
+      "spearman_shuffled": 0.10022324809879397,
+      "spearman_shuffled_ci": [
+        -0.0014158392629032676,
+        0.21686773666505385
+      ],
+      "spearman_corrected": 0.2687115926279145,
+      "spearman_corrected_ci": [
+        0.1471703914259375,
+        0.3705873655276116
+      ],
+      "auroc_low_cpvi": 0.4288084036229292,
+      "auroc_failure": 0.23353113892752278
+    }
+  ],
+  "labels": [
+    {
+      "label": "y_binary_progress",
+      "kind": "binary",
+      "status": "ok",
+      "reason": null,
+      "n": 3419,
+      "coverage": 1.0,
+      "minority_share": 0.36677391050014624,
+      "mean_cpvi": 0.12837053728190156,
+      "mean_cpvi_shuffled": -0.003407805931403222,
+      "corrected_mean_cpvi": 0.13177834321330478,
+      "corrected_ci": [
+        0.08462773272019662,
+        0.16891052006886748
+      ],
+      "encoder_rho": 0.815850730361933,
+      "twin_rho": 0.4819627894094126,
+      "admissible": true
+    },
+    {
+      "label": "y_continuous_displacement",
+      "kind": "continuous",
+      "status": "ok",
+      "reason": null,
+      "n": 3419,
+      "coverage": 1.0,
+      "minority_share": null,
+      "mean_cpvi": 0.30071023970648914,
+      "mean_cpvi_shuffled": 0.030114306726494722,
+      "corrected_mean_cpvi": 0.2705959329799944,
+      "corrected_ci": [
+        0.20517698761358474,
+        0.34210771849947386
+      ],
+      "encoder_rho": 0.5963038036315595,
+      "twin_rho": null,
+      "admissible": true
+    },
+    {
+      "label": "y_discrete_config",
+      "kind": "multiclass",
+      "status": "ok",
+      "reason": null,
+      "n": 3419,
+      "coverage": 1.0,
+      "minority_share": 0.03305059959052355,
+      "mean_cpvi": 0.16633576220667917,
+      "mean_cpvi_shuffled": 0.04692394045354544,
+      "corrected_mean_cpvi": 0.11941182175313372,
+      "corrected_ci": [
+        0.08100680312366144,
+        0.16617092897370764
+      ],
+      "encoder_rho": 0.8924516177157148,
+      "twin_rho": 0.6084506343510553,
+      "admissible": false
+    },
+    {
+      "label": "y_terminal_success",
+      "kind": "binary",
+      "status": "ok",
+      "reason": null,
+      "n": 3419,
+      "coverage": 1.0,
+      "minority_share": 0.2102954080140392,
+      "mean_cpvi": 0.1845623993236741,
+      "mean_cpvi_shuffled": 0.12774594156707594,
+      "corrected_mean_cpvi": 0.05681645775659813,
+      "corrected_ci": [
+        0.03142314752296439,
+        0.08377178299580733
+      ],
+      "encoder_rho": 0.9028807668663074,
+      "twin_rho": 0.6052502064728328,
+      "admissible": true
+    }
+  ],
+  "encoders": {
+    "primary_name": "BAAI/bge-base-en-v1.5",
+    "primary_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "second_name": "sentence-transformers/all-mpnet-base-v2",
+    "second_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+    "ran": true,
+    "primary_mean_cpvi": 0.12837053728190156,
+    "second_mean_cpvi": 0.10137066661171953,
+    "rho_primary_second": 0.815850730361933,
+    "label_ranking_invariant": true
+  },
+  "recommended_y": "y_terminal_success",
+  "recommended_encoder": "BAAI/bge-base-en-v1.5",
+  "recommendation_note": "Recommended gate target for RQ3b: y_terminal_success. Chosen by the rule declared in experiments/rq2.py before any RQ1 outcome was read - admissibility first, then encoder-invariance, then the label's own twin agreement, and corrected effect size only as a tie-break inside 0.05. RQ1's frozen primary Y (y_binary_progress) is unchanged by this either way; the register forbids re-pointing it after results.",
+  "figures": {}
+}

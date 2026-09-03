@@ -15,7 +15,280 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
-## 2026-08-29 (latest) — the gate learns to tell "grounded" from "right", and immediately says the pair is not right
+## 2026-09-01 (latest) — the receiver was never the bottleneck: an obedience mechanism for the absent gradient
+
+- **Area:** the interpretation of the RQ1 negative result; a new analysis instrument
+  (`rq1.directive_compliance`); the arbitration of R5 ("CPVI is just word count").
+- **Trigger:** the three characterisation arms R1–R3 returning together (jobs 247914–247916), against
+  the two questions the E3 re-gate entry closes on — is C4's advantage length or content, and is the
+  receiver's state-blindness a serialisation artefact or a capability limit.
+
+**Finding 1 — the state-blindness was a misreading of an obedience effect.** `action_agreement` shows
+*whether* B's actions track the pose; it cannot show *why not*, and "the receiver ignores the state it
+is handed" was the only available reading. Splitting the same rotation handoffs into two independent
+links — does A name the right direction, and does B do as it is told — inverts the story. Across every
+14B arm the sender's stated turn direction agrees with the oracle at chance (**E3 C0 0.514, R1 C0
+0.468, E3 C3 0.435, R2 `nl` 0.368**), the receiver obeys it 0.76–0.95 of the time, and **B's own
+accuracy equals the directive's to within noise in every arm** (0.486 / 0.468 / 0.421 / 0.458). The
+receiver is not blind. It is a faithful executor of a fluent instruction that carries no information
+about which way to turn, and following a coin flip is statistically indistinguishable from acting at
+random — which is exactly what the within-episode permutation null measures.
+
+**Finding 2 — the two ways to fix it are opposite, and both work.** Sever the directive while keeping
+the numbers (R1's 40-token prefix cap, coverage 52.3 % → 0.2 %) and the receiver's rotation-direction
+accuracy goes **0.514 → 0.902** with oscillation collapsing 0.550 → 0.024 and unused signal 0.450 →
+0.016. Or make the directive correct (R3's 32B sender, 0.703) and the receiver follows it to **0.743**
+at 0.967 obedience. Prose serialisation does the reverse and demonstrates the mechanism by breaking
+it: `nl` pairs the corpus's highest obedience (0.950) with a worse-than-chance directive (0.368), and
+success falls to 0.05 with the project's largest PVI − CPVI gap (0.218).
+
+**Finding 3 — R5 is half right, and the write-up must say which half.** R1 holds delivered length at
+C4's measured median (both 40 tokens, 215 vs 220 chars) and swaps which half of the content survives.
+On **outcome** the two arms are identical (**0.70 each**), so at this length what survives does not
+move success — the length reading wins. On **mechanism** they are far apart (rotation direction 0.902
+vs 0.614), so what survives determines *how* the score is reached — the content reading wins. The
+overlap-restricted control says the same thing from the other side: inside the shared length stratum
+the success advantage survives at half magnitude (+0.40 → +0.20) while the **CPVI advantage vanishes
+(+0.123 → −0.029)**. "CPVI is just word count" is therefore **sustained for the CPVI contrast and
+refuted for the mechanism contrast**, and both halves are reported.
+
+**Finding 4 — a free three-way replication, and it re-prices every outcome number in the project.**
+R1's C0 arm, E3's C0 arm and R2's `numeric` third are configuration-identical: same serialisation,
+difficulties, seeds 0–9, budget and model revision. They return **success 0.45 / 0.30 / 0.20** — a
+spread of 0.25 — while rotation-direction agreement returns 0.528 / 0.514 / 0.468 (spread 0.059),
+oscillation 0.559 / 0.550 / 0.571 (spread 0.021) and obedience 0.811 / 0.763 / 0.757 (spread 0.054).
+**The outcome measure is unstable at ±0.125 on an unchanged configuration; the mechanism measures are
+stable to ±0.03.** This was not designed as a replication — it fell out of three arms happening to
+share a control cell — and it is the cleanest evidence the project has that batched vLLM inference is
+low-variance rather than reproducible, in the terms CLAUDE.md already requires it to be described.
+Its two consequences are procedural: the pre-registered decision to read A2 on `action_agreement`
+rather than on success is **empirically vindicated** rather than merely prudent, and **no cross-run
+success comparison may be quoted without this band** — including the 0.70-vs-0.70 length match in
+Finding 3, which is downgraded from evidence to consistency. Within-run contrasts keep their force;
+they share a job, an endpoint and a batch.
+
+**Impact.** The RQ1 chapter's claim changes from *the absent gradient, with a receiver that does not
+read the state* to *the absent gradient, because a fluent-but-uninformative instruction is transmitted
+faithfully and degrading the channel removes it*. That is a mechanism rather than a deficit, it is
+falsifiable, and it explains the inversion that made the gradient absent in the first place: the
+channel was carrying a harmful signal, so degrading it helped.
+
+**Risk reduced.** Three at once. **R5** (length confound) is arbitrated rather than assumed. The
+serialisation confound is removed — `numeric` is the third independent replication of the C0 negative,
+so the finding is not an artefact of the state format. And a construct-validity risk on CPVI is
+converted into supporting evidence: the more capable pair extracts **less** usable information (32B
+CPVI 0.074 vs 14B 0.211) with an essentially nil state echo (gap 0.005 vs 0.080), which is the correct
+sign for a message-value metric and the wrong sign for a fluency proxy.
+
+**Correction path considered and rejected.** Reporting the R1 outcome contrast (δ +0.40, *p* 6.9e-08)
+as the headline. It is the largest number in the arm and it is the least informative: it is a length
+effect the overlap-restricted control already flags, and quoting it without the agreement limb would
+repeat the E3 inversion as if it were new. The arm was pre-declared to be read on `action_agreement`,
+and it is.
+
+**The fix.** `rq1.directive_compliance` / `DirectiveCompliance`, beside `action_agreement` and public
+for the same reason: it reads only the recorded message, pose and action, so a frozen result is
+re-derivable without re-fitting a probe. Reports `coverage`, `directive_agreement`, `obedience` and
+`receiver_agreement` per condition; persisted as `directive_compliance.csv`. Direction words are read
+from the **delivered** message, because that is what B saw — a channel that severs the directive shows
+up as coverage falling to zero rather than as a spuriously wrong sender. Fields are NaN, never 0.0,
+where nothing was said: a severed directive is a sender that did not speak, not one that was wrong.
+
+**Result of the fix.** All four returned corpora re-analysed; the E3 frozen corpus reproduces its
+existing agreement numbers and gains the split, so the mechanism paragraph is available for a result
+already in hand at no compute cost.
+
+**So what.** The negative RQ1 result stops being a story about a weak receiver and becomes one about
+**where in a two-agent pipeline the competence actually sits** — which is the question a gate is
+supposed to answer, and therefore strengthens rather than weakens the case for RQ3b. It also sharpens
+the prediction R5 is submitted under: a gate that blocks low-information handoffs cannot repair a
+receiver that is executing a confidently wrong instruction, because the statistic never sees whether
+the instruction was *right*. The declared null is now mechanistically motivated rather than merely
+pessimistic.
+
+---
+
+## 2026-08-30 — one calibration substrate, and a mechanism number that stops depending on its grid
+
+- **Area:** the RQ3a transfer arm's calibration substrate (amendment **A5**, executed); the
+  permutation null behind `rq1.action_agreement`; the instrument declaration for RQ3b (§8c).
+- **Trigger:** an external review of the re-freeze branch. The re-freeze whose stated purpose was
+  clearing a stale `git_dirty` had silently changed its `--transfer` input to the **A2 pilot**
+  calibration (`8902072e1f47b6de`) — neither the substrate of record (`86ecbbdf35322dc3`) nor the one
+  **A5** declares (`af50c7c12d65540f`). Three substrates were live at once and the committed
+  `rq3a.json` disagreed with the `docs/EXPERIMENTS.md` row sitting beside it. Separately, the review
+  noticed that `action_agreement` drew its whole permutation null from one RNG stream opened outside
+  the condition loop.
+
+**Finding 1 — a re-freeze that changes an input is a new result, not a provenance repair.** The two
+are only distinguishable by diffing the output, which nobody did: TraceElephant's `cpvi_transfer`
+agent accuracy moved 0.525 → 0.576 under the swapped calibration, restoring numbers that the 29
+August session had already superseded. The lesson is procedural and cheap to bank: **a re-freeze
+undertaken for provenance reasons must reproduce its predecessor's numbers bit-for-bit**, and if it
+does not, the input moved and it is a result-affecting change owing a declaration.
+
+**The fix.** Rather than restore the of-record numbers and leave **A5** pending — which would have
+left two substrates live and forced a second re-freeze before R6 — **A5 is executed here**, so one
+calibration (`af50c7c12d65540f`, the E3 re-gate corpus) backs the RQ3a transfer arm on the laptop and
+R6's judge arm on the cluster. A5's selection rule was declared before these numbers existed and does
+not read them: calibrate on the corpus with the most conditions and the widest realised-outcome
+variance. The E3 corpus wins on both, and is measurably the better instrument (`fail` AUROC **0.906**
+against 0.754; `cosine` **0.766** against 0.569).
+
+**Result — A5 delivers a mixed reading, and the declaration obliges reporting it.**
+
+| corpus | metric | confirmation (`86ecbbdf`) | **E3 re-gate (`af50c7c1`)** |
+|---|---|---|---|
+| TraceElephant | agent acc. | 0.525 [0.432, 0.610] | **0.492 [0.407, 0.585]** |
+| | step acc. | 0.110 | **0.127** |
+| | top-k acc. | 0.407 | **0.432** |
+| | MRR | 0.315 | **0.331** |
+| Who&When | agent acc. | 0.333 | 0.287 [0.220, 0.367] |
+| | step acc. | 0.207 | 0.153 |
+| | MRR | 0.415 | 0.329 |
+
+**The headline survives and is stated at its new value.** On TraceElephant the transfer statistic
+still beats both zero-call baselines with non-overlapping intervals — 0.492 [0.407, 0.585] against
+schema validity 0.263 [0.186, 0.347] and mean cosine 0.254 [0.186, 0.339] — and it localises *more*
+precisely by every rank-sensitive measure (step accuracy, top-k, MRR all up); the agent-level number
+is the one that fell. On Who&When the arm remains a tie it does not win: mean cosine now leads
+nominally (0.367 vs 0.287) on heavily overlapping intervals, where before it led 0.367 vs 0.333.
+A5 said in advance that a worse transfer arm under the better calibration would be **reported, not
+reverted**; this is that report.
+
+**Finding 2 — a permutation null keyed to the whole dataset makes a per-condition number depend on
+the grid it was computed on.** `action_agreement` opened `default_rng(seed)` once for the condition
+loop, so each condition consumed whatever stream position the preceding conditions left. The same arm
+scored on a four-condition grid and on a two-condition grid gets different nulls — and **A2's decision
+rule reads R1's two-condition agreement limb directly against E3's four-condition C4 value**, so the
+comparison the amendment turns on was the one the defect broke. Fixed by seeding inside the loop on
+the condition's fixed index in `CONDITION_ORDER`, which is invariant to which conditions are present.
+
+**Finding 3 — the same exposure showed the *p*-value was Monte-Carlo-limited, not data-limited.**
+Re-deriving E3 under per-condition seeding moved C4's *p* 0.010 → 0.015, across the Bonferroni line
+(0.05/4 = 0.0125). At `n_perm = 200` the estimator's standard error at that *p* is ≈ 0.005, so the
+corrected claim was never resolvable at this permutation count in either direction. Raising the count
+converges it: *p* = 0.0040 at 2,000 permutations and 0.0060 at 20,000, against 0.0149 at 200. The
+default is now **2,000**, matching the `n_boot = 2,000` used elsewhere. **This is a precision change,
+not a re-analysis:** the estimand is the exact permutation *p*, unchanged; only the Monte-Carlo error
+in estimating it moves, and the converged value **supports the reading already on the record** rather
+than rescuing one that had failed — which is precisely why it is safe to make. Agreement, rotation
+and flip-rate figures are deterministic and did not move at all. E3's frozen artefacts
+(`runs/af50c7c12d65540f-report/`) and its README are re-derived; the C4 row now reads *p* = 0.004.
+
+**Risk reduced.** Three: an artefact set that contradicted its own changelog; a mechanism number that
+would have been incomparable between E3 and the R1 arm about to be submitted against it; and a
+headline significance claim resting on 200 draws. All three were reachable before the `qsub`, which
+is the only place they were cheap.
+
+**So what.** The transferable rule is the first one: *provenance repairs must be diffed*. A re-freeze
+is the one operation whose success criterion is that nothing changed, so it is the one where changing
+something is hardest to notice. The second is narrower and worth the same vigilance — when a
+statistic is going to be compared across runs, every source of its variation that is not the data
+(RNG keying, permutation count) has to be pinned before the first of those runs, not after.
+
+---
+
+## 2026-08-30 — the gradient is absent, the mechanism is named, and the register learns to bend without breaking
+
+- **Area:** the E3 verdict of record and the close of the E3 ledger; the per-condition form of the
+  correctness limb; what the pre-registration locks and what it may amend; the headline order.
+- **Trigger:** the rung-2 re-gate returned. `af50c7c12d65540f` — 80 episodes, 3,419 handoffs, job
+  238085 at git `10283b0` — read `fallback`, and §6's pre-registered directional prediction came out
+  **half confirmed**: C1 collapsed to 0/20 exactly as predicted, and C4 inverted again at 14/20
+  against C0's 9/20. Under the ladder's own terms that ends the arena track and makes rung 3 the
+  finding. The question this entry settles is what "rung 3" now *says*, given that the run also
+  produced the project's clearest positive result.
+
+**Finding 1 — the absence has a mechanism, and only a per-condition instrument could see it.**
+`g3_correctness` pools the cell and returns 0.242 against a null of 0.257: a clean fail carrying no
+information about *which* condition failed. Run within each condition (`rq1.action_agreement`, 2,000
+within-episode permutations each, seeded per condition), the picture inverts: **C4 is the only
+condition whose receiver beats its own within-episode null** — agreement 0.399 against a 95th
+percentile of 0.388, *p* = 0.004, surviving Bonferroni across four tests — while C0 sits at 0.330
+against 0.331 (*p* = 0.069), C3 at 0.261 against 0.342, C1 at 0.046. Every supporting measure agrees: C4 turns the
+right way 61.4 % of the time against C0's 52.8 % and C3's 43.0 %, oscillates least (flip rate 0.445
+against 0.559 and 0.570), rotates least (381 against 436 and 563), and leaves least of its own signal
+unused (0.154 against 0.268 and 0.323). **A channel cannot be degraded informatively when the
+receiver was never reading the state.** That is why no C0→C4 gradient exists to measure, and it is a
+substantive claim about when communication-value measurement is meaningful — not a failed experiment.
+
+**Finding 2 — the measurement is vindicated on the corpus that failed the hypothesis.** CPVI
+rank-orders realised success across all four conditions (C4 0.237 > C0 0.222 > C3 0.143 > C1 −0.023
+against success 0.700 > 0.450 > 0.150 > 0.000). C1's CPVI interval spans zero, which is the estimator
+correctly reporting that a 46-character message carries nothing. H2's indirect effects exclude zero
+for C1 (−0.197 [−0.557, −0.081], 43.7 % mediated) and C3 (−0.058 [−0.234, −0.001]); path *b* is
++0.766 and +0.652 with length controlled. The RD-15 audit reads *p* = 0.00498 against a null max of
+0.0047. Control-task CPVI is 0.0018. And RQ2, re-run here, flips H4 from the C0-only corpus's
++0.052 [−0.100, 0.201] to three statistics all excluding zero — `info` +0.275 [0.150, 0.384], `fail`
+−0.275 [−0.379, −0.155], `cosine` +0.269 [0.147, 0.371] — with `fail` separating realised failure at
+**AUROC 0.906**, up from 0.754. **The negative result and the positive result are the same instrument
+read from two ends.** That sentence is now the spine of the write-up.
+
+**Finding 3 — the length-matched control fired on its first real cell, and it reframes C4.** Within
+the single overlapping delivered-length stratum, C4's success advantage goes from +0.250 to
+**−0.071** and its CPVI delta from +0.030 to −0.069, on 13 of 40 episodes. C1's (−0.450 → −0.500)
+and C3's (−0.300 → −0.277) deficits survive. On the pre-declared confound control **C4 is not better
+than C0; it is shorter than C0** — so the success claim is withdrawn to a length effect while the
+agreement and CPVI results, which are not length-matched, stand as open. This is the instrument
+DSE-044 was built for doing the one job that matters: stopping a pretty number being over-read.
+
+**Finding 4 — the condition ordinal is not the severity ordinal, and that is a result.** C1 delivers
+46 characters, C4 delivers 221, C0 delivers 373. C1 is by far the harsher manipulation while sitting
+lower on the nominal ladder. G2 contrasts C0 against C4 because §6 declares the ladder C0 → C4 and
+states the C0−C4 contrast in its own worked example, so the gate is read as declared and the verdict
+stands — but against C1 the same gate would read success +0.450 and CPVI +0.245. **Recorded as a
+diagnostic and never as a re-read**: swapping the contrast after seeing which one passes is precisely
+the forbidden move, and it is named here so nobody is tempted later. A degradation axis that is not
+monotone in its own nominal severity is the kind of thing the measurement literature assumes away.
+
+**Finding 5 — a register that forbids everything forbids following its own evidence.** The
+pre-registration had been read as uniformly prohibitive, which would have blocked arbitrating a
+mechanism the instrument itself uncovered. That is not integrity; it is paralysis, and it has a cost
+in unexploited evidence. **§8a now states the boundary explicitly**: immutable are evaluated
+thresholds (including "hardest" = C4), *Y* and *V* for confirmatory contrasts, the spent attempt
+ledger, and the circularity guard; amendable are headline order, cells that arbitrate a mechanism
+rather than rescue a hypothesis, secondary analyses on recorded data, and framing. The protocol has
+four parts and all four bind: declared in writing here and dated **before** the run it governs; its
+decision rule — including how it could disappoint — stated in advance; labelled post-hoc wherever
+reported and never pooled into a gate, a contrast table or a family-wise correction; recorded twice,
+in §8b and here.
+
+- **Impact.** F0 will not fire and E4 will not run. RQ1 is written up as rung 3 with a named
+  mechanism rather than an unexplained null. **A1** re-orders the headline to lead with the
+  measurement primitive and its mechanism, with RQ3a as the external-validity chapter — the ladder
+  pre-committed which results *survive* a failed re-gate, never their billing. **A2** declares one
+  post-hoc arm and **A3** declares RQ3b's direction in advance (§8c), so a predicted null becomes
+  evidence rather than an absence.
+- **Risk reduced.** Three. A pretty inversion being written up as a compression effect when the
+  pre-declared control says it is a length effect. A null being reported without a cause, which a
+  reviewer reads as a broken instrument rather than a finding about receivers. And a register so
+  rigid that the honest move — testing the mechanism you found — becomes indistinguishable from the
+  dishonest one, with no protocol to separate them.
+- **Correction path.** A2 arbitrates C4's two readings by holding length at C4's measured median
+  (40 whitespace tokens, 217 characters against C4's 220) and swapping which content survives: a
+  prefix cap keeps every number and severs the directive, the exact mirror of dropout. A4 would
+  complete the 2×2 with targeted numeric redaction and is blocked on a design decision, not compute.
+- **The fix.** `rq1.action_agreement` and `ActionAgreement` added, emitting `action_agreement.csv`
+  beside the analysis; deliberately a separate function from `pilot.g3_correctness`, which produced a
+  verdict of record and must not be re-shaped after being read. `ChannelConfig` wired to the CLI
+  (`--c1-max-tokens`, `--c3-window-rows`, `--c4-dropout`) — it had never been reachable from a shell,
+  so every dataset to date ran at its defaults and A2 had no knob to turn. `channel` is inside
+  `sweep_hash`, so a changed parameter keys its own dataset and cannot append into the run it is a
+  control for.
+- **Result.** The verdict is frozen at `runs/rq1/af50c7c12d65540f/` with its manifest, summary, gate
+  report and full reading; the lineage row is closed at `gate-verdict`; §6 records the verdict against
+  the prediction; §8a/§8b/§8c open the amendment register with three declarations and one proposal.
+- **So-what.** The dissertation's claim is no longer "we looked for an information gradient and did
+  not find one". It is: *you cannot measure the value of communication in a pair whose receiver does
+  not act on the state — and CPVI is the instrument that detects exactly that.* The absent gradient
+  is the evidence for the claim rather than a hole in it, and the same instrument that fails the
+  hypothesis passes its own validity checks on the same corpus and transfers to two real failure
+  corpora. That is one story, not three.
+
+---
+
+## 2026-08-29 — the gate learns to tell "grounded" from "right", and immediately says the pair is not right
 
 - **Area:** G3's second limb (declared at F0, previously unimplemented), the permutation criterion
   behind it, the RD-15 audit's resolution, and the step budget the E3 verdict of record runs at.

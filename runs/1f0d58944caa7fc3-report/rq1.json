@@ -1,0 +1,255 @@
+{
+  "dataset_hash": "1f0d58944caa7fc3",
+  "n_handoffs": 1419,
+  "provenance": {
+    "encoder_name": "BAAI/bge-base-en-v1.5",
+    "encoder_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "second_encoder": "sentence-transformers/all-mpnet-base-v2",
+    "second_encoder_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+    "probe": {
+      "probe": "logistic",
+      "variance_model": "homoscedastic",
+      "c": 1.0,
+      "max_iter": 1000,
+      "n_splits": 5,
+      "n_repeats": 5,
+      "mlp_hidden": 64,
+      "seed": 0
+    },
+    "git_sha": "dd9587493ea9d6ceeeada73a42de8ef51fecec80",
+    "timestamp": "2026-09-03T00:48:17.916441+00:00"
+  },
+  "conditions": [
+    {
+      "condition": "C0",
+      "n_episodes": 20,
+      "n_handoffs": 843,
+      "success_rate": 0.3,
+      "success_ci": [
+        0.1,
+        0.5
+      ],
+      "mean_steps": 42.15,
+      "mean_collisions": 3.85,
+      "mean_cpvi": 0.21144267705200154,
+      "cpvi_ci": [
+        0.13101177724755522,
+        0.29662812571857955
+      ],
+      "mean_pvi": 0.2915951138125451,
+      "pvi_cpvi_gap": 0.08015243676054357,
+      "mean_control_cpvi": -0.0007315288859720676,
+      "selectivity": 0.2121742059379736,
+      "mean_cpvi_sd": 0.025537005890331154
+    },
+    {
+      "condition": "C1",
+      "n_episodes": 20,
+      "n_handoffs": 576,
+      "success_rate": 0.7,
+      "success_ci": [
+        0.5,
+        0.85
+      ],
+      "mean_steps": 28.8,
+      "mean_collisions": 18.5,
+      "mean_cpvi": 0.27667597676272226,
+      "cpvi_ci": [
+        0.193230610281686,
+        0.36803415415913215
+      ],
+      "mean_pvi": 0.3442365200569532,
+      "pvi_cpvi_gap": 0.06756054329423095,
+      "mean_control_cpvi": 0.0022968408871484,
+      "selectivity": 0.2743791358755739,
+      "mean_cpvi_sd": 0.02680638095897938
+    }
+  ],
+  "contrasts": [
+    {
+      "condition": "C1",
+      "cliffs_delta": 0.4,
+      "delta_ci": [
+        0.1,
+        0.65
+      ],
+      "steps_delta": -0.5075,
+      "steps_delta_ci": [
+        -0.755125,
+        -0.21
+      ],
+      "mixed_coef": 0.3671079782586065,
+      "p_raw": 6.914699962672513e-8,
+      "p_corrected": 6.914699962672513e-8
+    }
+  ],
+  "mixed_model": {
+    "formula": "H1: y ~ C(condition) [groups=seed, vc=episode]; H2: success ~ C(condition) + cpvi_epmean [groups=seed]",
+    "coef_no_mediator": {
+      "C1": 0.3671079782586065
+    },
+    "converged": true,
+    "mediation_outcome": "episode_success",
+    "path_b": 0.7402398432380934,
+    "path_b_length_controlled": 0.6840522473253753,
+    "mediations": [
+      {
+        "condition": "C1",
+        "path_a": 0.12301012933073364,
+        "indirect": 0.09105699885247988,
+        "indirect_ci": [
+          -0.038587356539332394,
+          0.2647771701524388
+        ],
+        "indirect_n_draws": 400,
+        "direct": 0.30894300114752016,
+        "total": 0.4000000000000001,
+        "prop_mediated": 0.22764249713119966
+      }
+    ],
+    "mediation_converged": false,
+    "diagnostic_cpvi_coef": 0.14856192178157532,
+    "diagnostic_attenuation": 0.04701362161423739,
+    "mediation_note": "H2 (episode level): success mediated by CPVI; mean indirect effect a*b over Ck = 0.091 (negative = the channel suppresses success by lowering CPVI). Within-episode diagnostic: handoff condition coefs attenuate 5% when per-handoff CPVI enters."
+  },
+  "control_mean_cpvi": 0.0004977459479372974,
+  "selectivity": 0.23742441005640755,
+  "partial_spearman_length": 0.0928976925513271,
+  "length_matched": [
+    {
+      "condition": "C1",
+      "success": {
+        "n_bins": 1,
+        "n_kept": 26,
+        "n_total": 40,
+        "delta": 0.19999999999999998,
+        "delta_unrestricted": 0.39999999999999997,
+        "interpretable": true,
+        "note": "overlap-restricted, length-adjusted sensitivity analysis: 26/40 episodes across 1 length stratum/strata holding both conditions"
+      },
+      "cpvi": {
+        "n_bins": 1,
+        "n_kept": 26,
+        "n_total": 40,
+        "delta": -0.028835786066421232,
+        "delta_unrestricted": 0.12301012933073363,
+        "interpretable": true,
+        "note": "overlap-restricted, length-adjusted sensitivity analysis: 26/40 episodes across 1 length stratum/strata holding both conditions"
+      }
+    }
+  ],
+  "signal_decomposition": [
+    {
+      "condition": "C0",
+      "n_handoffs": 843,
+      "median_cpvi": 0.41768437956763604,
+      "low_cpvi_no_progress": 215,
+      "low_cpvi_progress": 217,
+      "high_cpvi_no_progress": 379,
+      "high_cpvi_progress": 32,
+      "absent_signal_rate": 0.25504151838671413,
+      "absent_signal_ci": [
+        0.1662718699367585,
+        0.34083612040133776
+      ],
+      "unused_signal_rate": 0.44958481613285883,
+      "unused_signal_ci": [
+        0.31183416442910117,
+        0.5933987977050418
+      ]
+    },
+    {
+      "condition": "C1",
+      "n_handoffs": 576,
+      "median_cpvi": 0.44010674968825836,
+      "low_cpvi_no_progress": 178,
+      "low_cpvi_progress": 110,
+      "high_cpvi_no_progress": 9,
+      "high_cpvi_progress": 279,
+      "absent_signal_rate": 0.3090277777777778,
+      "absent_signal_ci": [
+        0.23250608105007115,
+        0.37828325288811515
+      ],
+      "unused_signal_rate": 0.015625,
+      "unused_signal_ci": [
+        0.006479132531466448,
+        0.025134910354934037
+      ]
+    }
+  ],
+  "action_agreement": [
+    {
+      "condition": "C0",
+      "n_handoffs": 843,
+      "agreement": 0.30723606168446027,
+      "null_mean": 0.3446298932384342,
+      "null_p95": 0.3570581257413998,
+      "p_value": 1.0,
+      "n_perm": 2000,
+      "rotation_direction_agreement": 0.5138888888888888,
+      "n_rotations": 504,
+      "rotation_flip_rate": 0.5501058591167287
+    },
+    {
+      "condition": "C1",
+      "n_handoffs": 576,
+      "agreement": 0.3506944444444444,
+      "null_mean": 0.3064609375,
+      "null_p95": 0.3194444444444444,
+      "p_value": 0.0004997501249375312,
+      "n_perm": 2000,
+      "rotation_direction_agreement": 0.9017341040462428,
+      "n_rotations": 173,
+      "rotation_flip_rate": 0.02426470588235294
+    }
+  ],
+  "directive_compliance": [
+    {
+      "condition": "C0",
+      "n": 438,
+      "coverage": 0.5231316725978647,
+      "directive_agreement": 0.4680365296803653,
+      "obedience": 0.7625570776255708,
+      "receiver_agreement": 0.4680365296803653
+    },
+    {
+      "condition": "C1",
+      "n": 1,
+      "coverage": 0.001736111111111111,
+      "directive_agreement": 0.0,
+      "obedience": 1.0,
+      "receiver_agreement": 0.0
+    }
+  ],
+  "seed_sensitivity": {
+    "metric": "condition_gap",
+    "n_seeds": 10,
+    "mean": -0.4,
+    "sd": 0.39440531887330776,
+    "spread": 1.0,
+    "per_seed": {
+      "0": 0.0,
+      "1": -0.5,
+      "2": -0.5,
+      "3": -0.5,
+      "4": -1.0,
+      "5": -1.0,
+      "6": 0.0,
+      "7": 0.0,
+      "8": 0.0,
+      "9": -0.5
+    },
+    "dispersion": null,
+    "reason": ""
+  },
+  "shuffled_message_audit": {
+    "n_perm": 200,
+    "mean_cpvi": 0.23792215600434485,
+    "null_mean_cpvi": 0.058348398353143364,
+    "null_std_cpvi": 0.002803477975540097,
+    "null_max_cpvi": 0.06683928644790954,
+    "p_value": 0.004975124378109453
+  },
+  "figures": {}
+}

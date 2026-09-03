@@ -73,7 +73,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "$HERE/../.." && pwd)}"
 
 TIER="${TIER:-qwen14b}"                 # Hydra model group (configs/model/<tier>.yaml)
-PORT="${PORT:-8000}"
+# Offset by the job id rather than fixed at 8000. Myriad nodes are shared, and a fixed port is a
+# port someone else may already hold: jobs 244519/244520/244523 all landed on node-l00a-003 beside
+# another tenant's vLLM serving Devstral-Small-2-24B, and each spent its queue wait to reach the
+# readiness loop below in one second and then fail the driver's model check. The pre-flight before
+# the launch covers the rest; this only keeps our own concurrent jobs off each other by
+# construction. Override with -v PORT=<n>.
+PORT="${PORT:-$((8000 + ${JOB_ID:-0} % 1000))}"
 ATTEMPT="${ATTEMPT:-1}"                 # 1 = first pass, 2 = the one permitted retune
 RUNS_ROOT="${RUNS_ROOT:-runs}"
 SERVE_TIMEOUT="${SERVE_TIMEOUT:-1800}"  # generous: a cold HF cache downloads ~28 GB before serving
@@ -83,12 +89,17 @@ VENV="${VENV:-$REPO_ROOT/.venv}"
 # TIER is exported so serve.sh serves the tier this pilot drives. Left unexported they are set
 # independently, and `-v TIER=qwen8b` alone would drive the 8B pilot against a 14B server.
 export PORT VENV TIER REPO_ROOT
-# The sidecar serve.sh writes; exported so the manifest picks up the server-side stack (vLLM and
-# torch versions, the physical GPU) that the client process has no way to observe for itself.
-export PRECEPTX_SERVE_ENV="${SERVE_ENV_PATH:-$REPO_ROOT/runs/serve_env.json}"
 
 # shellcheck source=scripts/myriad/_common.sh
 source "$HERE/_common.sh"
+
+# The sidecar serve.sh writes; exported so the manifest picks up the server-side stack (vLLM and
+# torch versions, the physical GPU) that the client process has no way to observe for itself.
+# Resolved through serve_env_path so the job-scoped default lives in exactly one place, then
+# exported as SERVE_ENV_PATH so serve.sh's own call to it returns this identical string - the two
+# scripts previously each spelled out the default and could have drifted apart silently.
+export SERVE_ENV_PATH="$(serve_env_path)"
+export PRECEPTX_SERVE_ENV="$SERVE_ENV_PATH"
 
 # Checked here rather than in serve.sh so a typo'd tier fails now, not after the model has loaded.
 if [[ ! -f "$REPO_ROOT/configs/model/$TIER.yaml" ]]; then
@@ -121,6 +132,19 @@ python -c 'from preceptx.measure.featuriser import EncoderConfig, Featuriser
 Featuriser(EncoderConfig()).embed_texts(["warm"])'
 
 echo "[pilot] $(date -u +%FT%TZ) host=$(hostname) substrate=$PRECEPTX_SERVING_SUBSTRATE"
+
+# Claim the port before anything is launched. The readiness loop below polls an address and takes
+# any 200 it gets, which cannot distinguish our server from a co-tenant's - that is precisely how
+# 244519/244520/244523 reported "endpoint live after 1s" against a Devstral server they did not
+# start. Proving the port is unheld first is what makes a later 200 on it ours. A listener that is
+# bound but not yet answering slips past this, and is then caught loudly by the `kill -0` check in
+# the loop when our own vLLM fails to bind and exits.
+if curl -sf --max-time 5 "http://localhost:${PORT}/v1/models" >/dev/null 2>&1; then
+  echo "[pilot] :$PORT on $(hostname) is already serving - another job or tenant holds it." >&2
+  echo "[pilot] this job would have measured THEIR model. Resubmit on a free port:" >&2
+  echo "[pilot]   qsub -v PORT=<free port> scripts/myriad/pilot.sh" >&2
+  exit 1
+fi
 
 # One launch path: serve.sh owns the vLLM command line, and it `exec`s vllm, so $! is the server
 # itself and the trap kills the right process on every exit path - success, failure, or the

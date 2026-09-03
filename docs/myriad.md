@@ -349,150 +349,232 @@ requested. Cluster data is therefore never poolable with `local-lmstudio` pilot 
 which is the point, since the local 4-bit G1 reading is indicative only and the **verdict of record
 is the bf16 re-gate run here**.
 
-## 9. Submissions in flight — the E3 re-gate, the thinking probe, the RQ3a judge
+## 9. The end-to-end run plan — everything left on the queue
 
-The D26 ablation is **done**, and so is the **G1 confirmation** it existed to set up (job 236653,
-`86ecbbdf35322dc3`, 29 Aug). What those runs established, and what is therefore no longer worth GPU
-time, is in the design log's 2026-08-29 entries. The short version: prompt v9's clearance line is the
-mechanism (6 easy seeds gained, 0 lost, McNemar *p* = 0.031); the step budget is **not**
-(*p* = 0.63 / 1.00); A1/A2 were the **pilot**; and G1 now has a verdict.
+**The gate track is closed.** E3 returned `fallback` on 29 August (`af50c7c12d65540f`, job 238085);
+`PREREGISTRATION.md` §6 permits no attempt 3 and no second rung-2 attempt, and the verdict is frozen
+at `runs/rq1/af50c7c12d65540f/`. **Nothing below is a re-gate.** Every run here is either a declared
+amendment (§8b), a pre-declared causal arm (§8c), or a characterisation cell — so all of them use
+`DRIVER=preceptx-rq1` or `preceptx-rq3b`, never `preceptx-pilot`, which would emit a verdict there is
+no ledger left to spend.
 
-### 9a. G1 — DONE, and the E3 re-gate that follows it
+Budget is not the constraint: the allocation holds multiple concurrent jobs and the quota is 39.5 of
+1024 GiB. **The constraint is the two offline steps that gate two of the jobs, and the freeze-writing
+that turns returned data into results.** Submit wide, then write while the queue works.
 
-**G1 PASS at exactly the threshold.** Easy C0 **10/20 = 0.500** against the pre-registered
-*≥ 0.5 at easy difficulty*, Wilson 95% [0.299, 0.701]; medium 3/20, hard 1/20; 14/60 overall.
-Frozen at `runs/rq1/86ecbbdf35322dc3/`, which carries the manifest, the summary, the calibration and
-the full reading. **Do not re-run it** — the gate was declared once and evaluated once.
+### 9.0 Order of operations
 
-*Correction to what this section used to say.* It stated the gate as "pass iff `easy >= 8/20` AND
-`medium >= 3/20`". That is not the register. PREREGISTRATION §6 states *C0 self-play episode success
-≥ **0.5** at easy difficulty*, easy-only, and `PilotConfig.g1_success_floor` implements it. The run
-satisfies both readings, so nothing turns on it here — but at easy 8/20 or 9/20 the two documents
-would have disagreed about a gate outcome. **Quote the pre-registration; never paraphrase a gate.**
+| # | Step | Where | Blocks |
+|---|---|---|---|
+| 1 | Commit the working tree, push | laptop | *everything* — the run must be at a real merged SHA, and `test_no_committed_manifest_records_a_dirty_tree` only evaluates on a clean tree |
+| 2 | `git pull` on Myriad | login node | every `qsub` below |
+| 3 | `fetch.sh af50c7c12d65540f` then `preceptx-calibrate --dataset-hash af50c7c12d65540f` | login node, no GPU | **R5 (RQ3b)** and **R6 (RQ3a judge)** — both need the joblib, which is gitignored and must be refit on the cluster. **Diff the refit against the frozen copy at `runs/rq1/af50c7c12d65540f/calibration.json`** (committed, so it travels with `git pull`): the thresholds must reproduce, and if they do not, the refit is not the calibration R5 imports |
+| 4 | Submit R1–R4 | login node | nothing; they are independent |
+| 5 | Submit R5, R6 once step 3 has produced `runs/af50c7c12d65540f-calibration/` | login node | — |
+| 6 | ~~Re-freeze RQ3a on the now-clean tree~~ — **done 30 Aug**, amendment A5 executed; see §9.3 | laptop | — |
 
-**What is left of E3 is G2, and it needs its own cell.** The confirmation is C0 only, so there is no
-condition contrast in it: `contrasts` is empty and the mixed model correctly refuses to fit. G2 is
-therefore *unassessed*, which is not a failure and spends no retune. Its declared cell
-(PREREGISTRATION §6) is **C0, C1, C3 and C4 × easy and hard over seeds 0–9**, 80 episodes, and
-`preceptx-pilot` already encodes exactly that cell.
+**Diff every dry-run hash against the table before submitting.** A hash that does not match means the
+config moved since this was written, and the run would write to a directory nothing here describes.
+
+### 9.1 The runs
+
+> **Status, 1 September 2026.** R1–R3 **ran and returned complete** (jobs 247914/247915/247916; 40,
+> 60 and 20 cells, all cells present). R4 **aborted before its first episode** on a `health_check`
+> defect, not a serving fault — the ping was hard-coded to `max_tokens=16`, which cannot fit a Qwen3
+> thinking trace, so it failed the configuration it was certifying. **Fixed; R4 is re-submittable
+> with the command below unchanged.**
+>
+> **All three returned runs still owe their manifests.** They were brought home by a hand-rolled
+> `rsync` that took only `runs/<hash>/*.parquet` — the exact failure §10 describes and `fetch.sh`
+> exists to prevent. None can be frozen until this is run:
+>
+> ```bash
+> for h in 1f0d58944caa7fc3 a86599bae274eac1 86b89727699c88fd; do scripts/myriad/fetch.sh "$h"; done
+> ```
+>
+> The readings are in `docs/EXPERIMENTS.md` §7 and the interpretation in the design log's
+> 1 September entry.
+
+
+Common preamble on every job: `cd ~/Scratch/precept-research && git pull`. All of R1–R4 run at
+`--max-steps 50`, matching the E3 verdict of record and its logged deviation (§6, D29) — one task
+parameterisation across the whole family.
+
+#### R1 — the A2 length-holding content swap *(PREREGISTRATION §8b A2; declared, decision rule fixed)*
+
+Arbitrates the two readings of C4's advantage. 40 whitespace tokens is C4's measured median delivered
+length exactly (C4: 40 tokens / 220 chars; a 40-token prefix of C0: 40 tokens / 217 chars), and
+whitespace tokens of the delivered message is the covariate `_length_matched` already stratifies on.
+The cap is a **prefix**, so it keeps every number and severs the directive — the exact mirror of
+dropout, which destroys the numbers and leaves the directive readable.
 
 ```bash
-cd ~/Scratch/precept-research
-qsub -N precept-e3-regate -l h_rt=4:00:00 -v DRIVER=preceptx-rq1 scripts/myriad/pilot.sh \
-  --conditions C0,C1,C3,C4 --difficulties easy,hard --seeds "$(seq -s, 0 9)" \
-  --max-steps 50 --no-analysis
+qsub -N precept-a2-lengthswap -l h_rt=4:00:00 -v DRIVER=preceptx-rq1 scripts/myriad/pilot.sh \
+  --conditions C0,C1 --difficulties easy,hard --seeds "$(seq -s, 0 9)" \
+  --max-steps 50 --c1-max-tokens 40 --no-analysis
 ```
 
-**Expected `af50c7c12d65540f`** (sweep `f2b7bc42a511a735`), 80 cells, 8,000 calls upper bound. At the
-confirmation's measured 0.86 s/handoff that is roughly 50 min plus model load, so 4h is generous.
-Diff the dry-run hash before submitting, as always.
+**Expect `1f0d58944caa7fc3`** (sweep `7b65f40f633311a9`), 40 cells, 4,000 calls, ~35 min. The dry run
+prints `channel: {...} (NON-DEFAULT)` — if it does not, the flag did not reach the sweep and the run
+would silently be a duplicate of the real C1. **Read it on `action_agreement.csv`, not on success**;
+the decision rule is in §8b and the arm is powered for the agreement limb.
 
-**The step budget: decided, and logged.** `--max-steps 50` is a deviation from the certified budget
-(`STEP_BUDGETS`, ceil(2.5 × the oracle optimum) = 30 easy / 35 hard). It is taken, and the reason is
-that **the deviation was already taken by the verdict of record and was not recorded at the time**:
-the G1 confirmation's manifest reads `max_steps: {easy: 50, medium: 50, hard: 50}`. Running the other
-half of one gate at a different budget would leave the E3 verdict describing two task
-parameterisations. It is now recorded in PREREGISTRATION §6 (*Note against §2*) and in
-`docs/methodology.md` D29, for both halves. Safety: D26 measured the budget effect and it is not
-significant (*p* = 0.63 / 1.00), the E3 quantity is a *difference* between conditions rather than a
-level, and G3's correctness limb supplies the independent reason extra steps bought nothing here —
-episodes end at a mean misalignment of 36.3° with rotation direction at chance, so more budget buys
-more random walk. **The undeviated cell** is `0ded5641590b44a9` (sweep `d2886f0f59d754b4`), 5,200
-calls, ~37 min, obtained by dropping `--max-steps 50`; it is not the one to run.
+#### R2 — serialisation A/B on C0 *(characterisation; the cheapest test of the mechanism's scope)*
 
-**Also note the seed overlap.** Seeds 0–9 are the declared E3 seeds, but A1/A2 ran C0 easy+medium on
-seeds 0–11 of this same task, so the C0 arm is partly seen. It does not leak into a threshold fixed
-in PREREGISTRATION v0, and the declared cell is the declared cell — but if the gap passes narrowly,
-re-read it against the confirmation's C0 at seeds 12–31 before treating it as settled.
-
-**Two things had to land before the E3 verdict could be `proceed`. Both are closed (29 Aug), and
-neither needed a GPU.**
-
-1. **G3's second limb — DONE, and it reads FAIL on the confirmation.** `pilot.g3_correctness` scores
-   B's macro action against `sim.feasibility.oracle_action` (the per-pose form of the certified
-   rotate-then-push policy) and thresholds it on a within-episode permutation null of B's own
-   actions at the one-sided 95th percentile. On `86ecbbdf35322dc3`: agreement **0.285** against a
-   null 95th percentile of **0.322**, null mean 0.315, *p* = 1.000 — the pair matches the certified
-   plan *less* often than its own shuffled actions do. Supporting reads: only **4 of 60** episodes
-   ever bring the load within 6° of alignment (0.65 % of handoffs); **rotation-direction agreement
-   is 0.519** on 1,400 rotations, a coin flip; mean |misalignment| runs 84.5° at the first handoff
-   to 36.3° at the last, which is what a bounded random walk does from a broadside start. Grounding
-   reads 0.9998 on the same corpus. **This is the exact separation the limb was declared for**, and
-   it is a prospective prediction about E3: if the C0→C4 gradient comes back flat, this is why.
-2. **The length-matched contrast — already built; nothing was owed.** `_length_matched` is wired
-   into `RQ1Result.length_matched` and stratifies on the *delivered* message length, which is the
-   right covariate because C1's cap acts on delivery. It is empty on the confirmation only because a
-   single condition has nothing to match across. The E3 cell gives 20 episodes per condition against
-   `length_bins = 3, length_min_per_cell = 2`, comfortably above the six-per-condition shape those
-   defaults were set for, so it populates without a config change.
-
-### 9b. The A3 thinking probe — after the gate reads out, on the pilot's seeds
-
-A3 never ran, so there are no A3 numbers to contaminate and no seed reset is owed. But it is a
-**capability** manipulation, not a channel condition: it belongs with the 32B arm in the robustness
-story and never inside the C0->C4 gradient, and it cannot meet the determinism standard (Qwen
-discourages greedy decoding in thinking mode, and the pilot measures 12.5% outcome flips without
-it). So it is an appendix probe — and an appendix probe gains nothing from fresh seeds and loses
-the per-seed pairing that made v8 -> A1 -> A2 convincing.
-
-Run it on **seeds 0-11**, seed-paired against A2, so decoding is the only changed variable:
+The E3 mechanism says the receiver does not read the pose. Every episode behind that claim is
+`numeric`. This asks whether that is a property of the *receiver* or of the *serialisation*, using the
+same agreement limb and no new code — and it is the first question a reviewer asks about a
+state-blindness finding. `grid` and `nl` already exist in `configs/serialisation/`.
 
 ```bash
-qsub -N precept-a3-v9-thinking -l h_rt=6:00:00 -v DRIVER=preceptx-rq1 scripts/myriad/pilot.sh \
-  --conditions C0 --difficulties easy,medium --seeds "$(seq -s, 0 11)" \
+qsub -N precept-serialisation-ab -l h_rt=6:00:00 -v DRIVER=preceptx-rq1 scripts/myriad/pilot.sh \
+  --conditions C0 --serialisations numeric,grid,nl --difficulties easy,hard \
+  --seeds "$(seq -s, 0 9)" --max-steps 50 --no-analysis
+```
+
+**Expect `a86599bae274eac1`** (sweep `9d09bbcece5978f8`), 60 cells, 6,000 calls, ~55 min. The
+`numeric` third is seed-paired against the E3 cell's C0 arm, so the contrast is within-run *and*
+anchored to a frozen result.
+
+#### R3 — the 32B capability row *(characterisation; the other half of the same question)*
+
+Is the state-blindness a 14B limit? Same cell as the E3 C0 arm, one model larger, so the agreement
+limb reads the two directly against each other. **Needs an 80 GB A100 — `-ac allow=U,V` on the qsub
+line overrides the jobscript's `allow=L` directive**, the same mechanism `-ac allow=EF` uses for the
+8B tier.
+
+```bash
+qsub -N precept-32b-c0 -l h_rt=8:00:00 -ac allow=U,V -v TIER=qwen32b,DRIVER=preceptx-rq1 \
+  scripts/myriad/pilot.sh --conditions C0 --difficulties easy,hard \
+  --seeds "$(seq -s, 0 9)" --max-steps 50 --no-analysis
+```
+
+**Expect `86b89727699c88fd`** (sweep `64e8181c8c95b825`), 20 cells, 2,000 calls, model
+`Qwen/Qwen3-32B`@`9216db5`. Time it generously: 32B bf16 is slower per token and the model load alone
+is longer. This also supplies the cluster row E2 (DSE-005) never got.
+
+#### R4 — the A3 thinking probe *(appendix; **the declared seed-pairing has to change**)*
+
+`§9b` as written paired this against A2 on seeds 0–11. **A2 ran on the T load, and the task is now the
+bar** — that pairing no longer holds anything constant except the seed integer. Re-pair it against the
+E3 cell's C0 arm instead: same task, same budget, same seeds, decoding as the only changed variable.
+Still an appendix probe and never inside the C0→C4 gradient: thinking is a capability manipulation,
+and Qwen discourages greedy decoding in thinking mode, so it cannot meet the determinism standard.
+
+```bash
+qsub -N precept-a3-thinking -l h_rt=8:00:00 -v DRIVER=preceptx-rq1 scripts/myriad/pilot.sh \
+  --conditions C0 --difficulties easy,hard --seeds "$(seq -s, 0 9)" \
   --max-steps 50 --thinking --no-analysis
 ```
 
-The confirmation has read out, so this is unblocked — but submit it **after** the E3 re-gate, which
-is now the priority call on the queue: and a thinking trace is several times the tokens of a non-thinking turn, so budget
-roughly four times A2's episode time. The 6h request is sized for that, not for the grid.
+**Expect `0ea4878b6e97f59f`** (sweep `a9940b95df220708`), 20 cells, 2,000 calls. Budget roughly four
+times a non-thinking episode: a thinking trace is several times the tokens, and `max_tokens` rises to
+2048 to fit it.
 
-### 9c. The RQ3a judge replication — the last unrun arm of the H5 comparison
+**Attempt 1 (job 247917) wrote no data.** `health_check` pinged at a hard-coded `max_tokens=16` while
+`--thinking` raised only the *config's* budget, so the trace could not close and the pre-flight failed
+a healthy endpoint. Fixed — the ping now takes the configured budget whenever `enable_thinking` is
+set. **Re-submit the command above unchanged**, and confirm the pre-flight cleared by looking for the
+`sweep a9940b95df220708: 20 cells` line rather than `endpoint live`, which R4 also printed before
+aborting.
 
-The RQ3a offline arms are **done and frozen** (`runs/rq3a/traceelephant/`, `runs/rq3a/who_and_when/`)
-— schema validity, mean cosine, the transferred CPVI statistic and the MAST secondary all cost zero
-model calls and ran on a laptop. What is left is the only part that needs a GPU: re-implementing the
-three published Who&When procedures (all-at-once, binary search, step-by-step) against the served
-tier, plus the human-agreement audit that reads off them. Until it runs, `judge` and `agreement` are
-`null` in both results and **no comparison to the published 53.5% / 14.2% is stated**, because those
-figures come from LLM-judge procedures and nothing in the current table is one.
+#### R5 — RQ3b, the causal gate *(PREREGISTRATION §8c; **direction declared before submission**)*
 
-`pilot.sh` already routes `DRIVER=preceptx-rq3a` and implies `--judge`; flags after the script name
-reach the driver, which is how the corpus and the transfer arm are selected. **Pass `--transfer`**:
-without it the judge run would re-emit `cpvi_transfer` as `unavailable` and the finished table would
-lose the row the offline run just produced.
+Four arms over one grid — gate-active, matched-firing-rate, random-trigger, off. The prediction is a
+**null**, and it is on the record: a gate that blocks low-information handoffs cannot repair a
+receiver that ignores the state it is handed. What would falsify it is gate-active beating
+matched-random with an interval excluding zero.
 
-**`--transfer` takes the calibration directory, not the frozen run directory.** The committed
-`runs/rq1/86ecbbdf35322dc3/` carries `calibration.json` but not the probe — the joblib is a trained
-artefact and is gitignored — so the statistic must be refit on the cluster first. Two offline
-commands on a login node, no GPU, before the `qsub`:
+Needs step 3 first. The threshold is **imported, never re-derived** from the arms' own outcomes.
 
 ```bash
-scripts/myriad/fetch.sh 86ecbbdf35322dc3   # or it is already under ~/Scratch from the confirmation
-uv run preceptx-calibrate --dataset-hash 86ecbbdf35322dc3   # -> runs/86ecbbdf35322dc3-calibration/
+# login node, after fetch.sh — no GPU:
+uv run preceptx-calibrate --dataset-hash af50c7c12d65540f
+# -> fail AUROC 0.906 (thr 0.977), cosine AUROC 0.766 (thr -0.647), firing rate 0.200 at n=3419
+
+# the refit must reproduce the frozen copy that travelled with `git pull`, or it is not the
+# calibration R5 imports and the threshold below is not the declared one:
+uv run python -c "
+import json
+f=lambda p:{s['key']:(round(s['threshold'],9),round(s['auroc'],9)) for s in json.load(open(p))['statistics']}
+a,b=f('runs/rq1/af50c7c12d65540f/calibration.json'),f('runs/af50c7c12d65540f-calibration/calibration.json')
+print('MATCH' if a==b else f'MISMATCH\\n frozen {a}\\n refit  {b}')"
+
+qsub -N precept-rq3b -l h_rt=8:00:00 -v DRIVER=preceptx-rq3b scripts/myriad/pilot.sh \
+  --calibration runs/af50c7c12d65540f-calibration/calibration.json \
+  --calibration-dataset af50c7c12d65540f --statistic cosine \
+  --conditions C0,C4 --difficulties easy --seeds "$(seq -s, 0 9)" --max-steps 50
 ```
 
-The driver refuses a `--transfer` directory it cannot load the statistic out of, so a mistake here
-costs a second rather than the 8h reservation. Then:
+**Expect four datasets** off sweep `8c2f87cff96e6232`: `3f34698d1fdf06d8` (active),
+`7e7bb390464b9179` (matched_random), `44b3ba3826d739fc` (random_trigger), `8658f40ba8eba68d` (off).
+20 cells per arm, **8,000 calls total** — four times the printed 2,000 — plus re-prompt retries on the
+two blocking arms. `--statistic cosine` deliberately: it is the probe-independent one, so a positive
+result could not be dismissed as the probe grading its own homework, and at AUROC 0.766 on this corpus
+it is finally strong enough to gate on (it read 0.569 on the C0-only corpus). **Easy only**: hard has
+almost no headroom on this task (C0 1/10, C3 0/10 on the E3 cell), so pooling would dilute a real
+effect into a floor.
+
+#### R6 — the RQ3a judge replication *(the last unrun arm of the H5 comparison)*
+
+Unchanged in substance from the old §9c, with one amendment: **point `--transfer` at the E3
+calibration**, per §8b **A5**. The offline arms are frozen and cost zero model calls; this is the only
+part needing a GPU. Until it runs, `judge` and `agreement` stay `null` and **no comparison to the
+published 53.5 % / 14.2 % is stated**, because those figures come from LLM-judge procedures and
+nothing in the current table is one.
 
 ```bash
-# Corpus must already be on disk: scripts/myriad/prefetch.sh with RQ3A_ROOT set.
-# Cost it first on a login node - no GPU, no model calls:
+# corpus must already be on disk: scripts/myriad/prefetch.sh with RQ3A_ROOT set.
+# cost it first on a login node — no GPU, no model calls:
 #   preceptx-rq3a --root ~/Scratch/rq3a --corpus traceelephant --judge --dry-run
 qsub -N precept-rq3a-judge -l h_rt=8:00:00 \
   -v DRIVER=preceptx-rq3a,RQ3A_ROOT=$HOME/Scratch/rq3a scripts/myriad/pilot.sh \
-  --corpus traceelephant --transfer runs/86ecbbdf35322dc3-calibration
+  --corpus traceelephant --transfer runs/af50c7c12d65540f-calibration
 ```
 
 **Upper-bound judge calls, measured not guessed:** 3,428 for TraceElephant (220 traces, 2,488
-handoffs) and 4,380 for Who&When (184 traces, 3,505 handoffs). They are upper bounds because
-step-by-step stops at its first yes. The calls are prefill-dominated — each carries a whole
-transcript — so wall-clock must be calibrated against measured node throughput before the 8h request
-is trusted; run TraceElephant first and time it before committing to Who&When.
+handoffs) and 4,380 for Who&When (184 traces, 3,505 handoffs) — upper bounds because step-by-step
+stops at its first yes. The calls are prefill-dominated, each carrying a whole transcript, so run
+TraceElephant first and time it before committing to Who&When. The driver refuses a `--transfer`
+directory it cannot load the statistic out of, so a mistake there costs a second rather than the
+reservation.
 
-**Priority.** Behind the E3 re-gate and behind 9b. RQ3a's evidential value does not depend on this
-arm — the transfer result stands on its own, now under two independent calibrations — so it is the
-last of the three to spend GPU on.
+### 9.2 What each run has to produce before it counts
+
+Every returned dataset follows the same close-out, and none of it needs a GPU:
+
+```bash
+scripts/myriad/fetch.sh <hash>
+uv run preceptx-analyse --dataset-hash <hash>     # rq1.json, action_agreement.csv, scores.parquet
+uv run preceptx-rq2     --dataset-hash <hash>     # where a condition contrast exists
+```
+
+then a freeze directory under `runs/rq1/<hash>/` carrying `manifest.json`, `summary.json` and a
+README with the full reading, a closed row in `lineage.csv`, an `docs/EXPERIMENTS.md` results-log
+entry, and a design-log entry **only where the run changes an interpretation**. The pattern is
+`runs/rq1/af50c7c12d65540f/`; copy its shape.
+
+### 9.3 Owed on the laptop, after the commit — **discharged 30 Aug 2026**
+
+```bash
+uv run preceptx-rq3a --root ~/data/rq3a --corpus traceelephant \
+  --transfer runs/af50c7c12d65540f-calibration --out runs/rq3a/traceelephant
+uv run preceptx-rq3a --root ~/data/rq3a --corpus who_and_when \
+  --transfer runs/af50c7c12d65540f-calibration --out runs/rq3a/who_and_when
+```
+
+This did two jobs at once: it cleared `git_dirty: true` from both RQ3a manifests — stale for four
+sessions, and now guarded by `test_no_committed_manifest_records_a_dirty_tree`, which **skips on a
+dirty tree and bites in CI** — and it executed amendment **A5**, re-fitting the transferred statistic
+on the better-calibrated corpus. Both old and new numbers are in §8b's A5 row and in the design log.
+
+**Run them one at a time, committing between.** The first run starts from a clean tree and stamps
+`git_dirty: false`; it then *writes tracked artefacts*, so the second run would stamp `true` unless
+the first is committed before it starts. The two manifests therefore carry two different clean SHAs,
+both reachable, and that is correct rather than a defect — the guard makes a single-SHA pair
+impossible by construction. **Do not re-run these on the cluster**: the offline arms cost zero model
+calls and are frozen. R6 adds the judge arm on top of the same calibration.
+
 
 ## 10. Getting the results back
 

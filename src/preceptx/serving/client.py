@@ -224,6 +224,12 @@ class LLMClient:
         fetched: pointed at a leftover job serving a different tier, every call would succeed and
         the manifest would record the tier that was configured instead of the one that answered.
         A wrong recorded revision is worse than a missing one (DSE-002).
+
+        The ping is sized to the configuration it certifies. A 16-token budget cannot fit a Qwen3
+        thinking trace, so on the ``--thinking`` arm the fixed ping failed the very setup it was
+        checking and the sweep never started - R4, job 247917, aborted at a healthy endpoint that
+        had just answered two requests with 200 OK. Thinking mode therefore gets the configured
+        budget; every other arm keeps the cheap ping.
         """
         try:
             served = [model.id for model in self._client.models.list().data]
@@ -239,7 +245,11 @@ class LLMClient:
                 [
                     ChatMessage(role="user", content="Reply with the word pong."),
                 ],
-                max_tokens=16,
+                max_tokens=(
+                    self._config.max_tokens
+                    if self._config.chat_template_kwargs.get("enable_thinking")
+                    else 16
+                ),
             )
         except (openai.APIError, ServingError) as exc:
             logger.warning("serving health check failed: %s", exc)

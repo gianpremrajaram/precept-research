@@ -22,8 +22,10 @@ from preceptx.gate.calibration import (
     StatisticCalibration,
     write_report,
 )
+from preceptx.manifest import ManifestError
 from preceptx.measure.featuriser import EncoderConfig
 from preceptx.measure.pvi_cpvi import ProbeConfig
+from preceptx.serving.client import ServingError
 from preceptx.sim.feasibility import STEP_BUDGETS
 
 
@@ -64,6 +66,38 @@ def test_unlabelled_substrate_fails_loud(monkeypatch: pytest.MonkeyPatch) -> Non
     # exception at start-up rather than a warning mid-run.
     monkeypatch.delenv("PRECEPTX_SERVING_SUBSTRATE", raising=False)
     with pytest.raises(ConfigError, match="PRECEPTX_SERVING_SUBSTRATE"):
+        pilot(["--seeds", "0"])
+
+
+def test_an_unreadable_serve_env_sidecar_fails_before_the_episodes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Job 244522 wrote all 20 of its parquet parts across 30 minutes of an A100 and only then read
+    the serving sidecar - which a sibling job had truncated to zero bytes - and died in
+    build_sweep_manifest, leaving a complete dataset that no manifest could turn into a result.
+    The same read is free at start-up, so it happens there."""
+    monkeypatch.setenv("PRECEPTX_SERVING_SUBSTRATE", "myriad-test")
+    sidecar = tmp_path / "serve_env.json"
+    sidecar.write_text("")  # exactly what the killed sibling left behind
+    monkeypatch.setenv("PRECEPTX_SERVE_ENV", str(sidecar))
+    with pytest.raises(ManifestError, match="not valid JSON"):
+        pilot(["--seeds", "0"])
+
+    # A dry run costs nothing and still must not need the cluster's sidecar to print a plan.
+    rq1(["--dry-run", "--seeds", "0"])
+
+
+def test_a_valid_serve_env_sidecar_passes_the_pre_flight(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The guard must reject only an unreadable capture, not gate every run behind one: off the
+    cluster PRECEPTX_SERVE_ENV is unset and its absence is accurate, not degraded."""
+    monkeypatch.setenv("PRECEPTX_SERVING_SUBSTRATE", "myriad-test")
+    sidecar = tmp_path / "serve_env.json"
+    sidecar.write_text('{"tier": "qwen14b", "model": "Qwen/Qwen3-14B"}')
+    monkeypatch.setenv("PRECEPTX_SERVE_ENV", str(sidecar))
+    # Past the sidecar check; the endpoint is what it fails on now, not the capture.
+    with pytest.raises(ServingError):
         pilot(["--seeds", "0"])
 
 
@@ -112,6 +146,61 @@ def test_omitting_max_steps_keeps_the_certified_budgets(
 ) -> None:
     rq1(["--dry-run", "--conditions", "C0", "--difficulties", "easy", "--seeds", "0,1"])
     assert f"model calls:      {2 * 2 * STEP_BUDGETS['easy']}" in capsys.readouterr().out
+
+
+def test_channel_flags_reach_the_sweep_and_re_key_the_dataset(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """ChannelConfig was unreachable from the shell, so the post-hoc length control had no knob.
+
+    The re-keying half is the load-bearing one: `channel` is inside sweep_hash, so a C1 run at a
+    different cap must write its own dataset rather than appending into the real C1's directory.
+    """
+    rq1(["--dry-run", "--conditions", "C1", "--difficulties", "easy", "--seeds", "0"])
+    default = capsys.readouterr().out
+    rq1(
+        [
+            "--dry-run",
+            "--conditions",
+            "C1",
+            "--difficulties",
+            "easy",
+            "--seeds",
+            "0",
+            "--c1-max-tokens",
+            "42",
+        ]
+    )
+    capped = capsys.readouterr().out
+    assert "(NON-DEFAULT)" in capped and "'c1_max_tokens': 42" in capped
+    assert "(NON-DEFAULT)" not in default
+    assert _hash_line(capped, "dataset hash") != _hash_line(default, "dataset hash")
+
+
+def test_untouched_channel_axes_keep_every_prior_dataset_hash(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Passing one channel flag must not re-key the other two axes off their defaults."""
+    rq1(["--dry-run", "--conditions", "C4", "--difficulties", "easy", "--seeds", "0"])
+    before = _hash_line(capsys.readouterr().out, "dataset hash")
+    rq1(
+        [
+            "--dry-run",
+            "--conditions",
+            "C4",
+            "--difficulties",
+            "easy",
+            "--seeds",
+            "0",
+            "--c4-dropout",
+            "0.4",  # the default, restated
+        ]
+    )
+    assert _hash_line(capsys.readouterr().out, "dataset hash") == before
+
+
+def _hash_line(out: str, label: str) -> str:
+    return next(ln for ln in out.splitlines() if ln.startswith(label)).split()[-1]
 
 
 # ------------------------------------------------------- the RQ3a transfer arm's wiring (DSE-024)
