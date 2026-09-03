@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +26,7 @@ from preceptx.experiments.rq1 import (
     RQ1Config,
     action_agreement,
     analyse_rq1,
+    directive_compliance,
     rq1_sweep,
     signal_decomposition,
     write_rq1,
@@ -418,3 +420,57 @@ def test_action_agreement_flip_rate_is_nan_when_nothing_rotates() -> None:
     (row,) = action_agreement(_pose_records("C1", "E"), n_perm=20)
     assert math.isnan(row.rotation_flip_rate) and math.isnan(row.rotation_direction_agreement)
     assert row.n_rotations == 0
+
+
+def _directive_records(
+    condition: Condition, message: Callable[[int], str], taken: Callable[[int], str]
+) -> list[HandoffRecord]:
+    """``_pose_records`` with the message and the action both chosen per step."""
+    return [
+        r.model_copy(
+            update={
+                "message_delivered": message(r.step),
+                "action": {"action": taken(r.step)},
+            }
+        )
+        for r in _pose_records(condition, None)
+    ]
+
+
+def test_directive_compliance_pins_an_obedient_receiver_to_a_coin_flip_sender() -> None:
+    """The mechanism R1 and R3 turn on: when B obeys, its accuracy IS the instruction's accuracy,
+    so a sender that names the right turn half the time caps the receiver at half - and the
+    bottleneck is the sender, which a receiver-only agreement number cannot show."""
+    # A names the wrong direction on every other rotation; B obeys every time.
+    said = lambda s: "counterclockwise" if s % 2 else "clockwise"  # noqa: E731
+    (row,) = directive_compliance(
+        _directive_records(
+            "C0",
+            lambda s: f"Rotate the load {said(s)}.",
+            lambda s: "ROT+" if said(s) == "counterclockwise" else "ROT-",
+        )
+    )
+    assert row.obedience == 1.0
+    assert row.receiver_agreement == pytest.approx(row.directive_agreement)
+    assert 0.0 < row.directive_agreement < 1.0
+
+
+def test_directive_compliance_reports_no_coverage_when_the_channel_severs_the_directive() -> None:
+    """The A2 prefix cap keeps the numbers and cuts the instruction; coverage is how that shows
+    up, and the fields must be NaN not 0.0 - the sender never spoke, it was not wrong."""
+    (row,) = directive_compliance(
+        _directive_records(
+            "C1", lambda s: "The load is at (2.07, 3.06) with an angle of", lambda s: "ROT+"
+        )
+    )
+    assert row.coverage == 0.0 and row.n == 0
+    assert math.isnan(row.directive_agreement) and math.isnan(row.obedience)
+
+
+def test_directive_compliance_reads_counterclockwise_as_the_positive_rotation() -> None:
+    """`ROT+` adds angular velocity, so counterclockwise is ROT+ - and the longest-alternative-first
+    pattern must not match "counterclockwise" as "clockwise" with the negation dropped."""
+    (row,) = directive_compliance(
+        _directive_records("C0", lambda s: "Rotate counterclockwise.", lambda s: "ROT+")
+    )
+    assert row.obedience == 1.0  # every ROT+ action matched the counterclockwise instruction

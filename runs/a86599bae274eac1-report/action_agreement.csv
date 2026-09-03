@@ -1,0 +1,2 @@
+condition,n_handoffs,agreement,null_mean,null_p95,p_value,n_perm,rotation_direction_agreement,n_rotations,rotation_flip_rate
+C0,2759,0.3584632113084451,0.38613193185936934,0.3954331279449076,1.0,2000,0.46690070210631895,1994,0.6094883696578398

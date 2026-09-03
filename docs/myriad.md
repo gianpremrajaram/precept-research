@@ -378,6 +378,24 @@ config moved since this was written, and the run would write to a directory noth
 
 ### 9.1 The runs
 
+> **Status, 1 September 2026.** R1–R3 **ran and returned complete** (jobs 247914/247915/247916; 40,
+> 60 and 20 cells, all cells present). R4 **aborted before its first episode** on a `health_check`
+> defect, not a serving fault — the ping was hard-coded to `max_tokens=16`, which cannot fit a Qwen3
+> thinking trace, so it failed the configuration it was certifying. **Fixed; R4 is re-submittable
+> with the command below unchanged.**
+>
+> **All three returned runs still owe their manifests.** They were brought home by a hand-rolled
+> `rsync` that took only `runs/<hash>/*.parquet` — the exact failure §10 describes and `fetch.sh`
+> exists to prevent. None can be frozen until this is run:
+>
+> ```bash
+> for h in 1f0d58944caa7fc3 a86599bae274eac1 86b89727699c88fd; do scripts/myriad/fetch.sh "$h"; done
+> ```
+>
+> The readings are in `docs/EXPERIMENTS.md` §7 and the interpretation in the design log's
+> 1 September entry.
+
+
 Common preamble on every job: `cd ~/Scratch/precept-research && git pull`. All of R1–R4 run at
 `--max-steps 50`, matching the E3 verdict of record and its logged deviation (§6, D29) — one task
 parameterisation across the whole family.
@@ -452,6 +470,13 @@ qsub -N precept-a3-thinking -l h_rt=8:00:00 -v DRIVER=preceptx-rq1 scripts/myria
 **Expect `0ea4878b6e97f59f`** (sweep `a9940b95df220708`), 20 cells, 2,000 calls. Budget roughly four
 times a non-thinking episode: a thinking trace is several times the tokens, and `max_tokens` rises to
 2048 to fit it.
+
+**Attempt 1 (job 247917) wrote no data.** `health_check` pinged at a hard-coded `max_tokens=16` while
+`--thinking` raised only the *config's* budget, so the trace could not close and the pre-flight failed
+a healthy endpoint. Fixed — the ping now takes the configured budget whenever `enable_thinking` is
+set. **Re-submit the command above unchanged**, and confirm the pre-flight cleared by looking for the
+`sweep a9940b95df220708: 20 cells` line rather than `endpoint live`, which R4 also printed before
+aborting.
 
 #### R5 — RQ3b, the causal gate *(PREREGISTRATION §8c; **direction declared before submission**)*
 

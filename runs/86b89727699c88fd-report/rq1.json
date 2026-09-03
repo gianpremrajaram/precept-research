@@ -1,0 +1,139 @@
+{
+  "dataset_hash": "86b89727699c88fd",
+  "n_handoffs": 872,
+  "provenance": {
+    "encoder_name": "BAAI/bge-base-en-v1.5",
+    "encoder_revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "second_encoder": "sentence-transformers/all-mpnet-base-v2",
+    "second_encoder_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+    "probe": {
+      "probe": "logistic",
+      "variance_model": "homoscedastic",
+      "c": 1.0,
+      "max_iter": 1000,
+      "n_splits": 5,
+      "n_repeats": 5,
+      "mlp_hidden": 64,
+      "seed": 0
+    },
+    "git_sha": "c37f0164c370bad4a3ec6c8b2eab7d8540d992ac",
+    "timestamp": "2026-09-01T22:24:21.911714+00:00"
+  },
+  "conditions": [
+    {
+      "condition": "C0",
+      "n_episodes": 20,
+      "n_handoffs": 872,
+      "success_rate": 0.4,
+      "success_ci": [
+        0.2,
+        0.6
+      ],
+      "mean_steps": 43.6,
+      "mean_collisions": 6.65,
+      "mean_cpvi": 0.07381671524766975,
+      "cpvi_ci": [
+        0.047192285471283194,
+        0.10160886988020819
+      ],
+      "mean_pvi": 0.07918265109260433,
+      "pvi_cpvi_gap": 0.005365935844934583,
+      "mean_control_cpvi": -0.0020044350031534425,
+      "selectivity": 0.0758211502508232,
+      "mean_cpvi_sd": 0.0282072805830475
+    }
+  ],
+  "contrasts": [],
+  "mixed_model": {
+    "formula": "not fitted (single-condition grid)",
+    "coef_no_mediator": {},
+    "converged": false,
+    "mediation_outcome": "episode_success",
+    "path_b": null,
+    "path_b_length_controlled": null,
+    "mediations": [],
+    "mediation_converged": false,
+    "diagnostic_cpvi_coef": null,
+    "diagnostic_attenuation": null,
+    "mediation_note": "H1/H2 not fitted: only condition C0 is present, so C(condition) is rank-deficient and there is no contrast to estimate. This is a capability grid, not a gradient; the mixed model requires at least two conditions."
+  },
+  "control_mean_cpvi": -0.0020044350031534425,
+  "selectivity": 0.0758211502508232,
+  "partial_spearman_length": 0.2057715699283714,
+  "length_matched": [],
+  "signal_decomposition": [
+    {
+      "condition": "C0",
+      "n_handoffs": 872,
+      "median_cpvi": 0.09662287620039664,
+      "low_cpvi_no_progress": 311,
+      "low_cpvi_progress": 133,
+      "high_cpvi_no_progress": 243,
+      "high_cpvi_progress": 185,
+      "absent_signal_rate": 0.356651376146789,
+      "absent_signal_ci": [
+        0.2846648362686667,
+        0.4220120614035088
+      ],
+      "unused_signal_rate": 0.2786697247706422,
+      "unused_signal_ci": [
+        0.19279192830125397,
+        0.3849612533760329
+      ]
+    }
+  ],
+  "action_agreement": [
+    {
+      "condition": "C0",
+      "n_handoffs": 872,
+      "agreement": 0.42545871559633025,
+      "null_mean": 0.28609862385321105,
+      "null_p95": 0.30504587155963303,
+      "p_value": 0.0004997501249375312,
+      "n_perm": 2000,
+      "rotation_direction_agreement": 0.7434679334916865,
+      "n_rotations": 421,
+      "rotation_flip_rate": 0.49965326209385863
+    }
+  ],
+  "directive_compliance": [
+    {
+      "condition": "C0",
+      "n": 239,
+      "coverage": 0.3577981651376147,
+      "directive_agreement": 0.702928870292887,
+      "obedience": 0.9665271966527197,
+      "receiver_agreement": 0.702928870292887
+    }
+  ],
+  "seed_sensitivity": {
+    "metric": "success_rate",
+    "n_seeds": 10,
+    "mean": 0.4,
+    "sd": 0.31622776601683794,
+    "spread": 1.0,
+    "per_seed": {
+      "0": 0.0,
+      "1": 0.5,
+      "2": 0.5,
+      "3": 0.5,
+      "4": 0.5,
+      "5": 1.0,
+      "6": 0.5,
+      "7": 0.5,
+      "8": 0.0,
+      "9": 0.0
+    },
+    "dispersion": 0.8333333333333335,
+    "reason": "only condition C0 is present, so the C0-minus-hardest gap is a self-subtraction and identically zero; reporting the per-seed success rate and its binomial dispersion instead"
+  },
+  "shuffled_message_audit": {
+    "n_perm": 200,
+    "mean_cpvi": 0.07381671524766975,
+    "null_mean_cpvi": -0.0015991822220927042,
+    "null_std_cpvi": 0.0023687926889716785,
+    "null_max_cpvi": 0.009692106650868695,
+    "p_value": 0.004975124378109453
+  },
+  "figures": {}
+}

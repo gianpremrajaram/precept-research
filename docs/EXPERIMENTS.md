@@ -27,16 +27,21 @@ one-retune ledger was spent on 26 August (attempt 1 `retune_once` → prompt v5 
 `fallback`), the ladder fired, and rung 2's single permitted re-gate ran on 29 August on the
 successor bar task: **`af50c7c12d65540f` returned `fallback` again** — G1 PASS 0.800, G2 FAIL −0.250,
 G3 groundedness PASS 1.000, G3 correctness FAIL 0.242. There is no attempt 3 and no second rung-2
-attempt. **Rung 3 is the finding for the arena track**, and the mechanism is named rather than
-absent: only the lossy channel (C4) produces a receiver whose actions beat their own within-episode
-permutation null. Rung 1 (RQ3a) is frozen on its transfer regime. The interim `local-lmstudio`
+attempt. **Rung 3 is the finding for the arena track**, and as of 1 September the mechanism is not
+merely named but *causally isolated*: the three characterisation arms R1–R3 show that the 14B
+sender's rotation directive agrees with the oracle at chance (0.47–0.51), that the receiver obeys it
+0.76–0.95 of the time, and that **B's own accuracy equals the directive's in every arm**. The
+receiver is not state-blind; it faithfully executes an uninformative instruction. Severing the
+directive while keeping the numbers lifts rotation-direction accuracy 0.51 → **0.90** (R1); a 32B
+sender lifts the directive to 0.70 and the receiver follows to 0.74 (R3). Rung 1 (RQ3a) is frozen on
+its transfer regime. The interim `local-lmstudio`
 episodes remain permanently labelled and are never pooled with cluster data.
 
 | ID | Experiment | Stage | Needs | Status |
 |---|---|---|---|---|
 | E0 | Task certification (CPU only, no model) | S0 | Nothing | **Passed 24 Aug 2026** |
 | E1 | Serving smoke test and transcript read | S1 | A served model | **Run 24 Aug 2026 (v2, then v3)** |
-| E2 | Model-ladder benchmark (DSE-005) | S1 / S2 | A served model | **Local row 24 Aug 2026; cluster rows open** |
+| E2 | Model-ladder benchmark (DSE-005) | S1 / S2 | A served model | **Local row 24 Aug 2026; 14B and 32B cluster rows supplied 31 Aug – 1 Sep by R1/R3** |
 | E3 | Formal pilot gate run — G1/G2/G3 (DSE-019) | S1 → re-gate S2 | E1, the driver | **CLOSED.** Attempt 2 on the T load, 26 Aug (`eddd19c654515bb2`): `fallback` — G1 FAIL 0.300, G2 FAIL −0.200 sign-inverted, G3 PASS 0.999. G1 returned on the rung-2 successor 29 Aug (`86ecbbdf35322dc3`, C0-only): PASS 0.500. **The rung-2 re-gate, 29 Aug (`af50c7c12d65540f`, 80 episodes, job 238085): `fallback`** — G1 PASS 0.800, G2 FAIL −0.250 (CPVI gap −0.015), G3 groundedness PASS 1.000, **G3 correctness FAIL 0.242 vs null 0.257**. The pre-registered prediction came out half confirmed (C1 0/20 as predicted; C4 14/20 inverted again), so the instruction account is insufficient and **rung 3 stands**. Frozen at `runs/rq1/af50c7c12d65540f/` |
 | E4 | RQ1 information-gradient main sweep (DSE-020) | S3 | **rung-2 re-gate = proceed**; the freeze | **Will not run.** Its precondition failed on 29 Aug; §6 permits no further attempt. RQ1 is written up as rung 3 — the absent gradient as the finding, with the receiver-competence mechanism |
 | E5 | RQ1 robustness cells (DSE-021) | S3 | E4; per-role client refactor | **Not run** |
@@ -46,6 +51,37 @@ episodes remain permanently labelled and are never pooled with cluster data.
 | E9 | RQ3a corpus spike and counts (DSE-041) | S6, parallel | Nothing but network | **Run 24 Aug 2026.** Conditioning state confirmed (220 traces, 5,960 steps, 2,488 handoffs, recorded input contexts); **trace outcome falsified — 0 non-failures on the primary corpus**. Promotes DSE-042 to load-bearing |
 | E10 | RQ3a replay labelling (DSE-042) | S6 | E9; a spend cap | **Not run — now the only route to a two-class step-level *Y*** (E9) |
 | E11 | RQ3a localisation and baselines (DSE-024, rescoped) | S6 | E9, ~~E10~~, transfer calibration | **Transfer regime run 29 Aug 2026, re-frozen 30 Aug 2026 under amendment A5** (`runs/rq3a/{traceelephant,who_and_when}/`), which re-keys the transferred statistic to the E3 re-gate calibration `af50c7c12d65540f` (`fail` AUROC 0.906) in place of the G1 confirmation's 0.754. TraceElephant: CPVI transfer agent accuracy **0.492 [0.407, 0.585]** against schema validity 0.263 [0.186, 0.347] and mean cosine 0.254 [0.186, 0.339] — non-overlapping intervals; step accuracy 0.127, top-k 0.432, MRR 0.331. Who&When: 0.287 [0.220, 0.367] against mean cosine's 0.367 — a nominal loss on overlapping intervals. **A5 pre-declared that a worse arm under the better calibration is reported, not reverted**; pre-A5 values were 0.525 [0.432, 0.610] and 0.333. MAST secondary 0.088 bits [0.070, 0.107]. **The refit regime stays undefined without E10, and the judge arm is unrun** — so `judge` and `agreement` are `null` and no comparison to the published 53.5 % / 14.2 % is stated |
+
+**The 1 September characterisation batch (R1–R4, `docs/myriad.md` §9.1).** Three of four returned;
+all three are analysed and none is frozen, because the results were fetched by a hand-rolled `rsync`
+that left every `manifest.json` on the cluster — the one artefact that cannot be rebuilt locally
+(§10). `scripts/myriad/fetch.sh <hash>` clears it for all three.
+
+**Re-run the four analyses once the tree is committed.** `AnalysisProvenance` records a `git_sha` but
+has **no `git_dirty` flag** — the guard `test_no_committed_manifest_records_a_dirty_tree` covers
+manifests, not analysis reports — so the reports regenerated on 1 September stamp `c37f016` while
+carrying edits that were not in it. The stamp is only true after a commit, which is the same
+discipline §9.3 applied to the RQ3a manifests:
+
+```bash
+for h in af50c7c12d65540f 1f0d58944caa7fc3 a86599bae274eac1 86b89727699c88fd; do
+  uv run preceptx-analyse --dataset-hash "$h"
+done
+```
+
+The re-analysis is **purely additive against the frozen E3 report** — every pre-existing figure in
+`runs/af50c7c12d65540f-report/rq1.json` reproduces unchanged and only `directive_compliance` and the
+provenance stamp move, which is the bit-for-bit standard the 30 August design-log entry set for a
+re-run undertaken for instrument reasons. Extending `AnalysisProvenance` with a dirty flag is a
+follow-up, not this batch's scope.
+
+| Run | Dataset | Job | Returned | Reading |
+|---|---|---|---|---|
+| R1 | `1f0d58944caa7fc3` | 247914 | 40/40 cells | A2 arbitrated: **outcome is length, mechanism is content**. Rotation direction 0.514 → **0.902**, unused signal 0.450 → **0.016** |
+| R2 | `a86599bae274eac1` | 247915 | 60/60 cells | State-blindness is **not** a serialisation artefact; `numeric` is its third replication. `nl` is the worst case — obedience 0.950 on a 0.368 directive, success 0.05 |
+| R3 | `86b89727699c88fd` | 247916 | 20/20 cells | Capability buys **sender** accuracy (0.703), not receiver competence. CPVI **falls** 0.211 → 0.074 with a nil state echo — the correct sign for a message-value metric |
+| R4 | `0ea4878b6e97f59f` | 247917 | **0 cells** | `health_check` pinged at a hard-coded 16 tokens, which cannot fit a thinking trace. Fixed; re-submittable unchanged |
+
 
 ---
 
@@ -1293,3 +1329,218 @@ content is not shown — C4 removes them randomly *and* shortens the message. `P
 rule fixed before the `qsub`; **A4** would complete the 2×2 and is blocked on a design decision, not
 on compute. Whether the receiver's blindness is a *serialisation* artefact or a *capability* limit is
 also open, and both are readable with the same agreement limb and no new code.
+
+---
+
+### R1 — A2, the length-holding content swap — **the mechanism arm** — 2026-08-31
+
+- **Run id / manifest:** `1f0d58944caa7fc3` · job 247914 · **manifest not yet retrieved from Myriad** (see "Deviations")
+- **Substrate:** myriad (A100-PCIE-40GB, bf16) · **Model + revision:** `Qwen/Qwen3-14B`@`40c069824f4251a91eefaf281ebe4c544efd3e18`
+- **Encoder + revision:** `BAAI/bge-base-en-v1.5`@`a5beb1e3e68b9ab74eb54cfd186867f64f240e1a` · **Prompt version:** v9
+- **Config hash / sweep hash:** `1f0d58944caa7fc3` / `7b65f40f633311a9` · **Seeds:** 0–9 · **Episodes:** 40 (1,419 handoffs)
+- **Command:** `preceptx-rq1 --conditions C0,C1 --difficulties easy,hard --seeds 0,...,9 --max-steps 50 --c1-max-tokens 40 --no-analysis`
+
+**What was asked.** Whether C4's advantage on the E3 re-gate is a *length* effect or a *content*
+effect, by capping C1 at 40 whitespace tokens — C4's measured median delivered length — as a
+**prefix**, which keeps every number and severs the directive, the exact mirror of dropout.
+
+**What came back.** The manipulation landed as designed: the capped arm delivers **exactly 40 tokens
+on 100 % of handoffs (median 215 chars against C4's 220)**, and the delivered string is a strict
+prefix of the raw message every time. Coverage of an explicit turn direction falls from **52.3 % to
+0.2 %** — the directive is gone, the numbers are not.
+
+Success **0.30 [0.10, 0.50] → 0.70 [0.50, 0.85]**, Cliff's δ **+0.40 [0.10, 0.65]**, steps δ **−0.51
+[−0.76, −0.21]**, mixed coefficient 0.367 (*p*<sub>corrected</sub> 6.9 × 10⁻⁸). CPVI 0.211 [0.131,
+0.297] → 0.277 [0.193, 0.368]; PVI 0.292 → 0.344, so the **PVI − CPVI gap is 0.080 → 0.068** and
+control-task CPVI is ≈ 0 in both (selectivity 0.212 / 0.274). The RD-15 shuffled-message audit reads
+0.238 against a null max of 0.067 (*p* = 0.005), so the probe is reading the message, not the state.
+
+**The agreement limb, which is what the arm was powered for.** C0 scores **0.307 against its own
+within-episode null of 0.345 (*p* = 1.000)** — at or below chance. The capped arm scores **0.351
+against a null of 0.306 (*p* = 0.0005)**. The tie-free reads separate them far more sharply:
+rotation-direction agreement **0.514 → 0.902**, oscillation (flip rate) **0.550 → 0.024**, and the
+unused-signal rate **0.450 [0.312, 0.593] → 0.016 [0.006, 0.025]**, a twenty-nine-fold fall.
+
+**The directive split (`directive_compliance.csv`), which names the cause.** In C0 the sender's
+stated turn direction agrees with the oracle **0.468 [0.422, 0.516]** of the time — a coin flip. The
+receiver obeys it **0.763** of the time, and its own accuracy is **0.468**, equal to the directive's
+to three decimal places. **B is not blind; B is obedient to an instruction that carries no
+information about which way to turn.**
+
+**How it reads.** The arbitration comes out *split*, and that is the finding. On the **outcome** limb
+length wins: the prefix cap and C4 deliver the same 40 tokens and reach the **same 0.70 success**
+while preserving opposite halves of the content, so at this length what survives does not move
+success. **That last comparison is cross-run and must be quoted with its noise band** — the identical
+C0 cell returns 0.45 / 0.30 / 0.20 across E3, R1 and R2 (below), so a 0.70-vs-0.70 match is
+*consistent with* the length reading rather than a measurement of it. The within-run contrast is not
+affected: R1's two arms shared one job and one endpoint. On the **mechanism** limb content wins decisively: the prefix arm's receiver turns the right
+way 0.902 of the time against C4's 0.614 and C0's ~0.52, and stops oscillating almost entirely. So
+**shortening the message is what raises the score, and severing the directive specifically is what
+produces a competent receiver** — two different effects that the E3 cell could not separate. The
+overlap-restricted control agrees and sharpens it: inside the single length stratum both arms
+populate, the success advantage survives at half magnitude (**+0.40 → +0.20**, 26/40 episodes) while
+the **CPVI advantage vanishes (+0.123 → −0.029)**. R5's sceptical reading — "CPVI is just word
+count" — is therefore **correct about the CPVI contrast and wrong about the mechanism contrast**, and
+the honest write-up says so in those words.
+
+**The same C0 cell, run three times.** R1's C0 arm is configuration-identical to E3's and to R2's
+`numeric` third — same serialisation, difficulties, seeds 0–9, `--max-steps 50`, and model revision.
+Across the three cluster runs it returns:
+
+| | E3 `af50c7c1` | R1 `1f0d5894` | R2 `a86599ba` | spread |
+|---|---|---|---|---|
+| episode success | 0.45 | 0.30 | 0.20 | **0.25** |
+| exact-action agreement | 0.330 | 0.307 | 0.265 | 0.065 |
+| **rotation-direction agreement** | 0.528 | 0.514 | 0.468 | **0.059** |
+| oscillation (flip rate) | 0.559 | 0.550 | 0.571 | **0.021** |
+| directive→oracle | 0.514 | 0.468 | 0.540 | 0.072 |
+| obedience | 0.811 | 0.763 | 0.757 | 0.054 |
+
+**The outcome measure moves ±0.125 on an unchanged configuration; the mechanism measures move ±0.03.**
+Batched vLLM inference is not bit-exact and this is what that costs on a 20-episode cell. Two
+consequences, both load-bearing. First, it **vindicates the pre-registered decision to read this arm
+on `action_agreement` rather than on success** — the success limb cannot carry a claim narrower than
+its own 0.25 spread, and the agreement limb can. Second, **no cross-run success comparison in this
+project may be quoted without this band**, which is the honest bound on the length reading above.
+Within-run contrasts are unaffected: they share a job, an endpoint and a batch.
+
+**Seed sensitivity.** The condition gap has mean −0.400, sd 0.394 and spread 1.0 over ten seeds; four
+seeds sit at exactly 0.0 and **none is positive**. The direction never reverses, the magnitude is not
+stable, and no magnitude claim is made.
+
+**Deviations.** Ran at `--max-steps 50`, the deviation logged in `PREREGISTRATION.md` §6 / methodology
+D29 before submission. **The manifest was not retrieved**: the results were brought back by a
+hand-rolled `rsync` that took only `runs/<hash>/*.parquet`, which is the exact failure
+`scripts/myriad/fetch.sh` exists to prevent (§10). The run **cannot be frozen until
+`fetch.sh 1f0d58944caa7fc3` supplies it**, because the model revision, the exact command and the
+serving environment live only there.
+
+**What it changes.** Closes the "not settled" item the E3 entry ends on. Supplies the mechanism
+paragraph for the RQ1 (negative) chapter: the absent gradient is not receiver incompetence but
+**sender incompetence faithfully transmitted**. F1′ is ready to freeze on manifest retrieval.
+
+---
+
+### R2 — serialisation A/B on C0 — 2026-09-01
+
+- **Run id / manifest:** `a86599bae274eac1` · job 247915 · **manifest not yet retrieved** (as R1)
+- **Substrate:** myriad (A100-PCIE-40GB, bf16) · **Model + revision:** `Qwen/Qwen3-14B`@`40c0698`
+- **Encoder + revision:** `BAAI/bge-base-en-v1.5`@`a5beb1e` · **Prompt version:** v9
+- **Config hash / sweep hash:** `a86599bae274eac1` / `9d09bbcece5978f8` · **Seeds:** 0–9 · **Episodes:** 60 (2,759 handoffs)
+- **Command:** `preceptx-rq1 --conditions C0 --serialisations numeric,grid,nl --difficulties easy,hard --seeds 0,...,9 --max-steps 50 --no-analysis`
+
+**What was asked.** Whether the receiver's state-blindness is a property of the *receiver* or of the
+*numeric serialisation* every E3 episode was run under — the first question a reviewer asks about a
+state-blindness finding.
+
+**What came back.** Per serialisation (the analysis groups by condition, so these are re-derived by
+slicing the records, e.g. `directive_compliance([r for r in recs if r.serialisation == "grid"])`):
+
+| serialisation | *n* | success | agreement | its null | *p* | rot. direction | flip | CPVI | PVI − CPVI | directive→oracle | obedience |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `numeric` | 912 | 0.20 | 0.265 | 0.293 | 1.000 | 0.468 | 0.571 | 0.176 | 0.062 | 0.540 [0.49, 0.59] | 0.757 |
+| `grid` | 873 | 0.20 | **0.389** | 0.356 | **0.0015** | 0.542 | 0.381 | 0.169 | 0.035 | 0.388 [0.35, 0.43] | **0.501** |
+| `nl` | 974 | **0.05** | 0.418 | 0.500 | 1.000 | 0.422 | **0.877** | **0.028** | **0.218** | 0.368 [0.34, 0.40] | **0.950** |
+
+Pooled: agreement 0.358 against a null of 0.386 (*p* = 1.000), absent-signal 0.448, unused-signal
+0.339.
+
+**How it reads.** **Not an artefact of the numeric serialisation.** `numeric` reproduces the
+state-blindness exactly (*p* = 1.000, rotation direction 0.468) — the **third independent
+replication** of the C0 negative result after E3 and R1. `grid` is the only arm that clears its null,
+and it does so by the mechanism R1 identified: **obedience collapses to 0.501** — the receiver stops
+following and starts reading — and it clears the null *despite* a worse directive (0.388). It is also
+**the only arm in the corpus where the receiver meaningfully outperforms its own instruction**
+(receiver 0.553 against directive 0.388, **+0.165**); across the other seven scored arms the two sit
+within 0.047 of each other on average. **The receiver only beats its instruction where it stops
+following it**, which is the mechanism's moving part rather than a separate effect. It buys no success
+(0.20, identical to `numeric`). `nl` is the informative failure: obedience **0.950**, the
+highest anywhere in the corpus, on a directive that is **worse than chance (0.368)**; success falls to
+**0.05**, CPVI collapses to 0.028, the flip rate reaches 0.877, and the **PVI − CPVI gap of 0.218 is
+the largest in the project** — under prose almost all apparent message value is an echo of the shared
+state. Prose serialisation maximises compliance and minimises usable content, which is the worst
+possible combination and a direct warning about natural-language state channels.
+
+**Seed sensitivity.** Pooled success 0.15 across 60 episodes; the arm carries one condition, so no
+condition gap exists and per-serialisation success is reported instead (0.20 / 0.20 / 0.05).
+
+**Deviations.** `--max-steps 50`, as R1. Manifest not retrieved, as R1.
+
+**What it changes.** Removes the serialisation confound from the RQ1 negative result and converts
+`nl` into a second, independent demonstration of the obedience mechanism. Closes the second of the
+two "not settled" items the E3 entry ends on.
+
+---
+
+### R3 — the 32B capability row — 2026-09-01
+
+- **Run id / manifest:** `86b89727699c88fd` · job 247916 · **manifest not yet retrieved** (as R1)
+- **Substrate:** myriad (A100 80 GB, bf16) · **Model + revision:** `Qwen/Qwen3-32B`@`9216db5`
+- **Encoder + revision:** `BAAI/bge-base-en-v1.5`@`a5beb1e` · **Prompt version:** v9
+- **Config hash / sweep hash:** `86b89727699c88fd` / `64e8181c8c95b825` · **Seeds:** 0–9 · **Episodes:** 20 (872 handoffs)
+- **Command:** `preceptx-rq1 --conditions C0 --difficulties easy,hard --seeds 0,...,9 --max-steps 50 --no-analysis` at `TIER=qwen32b`
+
+**What was asked.** Whether the state-blindness is a 14B capability limit, on the same cell as the E3
+C0 arm one model larger, so the agreement limb reads the two directly against each other.
+
+**What came back.** **The 32B receiver clears its null where every 14B C0 arm fails to:** agreement
+**0.425 against a null of 0.286 (*p* = 0.0005)**, rotation direction **0.743** against the 14B's
+0.514–0.528. And the directive split says why: the 32B **sender's** instruction agrees with the
+oracle **0.703 [0.644, 0.762]**, against the 14B's coin-flip 0.468–0.514; the receiver obeys it
+**0.967** of the time — the highest obedience in the corpus — and lands at **0.703**, again equal to
+the directive's accuracy.
+
+CPVI is **0.074 [0.047, 0.102]**, a third of the 14B's 0.211, with PVI 0.079 and a **PVI − CPVI gap of
+0.005** — effectively nil — against the 14B's 0.080. Control-task CPVI −0.002 (selectivity 0.076); the
+shuffled-message audit reads 0.074 against a null max of 0.010 (*p* = 0.005). Success is **0.40 [0.20,
+0.60]**, statistically indistinguishable from the 14B's 0.45 / 0.30. Oscillation is **unimproved**
+(flip rate 0.500) and the unused-signal rate is 0.279.
+
+**How it reads.** Capability buys **sender** competence, not receiver competence — the receiver was
+never the bottleneck, and at 32B it is *more* obedient, not less. This is the cleanest available
+demonstration that **CPVI measures what it claims to**: the better-coordinating pair extracts *less*
+usable information from the message (0.074 vs 0.211) with essentially no state echo (gap 0.005),
+because a receiver that can read the pose itself needs less from the channel. A message-value metric
+that rose with capability would be measuring fluency; this one falls, which is the correct sign.
+**And it does not rescue the task** — success is flat and oscillation is unchanged — so the ceiling on
+this bar task lies somewhere other than sender accuracy, and scaling is not the fix.
+
+**Seed sensitivity.** Success 0.40, sd 0.316, binomial dispersion 0.833 over ten seeds (three at 0.0,
+one at 1.0). Only C0 is present, so the condition gap is a self-subtraction and is not reported.
+
+**Deviations.** `--max-steps 50`, as R1. Manifest not retrieved, as R1. Also supplies the cluster row
+E2 (DSE-005) never got.
+
+**What it changes.** Closes the capability half of the E3 entry's open question, converts the
+state-blindness from "the receiver cannot read poses" into "the sender cannot compute turns and the
+receiver faithfully executes that", and gives RQ2 a construct-validity argument that costs no new
+compute.
+
+---
+
+### R4 — the A3 thinking probe — **did not run** — 2026-09-01
+
+- **Run id:** `0ea4878b6e97f59f` (declared) · job 247917 · **0 Parquet parts written**
+- **Substrate:** myriad (A100 80 GB, bf16) · **Model + revision:** `Qwen/Qwen3-14B`@`40c0698`
+
+**What came back.** Nothing. The job reached a **healthy** endpoint — vLLM answered `GET /v1/models`
+and `POST /v1/chat/completions` with 200 OK — and then aborted before the first episode with
+`ServingError: no healthy endpoint at http://localhost:8917/v1`, preceded by
+`serving health check failed: thinking trace was truncated before '</think>'`.
+
+**Cause, confirmed in code.** `LLMClient.health_check` issued its smoke completion at a hard-coded
+`max_tokens=16`. `--thinking` raises the *config's* budget to 2,048, but the ping ignored the config,
+so a Qwen3 thinking trace could not close inside 16 tokens and the check **failed the very
+configuration it was meant to certify**. The error text — "raise `max_tokens` on the serving config" —
+also misdirected, because raising the config would not have moved the ping. An eight-hour reservation
+was spent proving that the ping was too small.
+
+**The fix.** `health_check` now sizes its ping to the configuration it certifies: the configured
+budget when `enable_thinking` is set, the cheap 16-token ping otherwise. Covered by
+`test_health_check_pings_at_the_thinking_budget_when_thinking_is_on` and its non-thinking counterpart,
+which pin both branches' `max_tokens` on the wire.
+
+**What it changes.** R4 is re-submittable unchanged. It stays an **appendix probe** and never enters
+the C0→C4 gradient: thinking is a capability manipulation and Qwen discourages greedy decoding in
+thinking mode, so it cannot meet the determinism standard. Its declared seed-pairing remains the E3
+cell's C0 arm (§9.1).

@@ -30,6 +30,7 @@ plus that analysis.
 from __future__ import annotations
 
 import logging
+import re
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
@@ -263,6 +264,7 @@ class RQ1Result(BaseModel):
     length_matched: list[LengthMatchedContrast]  # the overlap-restricted control (DSE-044)
     signal_decomposition: list[SignalDecomposition]  # DSE-046 secondary analysis
     action_agreement: list[ActionAgreement]  # per-condition receiver-competence diagnostic
+    directive_compliance: list[DirectiveCompliance]  # instruction quality vs obedience split
     seed_sensitivity: SeedSensitivity
     shuffled_message_audit: ShuffledMessageAudit | None = None  # RD-15 manipulation check
     figures: dict[str, str] = Field(default_factory=dict)
@@ -464,6 +466,89 @@ def _flip_rate(taken: NDArray[Any], episodes: NDArray[Any], steps: IntArray) -> 
         if len(seq) >= 2:
             rates.append(float(np.mean(seq[:-1] != seq[1:])))
     return float(np.mean(rates)) if rates else float("nan")
+
+
+class DirectiveCompliance(BaseModel):
+    """Where B's rotation errors come from: a wrong instruction, or a wrong reading of it.
+
+    ``action_agreement`` says *whether* B's actions track the pose. This says *why not*, by
+    splitting the same rotation handoffs into two independent links:
+
+    - ``directive_agreement`` - does A's stated turn direction match ``oracle_action``? 0.5 is a
+      sender that writes a fluent instruction carrying no information about which way to turn.
+    - ``obedience`` - does B do what it was told? 1.0 is a receiver that contributes nothing of its
+      own and, crucially, loses nothing either.
+
+    When obedience is high, ``receiver_agreement`` is pinned to ``directive_agreement`` and the
+    bottleneck is the *sender*, not the receiver - which is the opposite of how a state-blindness
+    result reads without this split. Scored only where A named a direction, the oracle wanted a
+    rotation, and B rotated; ``n`` is that subset and ``coverage`` its share of the condition.
+
+    Direction words are read from the DELIVERED message, because that is what B saw: a channel that
+    severs the directive must show up here as coverage collapsing towards zero. ``ROT+`` is
+    counterclockwise (``apply_macro_action`` adds angular velocity), which is what pins the mapping.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    condition: str
+    n: int
+    coverage: float  # share of the condition's handoffs carrying a direction word
+    directive_agreement: float  # A's instruction vs the oracle; 0.5 = a coin flip
+    obedience: float  # B's action vs A's instruction
+    receiver_agreement: float  # B's action vs the oracle, on this same subset
+
+
+# Direction words as they appear in the messages, longest alternative first so that
+# "counterclockwise" is never matched as "clockwise" with the negation stripped off.
+_DIRECTIVE_RE = re.compile(r"counter-?clockwise|clockwise|ROT\+|ROT-", re.IGNORECASE)
+
+
+def _directive(message: str | None) -> str | None:
+    """The LAST direction A names, as a macro action. Last, not first: the messages state the
+    problem before the instruction ("...unless it is rotated. Rotate the load counterclockwise").
+    """
+    hits = _DIRECTIVE_RE.findall(message or "")
+    if not hits:
+        return None
+    word = hits[-1].lower()
+    return "ROT+" if word.startswith("counter") or word == "rot+" else "ROT-"
+
+
+def _rate(flags: list[bool]) -> float:
+    """NaN, never 0.0, on an empty subset: a condition whose channel severs every directive has
+    nothing to score, and 0.0 would read as "the sender is always wrong" rather than "never spoke".
+    """
+    return float(np.mean(flags)) if flags else float("nan")
+
+
+def directive_compliance(records: list[HandoffRecord]) -> list[DirectiveCompliance]:
+    """Per-condition split of rotation agreement into instruction quality and obedience.
+
+    Public for the same reason ``action_agreement`` is: it reads only the recorded message, pose and
+    action, so a frozen result can be re-derived without re-fitting a probe.
+    """
+    out: list[DirectiveCompliance] = []
+    for cond in [c for c in CONDITION_ORDER if any(r.condition == c for r in records)]:
+        rows = [r for r in records if r.condition == cond]
+        triples = [
+            (d, oracle_action(float(r.pre_state["angle"])), str(r.action["action"]))
+            for r in rows
+            for d in [_directive(r.message_delivered)]
+            if d is not None
+        ]
+        scored = [t for t in triples if t[1] in _ROTATIONS and t[2] in _ROTATIONS]
+        out.append(
+            DirectiveCompliance(
+                condition=cond,
+                n=len(scored),
+                coverage=len(triples) / len(rows) if rows else float("nan"),
+                directive_agreement=_rate([d == o for d, o, _ in scored]),
+                obedience=_rate([a == d for d, _, a in scored]),
+                receiver_agreement=_rate([a == o for _, o, a in scored]),
+            )
+        )
+    return out
 
 
 def signal_decomposition(
@@ -960,6 +1045,7 @@ def analyse_rq1(
         length_matched=_length_matched(ep_med_df, present, cfg),
         signal_decomposition=signal_decomposition(records, cpvi_scores, y, cfg),
         action_agreement=action_agreement(records),
+        directive_compliance=directive_compliance(records),
         seed_sensitivity=seed_sens,
         shuffled_message_audit=_shuffle_audit(e_s, e_m, y, groups, records, cpvi_scores, cfg),
     )
@@ -1047,6 +1133,9 @@ def write_rq1(result: RQ1Result, dir: Path | str, *, scores: pd.DataFrame) -> Pa
     )
     pd.DataFrame([a.model_dump() for a in result.action_agreement]).to_csv(
         dir / "action_agreement.csv", index=False
+    )
+    pd.DataFrame([d.model_dump() for d in result.directive_compliance]).to_csv(
+        dir / "directive_compliance.csv", index=False
     )
     dec = result.signal_decomposition
     dec_table = pd.DataFrame([d.model_dump() for d in dec])

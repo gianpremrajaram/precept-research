@@ -15,7 +15,100 @@ result of the fix · so-what/takeaways.** Keep entries roughly one page.
 
 ---
 
-## 2026-08-30 (latest) — one calibration substrate, and a mechanism number that stops depending on its grid
+## 2026-09-01 (latest) — the receiver was never the bottleneck: an obedience mechanism for the absent gradient
+
+- **Area:** the interpretation of the RQ1 negative result; a new analysis instrument
+  (`rq1.directive_compliance`); the arbitration of R5 ("CPVI is just word count").
+- **Trigger:** the three characterisation arms R1–R3 returning together (jobs 247914–247916), against
+  the two questions the E3 re-gate entry closes on — is C4's advantage length or content, and is the
+  receiver's state-blindness a serialisation artefact or a capability limit.
+
+**Finding 1 — the state-blindness was a misreading of an obedience effect.** `action_agreement` shows
+*whether* B's actions track the pose; it cannot show *why not*, and "the receiver ignores the state it
+is handed" was the only available reading. Splitting the same rotation handoffs into two independent
+links — does A name the right direction, and does B do as it is told — inverts the story. Across every
+14B arm the sender's stated turn direction agrees with the oracle at chance (**E3 C0 0.514, R1 C0
+0.468, E3 C3 0.435, R2 `nl` 0.368**), the receiver obeys it 0.76–0.95 of the time, and **B's own
+accuracy equals the directive's to within noise in every arm** (0.486 / 0.468 / 0.421 / 0.458). The
+receiver is not blind. It is a faithful executor of a fluent instruction that carries no information
+about which way to turn, and following a coin flip is statistically indistinguishable from acting at
+random — which is exactly what the within-episode permutation null measures.
+
+**Finding 2 — the two ways to fix it are opposite, and both work.** Sever the directive while keeping
+the numbers (R1's 40-token prefix cap, coverage 52.3 % → 0.2 %) and the receiver's rotation-direction
+accuracy goes **0.514 → 0.902** with oscillation collapsing 0.550 → 0.024 and unused signal 0.450 →
+0.016. Or make the directive correct (R3's 32B sender, 0.703) and the receiver follows it to **0.743**
+at 0.967 obedience. Prose serialisation does the reverse and demonstrates the mechanism by breaking
+it: `nl` pairs the corpus's highest obedience (0.950) with a worse-than-chance directive (0.368), and
+success falls to 0.05 with the project's largest PVI − CPVI gap (0.218).
+
+**Finding 3 — R5 is half right, and the write-up must say which half.** R1 holds delivered length at
+C4's measured median (both 40 tokens, 215 vs 220 chars) and swaps which half of the content survives.
+On **outcome** the two arms are identical (**0.70 each**), so at this length what survives does not
+move success — the length reading wins. On **mechanism** they are far apart (rotation direction 0.902
+vs 0.614), so what survives determines *how* the score is reached — the content reading wins. The
+overlap-restricted control says the same thing from the other side: inside the shared length stratum
+the success advantage survives at half magnitude (+0.40 → +0.20) while the **CPVI advantage vanishes
+(+0.123 → −0.029)**. "CPVI is just word count" is therefore **sustained for the CPVI contrast and
+refuted for the mechanism contrast**, and both halves are reported.
+
+**Finding 4 — a free three-way replication, and it re-prices every outcome number in the project.**
+R1's C0 arm, E3's C0 arm and R2's `numeric` third are configuration-identical: same serialisation,
+difficulties, seeds 0–9, budget and model revision. They return **success 0.45 / 0.30 / 0.20** — a
+spread of 0.25 — while rotation-direction agreement returns 0.528 / 0.514 / 0.468 (spread 0.059),
+oscillation 0.559 / 0.550 / 0.571 (spread 0.021) and obedience 0.811 / 0.763 / 0.757 (spread 0.054).
+**The outcome measure is unstable at ±0.125 on an unchanged configuration; the mechanism measures are
+stable to ±0.03.** This was not designed as a replication — it fell out of three arms happening to
+share a control cell — and it is the cleanest evidence the project has that batched vLLM inference is
+low-variance rather than reproducible, in the terms CLAUDE.md already requires it to be described.
+Its two consequences are procedural: the pre-registered decision to read A2 on `action_agreement`
+rather than on success is **empirically vindicated** rather than merely prudent, and **no cross-run
+success comparison may be quoted without this band** — including the 0.70-vs-0.70 length match in
+Finding 3, which is downgraded from evidence to consistency. Within-run contrasts keep their force;
+they share a job, an endpoint and a batch.
+
+**Impact.** The RQ1 chapter's claim changes from *the absent gradient, with a receiver that does not
+read the state* to *the absent gradient, because a fluent-but-uninformative instruction is transmitted
+faithfully and degrading the channel removes it*. That is a mechanism rather than a deficit, it is
+falsifiable, and it explains the inversion that made the gradient absent in the first place: the
+channel was carrying a harmful signal, so degrading it helped.
+
+**Risk reduced.** Three at once. **R5** (length confound) is arbitrated rather than assumed. The
+serialisation confound is removed — `numeric` is the third independent replication of the C0 negative,
+so the finding is not an artefact of the state format. And a construct-validity risk on CPVI is
+converted into supporting evidence: the more capable pair extracts **less** usable information (32B
+CPVI 0.074 vs 14B 0.211) with an essentially nil state echo (gap 0.005 vs 0.080), which is the correct
+sign for a message-value metric and the wrong sign for a fluency proxy.
+
+**Correction path considered and rejected.** Reporting the R1 outcome contrast (δ +0.40, *p* 6.9e-08)
+as the headline. It is the largest number in the arm and it is the least informative: it is a length
+effect the overlap-restricted control already flags, and quoting it without the agreement limb would
+repeat the E3 inversion as if it were new. The arm was pre-declared to be read on `action_agreement`,
+and it is.
+
+**The fix.** `rq1.directive_compliance` / `DirectiveCompliance`, beside `action_agreement` and public
+for the same reason: it reads only the recorded message, pose and action, so a frozen result is
+re-derivable without re-fitting a probe. Reports `coverage`, `directive_agreement`, `obedience` and
+`receiver_agreement` per condition; persisted as `directive_compliance.csv`. Direction words are read
+from the **delivered** message, because that is what B saw — a channel that severs the directive shows
+up as coverage falling to zero rather than as a spuriously wrong sender. Fields are NaN, never 0.0,
+where nothing was said: a severed directive is a sender that did not speak, not one that was wrong.
+
+**Result of the fix.** All four returned corpora re-analysed; the E3 frozen corpus reproduces its
+existing agreement numbers and gains the split, so the mechanism paragraph is available for a result
+already in hand at no compute cost.
+
+**So what.** The negative RQ1 result stops being a story about a weak receiver and becomes one about
+**where in a two-agent pipeline the competence actually sits** — which is the question a gate is
+supposed to answer, and therefore strengthens rather than weakens the case for RQ3b. It also sharpens
+the prediction R5 is submitted under: a gate that blocks low-information handoffs cannot repair a
+receiver that is executing a confidently wrong instruction, because the statistic never sees whether
+the instruction was *right*. The declared null is now mechanistically motivated rather than merely
+pessimistic.
+
+---
+
+## 2026-08-30 — one calibration substrate, and a mechanism number that stops depending on its grid
 
 - **Area:** the RQ3a transfer arm's calibration substrate (amendment **A5**, executed); the
   permutation null behind `rq1.action_agreement`; the instrument declaration for RQ3b (§8c).

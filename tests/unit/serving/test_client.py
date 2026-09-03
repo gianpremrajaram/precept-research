@@ -213,6 +213,27 @@ def test_health_check_false_when_a_different_model_is_served() -> None:
 
 
 @respx.mock
+def test_health_check_pings_at_the_thinking_budget_when_thinking_is_on() -> None:
+    """The R4 regression (job 247917): a 16-token ping cannot fit a thinking trace, so the check
+    failed the configuration it was certifying and the sweep never started at a healthy endpoint."""
+    respx.get(MODELS).mock(return_value=httpx.Response(200, json=_models("test-model")))
+    route = respx.post(CHAT).mock(
+        return_value=httpx.Response(200, json=_completion("<think>plan...</think>pong"))
+    )
+    config = _thinking_config().model_copy(update={"max_tokens": 2048})
+    assert LLMClient(config).health_check() is True
+    assert json.loads(route.calls.last.request.content)["max_tokens"] == 2048
+
+
+@respx.mock
+def test_health_check_keeps_the_cheap_ping_without_thinking() -> None:
+    respx.get(MODELS).mock(return_value=httpx.Response(200, json=_models("test-model")))
+    route = respx.post(CHAT).mock(return_value=httpx.Response(200, json=_completion("pong")))
+    assert LLMClient(_config()).health_check() is True
+    assert json.loads(route.calls.last.request.content)["max_tokens"] == 16
+
+
+@respx.mock
 def test_health_check_false_when_nothing_is_served() -> None:
     respx.get(MODELS).mock(return_value=httpx.Response(200, json=_models()))
     respx.post(CHAT).mock(return_value=httpx.Response(200, json=_completion("pong")))

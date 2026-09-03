@@ -16,8 +16,8 @@
       "mlp_hidden": 64,
       "seed": 0
     },
-    "git_sha": "239f26175b421a29c7587166394ce479abf6bba5",
-    "timestamp": "2026-08-30T15:52:03.759595+00:00"
+    "git_sha": "c37f0164c370bad4a3ec6c8b2eab7d8540d992ac",
+    "timestamp": "2026-09-01T22:12:17.069605+00:00"
   },
   "conditions": [
     {
@@ -410,6 +410,40 @@
       "rotation_direction_agreement": 0.6141732283464567,
       "n_rotations": 381,
       "rotation_flip_rate": 0.44531650624254154
+    }
+  ],
+  "directive_compliance": [
+    {
+      "condition": "C0",
+      "n": 387,
+      "coverage": 0.49564134495641343,
+      "directive_agreement": 0.5142118863049095,
+      "obedience": 0.8113695090439277,
+      "receiver_agreement": 0.48578811369509045
+    },
+    {
+      "condition": "C1",
+      "n": 0,
+      "coverage": 0.0,
+      "directive_agreement": null,
+      "obedience": null,
+      "receiver_agreement": null
+    },
+    {
+      "condition": "C3",
+      "n": 503,
+      "coverage": 0.5442764578833693,
+      "directive_agreement": 0.43538767395626243,
+      "obedience": 0.7713717693836978,
+      "receiver_agreement": 0.42147117296222664
+    },
+    {
+      "condition": "C4",
+      "n": 257,
+      "coverage": 0.372463768115942,
+      "directive_agreement": 0.5875486381322957,
+      "obedience": 0.8015564202334631,
+      "receiver_agreement": 0.5603112840466926
     }
   ],
   "seed_sensitivity": {

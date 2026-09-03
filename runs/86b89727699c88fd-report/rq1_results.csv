@@ -1,0 +1,2 @@
+condition,n_episodes,n_handoffs,success_rate,success_ci,mean_steps,mean_collisions,mean_cpvi,cpvi_ci,mean_pvi,pvi_cpvi_gap,mean_control_cpvi,selectivity,mean_cpvi_sd
+C0,20,872,0.4,"(0.2, 0.6)",43.6,6.65,0.07381671524766975,"(0.047192285471283194, 0.10160886988020819)",0.07918265109260433,0.005365935844934583,-0.0020044350031534425,0.0758211502508232,0.0282072805830475
